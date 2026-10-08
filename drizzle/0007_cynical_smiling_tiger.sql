@@ -1,0 +1,1 @@
+ALTER TABLE `catalog_orders` ADD `customerCode` varchar(48);
