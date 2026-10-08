@@ -64,12 +64,15 @@ export type Database = {
       manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
     };
     Functions: {
+      search_products_by_barcode: { Args: { p_shop_id: string; p_barcode: string }; Returns: Json };
       list_products_page: { Args: { p_shop_id: string; p_after_created_at?: string | null; p_after_id?: string | null; p_search?: string | null; p_category_id?: string | null; p_limit?: number }; Returns: Json };
       create_product: { Args: { p_shop_id: string; p_payload: Json }; Returns: ProductRow };
       update_product: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_payload: Json }; Returns: ProductRow };
       soft_delete_products: { Args: { p_shop_id: string; p_product_ids: string[] }; Returns: number };
       register_product_image: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
       create_invoice_with_stock: { Args: { p_shop_id: string; p_idempotency_key: string; p_items: Json; p_sale_type?: string; p_payment_method?: string; p_customer_name?: string; p_customer_phone?: string; p_discount_type?: string; p_discount_value?: number }; Returns: Json };
+      list_shop_members: { Args: { p_shop_id: string }; Returns: Array<{ user_id: string; email: string; display_name: string | null; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; created_at: string; updated_at: string; last_sign_in_at: string | null }> };
+      set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
     };
     Enums: {
       shop_role: "manager" | "admin" | "supervisor" | "seller";

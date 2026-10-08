@@ -19,9 +19,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
-import { startLogin } from "@/const";
 import { useIsMobile } from "@/hooks/useMobile";
-import { trpc } from "@/lib/trpc";
 import { LayoutDashboard, LogOut, PanelLeft, Users } from "lucide-react";
 import { CSSProperties, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
@@ -70,7 +68,7 @@ export default function DashboardLayout({
             </p>
           </div>
           <Button
-            onClick={() => startLogin()}
+            onClick={() => { window.location.assign("/auth"); }}
             size="lg"
             className="w-full shadow-lg hover:shadow-xl transition-all"
           >
@@ -106,7 +104,6 @@ function DashboardLayoutContent({
   setSidebarWidth,
 }: DashboardLayoutContentProps) {
   const { user, logout } = useAuth();
-  const staffSyncLogout = trpc.staffSync.logout.useMutation();
   const [location, setLocation] = useLocation();
   const { state, toggleSidebar } = useSidebar();
   const isCollapsed = state === "collapsed";
@@ -115,15 +112,7 @@ function DashboardLayoutContent({
   const activeMenuItem = menuItems.find(item => item.path === location);
   const isMobile = useIsMobile();
   const handleStaffLogout = async () => {
-    try { await logout(); } catch {}
-    try { await staffSyncLogout.mutateAsync(); } catch {}
-    sessionStorage.removeItem("abu_staff_sync_token");
-    sessionStorage.removeItem("abu_catalog_admin_token");
-    sessionStorage.removeItem("abu_employee_finance_token");
-    localStorage.removeItem("abu_staff_sync_token");
-    localStorage.removeItem("abu_staff_cookie_session");
-    localStorage.removeItem("abu_raghwa_current_user");
-    localStorage.removeItem("abu_raghwa_device_id");
+    try { await logout(); } catch (error) { console.error("Supabase logout failed", error); }
     setLocation("/auth");
   };
 

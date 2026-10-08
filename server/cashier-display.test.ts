@@ -12,12 +12,30 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(products).toContain("بالوزن — يسمح بربع ونصف كيلو");
   });
 
-  it("يسمح للكاشير بالكميات العشرية ويبحث بكود PLU", () => {
+  it("يسمح بالكميات العشرية ويبحث بالباركود عبر نتائج Supabase", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
-    expect(cashier).toContain("product.plu");
-    expect(cashier).toContain("quantityStep");
-    expect(cashier).toContain('type="number" min="0"');
-    expect(cashier).toContain("Math.round(cart.reduce");
+    const quantities = readFileSync(resolve(root, "client/src/lib/cashierQuantity.ts"), "utf8");
+    const products = readFileSync(resolve(root, "client/src/lib/supabase/products.ts"), "utf8");
+    expect(cashier).toContain('step={item.unit === "كيلو" || item.unit === "جرام" || item.unit === "لتر" ? "any" : 1}');
+    expect(cashier).toContain("normalizeCashierQuantity(rawQuantity)");
+    expect(quantities).toContain('unit === "كيلو" || unit === "جرام" || unit === "لتر" ? 0.001 : 1');
+    expect(quantities).toContain("Math.round(value * 1_000_000) / 1_000_000");
+    expect(cashier).toContain("findProductsByBarcode(barcodeProducts, code)");
+    expect(cashier).toContain("setBarcodeChoices(matches)");
+    expect(products).toContain('supabase.rpc("search_products_by_barcode"');
+  });
+
+  it("لا يعلن نجاح البيع ولا يفرغ السلة قبل تأكيد إنشاء الفاتورة", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const filteredProducts"));
+    const rpcCall = completeSale.indexOf("await createCloudInvoice(");
+    expect(rpcCall).toBeGreaterThanOrEqual(0);
+    expect(completeSale.indexOf("toast.success(")).toBeGreaterThan(rpcCall);
+    expect(completeSale.indexOf("setCart([])")).toBeGreaterThan(rpcCall);
+    expect(completeSale).toContain("catch (error)");
+    expect(completeSale).toContain("لم تُفرّغ السلة");
+    expect(cashier).not.toContain("localStorage");
+    expect(cashier).not.toContain("sessionStorage");
   });
 
   it("يسجل شاشة عرض عامة متصلة ببيانات المنتجات والعروض", () => {

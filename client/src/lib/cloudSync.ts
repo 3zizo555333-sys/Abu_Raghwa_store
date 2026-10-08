@@ -3,8 +3,6 @@ import { trpc } from './trpc';
 import { toast } from 'sonner';
 
 const PUBLIC_SYNC_KEYS = new Set([
-  'abu_raghwa_products',
-  'abu_raghwa_product_categories',
   'abu_catalog_manual_products',
   'abu_catalog_categories',
   'abu_catalog_companies',
@@ -18,6 +16,9 @@ const parsedStorageCache = new Map<string, { raw: string; value: unknown }>();
 const recentCloudSaves = new Map<string, { dataJson: string; savedAt: number }>();
 const collectionSaveQueues = new Map<string, Promise<void>>();
 const LARGE_COLLECTION_KEY = 'abu_raghwa_products';
+// These collections have authoritative normalized Supabase tables and must
+// never fall back to whole-list browser snapshots or legacy sync RPCs.
+const ROW_BACKED_KEYS = new Set(['abu_raghwa_products', 'abu_raghwa_product_categories']);
 const COLLECTION_PAGE_SIZE = 500;
 const getStableCloudItemId = (item: unknown) => {
   if (item && typeof item === "object") {
@@ -56,16 +57,17 @@ const readCachedLocalValue = <T,>(key: string, fallback: T): T => {
  * يقرأ ويحفظ البيانات في خادم قاعدة البيانات المشتركة مع تحديث دوري (Polling) كل 4 ثوانٍ
  */
 export function useCloudState<T>(key: string, initialValue: T, options?: { skipInitialSeed?: boolean }): [T, (value: T | ((val: T) => T)) => void, boolean] {
+  const isRowBackedKey = ROW_BACKED_KEYS.has(key);
   const [data, setData] = useState<T>(() => {
-    return readCachedLocalValue(key, initialValue);
+    return isRowBackedKey ? initialValue : readCachedLocalValue(key, initialValue);
   });
 
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const isInitialMount = useRef(true);
   const hasSeededEmptyCloudValue = useRef(false);
   const pendingSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const syncEnabled = PUBLIC_SYNC_KEYS.has(key) || Boolean(sessionStorage.getItem('abu_staff_sync_token'));
-  const isLargeCollection = key === LARGE_COLLECTION_KEY;
+  const syncEnabled = !isRowBackedKey && (PUBLIC_SYNC_KEYS.has(key) || Boolean(sessionStorage.getItem('abu_staff_sync_token')));
+  const isLargeCollection = key === LARGE_COLLECTION_KEY && !isRowBackedKey;
   const utils = trpc.useUtils();
 
   // Small settings keep the regular endpoint. The product collection is read
@@ -258,16 +260,20 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
   // عند أول استخدام لقسم قديم لم يُنقل بعد: لا نرفع النسخة المحلية إلا بعد
   // أن يؤكد الخادم فعلاً عدم وجود بيانات لهذا المفتاح، حتى لا نطغى على بيانات جهاز آخر.
   useEffect(() => {
-    if (options?.skipInitialSeed || cloudError || serverData !== null || hasSeededEmptyCloudValue.current) return;
+    if (isRowBackedKey || options?.skipInitialSeed || cloudError || serverData !== null || hasSeededEmptyCloudValue.current) return;
     const localRaw = localStorage.getItem(key);
     if (!localRaw || localRaw === "[]" || localRaw === "{}" || localRaw === "null") return;
 
     hasSeededEmptyCloudValue.current = true;
     saveCloudValue(saveCloud, key, localRaw);
-  }, [cloudError, data, key, options?.skipInitialSeed, saveCloud, serverData]);
+  }, [cloudError, data, isRowBackedKey, key, options?.skipInitialSeed, saveCloud, serverData]);
 
   // دالة التحديث المحلية والمرسلة للسحابة
   const setCloudData = useCallback((value: T | ((val: T) => T)) => {
+    if (isRowBackedKey) {
+      toast.error('تم نقل هذه البيانات إلى جداول Supabase. استخدم الواجهة السحابية المخصصة؛ لم تُحفظ أي نسخة محلية أو snapshot.');
+      return;
+    }
     setData(prev => {
       const nextValue = typeof value === 'function' ? (value as (val: T) => T)(prev) : value;
 
@@ -290,7 +296,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
       
       return nextValue;
     });
-  }, [cloudError, isLargeCollection, key, saveCloud, saveLargeCollection, serverData]);
+  }, [cloudError, isLargeCollection, isRowBackedKey, key, saveCloud, saveLargeCollection, serverData]);
 
   return [data, setCloudData, isLoading];
 }

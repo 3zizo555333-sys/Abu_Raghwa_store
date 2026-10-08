@@ -208,8 +208,8 @@ export default function LegacyCloudBridge({ enabled = true, publicOnly = false }
   }, []);
 
   const queueRefresh = () => {
-    // صفحة المنتجات تستخدم useCloudState مباشرة؛ إعادة تحميلها تُغلق نافذة التفاصيل.
-    // تتلقى الصفحة التغيير بنفسها من هوك السحابة، بينما تحتاج الصفحات القديمة فقط إلى إعادة القراءة.
+    // صفحة المنتجات تتلقى تغييرات الجداول من Supabase Realtime؛ إعادة تحميلها
+    // قد تُغلق نافذة التفاصيل، بينما تحتاج الصفحات القديمة فقط إلى إعادة القراءة.
     if (window.location.pathname === "/products") return;
     if (refreshQueued.current) return;
     refreshQueued.current = true;

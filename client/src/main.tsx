@@ -1,5 +1,5 @@
 import { trpc } from "@/lib/trpc";
-import { COOKIE_NAME, UNAUTHED_ERR_MSG } from '@shared/const';
+import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { httpBatchLink, TRPCClientError } from "@trpc/client";
 import { createRoot } from "react-dom/client";
@@ -8,18 +8,40 @@ import App from "./App";
 import "./index.css";
 import { syncPwaInstallability } from "./lib/pwaInstallability";
 
+// Purge obsolete browser-held credentials and plaintext section passwords.
+// Business collections are deliberately not touched by this migration cleanup.
+try {
+  for (const key of [
+    "abu_staff_sync_token",
+    "abu_staff_cookie_session",
+    "abu_raghwa_current_user",
+    "abu_raghwa_manager_session",
+    "abu_catalog_admin_token",
+    "abu_employee_finance_token",
+    "abu_raghwa_device_id",
+    "manus-cookie",
+    "manus-runtime-user-info",
+    "abu_raghwa_security_settings",
+  ]) {
+    localStorage.removeItem(key);
+    sessionStorage.removeItem(key);
+  }
+} catch {
+  // Storage may be unavailable in a restricted browser; the app never reads
+  // these legacy keys as an authentication fallback.
+}
+
 // Apply the current route's installability policy before React mounts. Public
 // QR pages never advertise an installable app or register a worker for visitors.
 syncPwaInstallability(window.location.pathname);
 
 const queryClient = new QueryClient();
 
-// تطبيق أبو رغوة يستخدم دخول الموظفين المحلي عبر /auth، وليس OAuth التلقائي.
-// لا نحوّل رفض استعلامات المزامنة إلى انتقال خارجي؛ لأن ذلك قد يعلق أجهزة العمال.
+// لا نحوّل رفض API إلى انتقال خارجي؛ مصادقة الموظفين تتم عبر Supabase Auth.
 const logApiError = (error: unknown) => {
   if (!(error instanceof TRPCClientError)) return;
   if (error.message === UNAUTHED_ERR_MSG) {
-    console.warn("[Local Auth] تم رفض طلب API؛ سيستمر التطبيق بدخول الموظف المحلي.");
+    console.warn("[API Auth] رُفض الطلب؛ تحقّق من جلسة الدخول والصلاحيات السحابية.");
   }
 };
 
@@ -57,33 +79,6 @@ const trpcClient = trpc.createClient({
       // The dashboard mounts many sync queries. Split long GET batches so
       // mobile browsers and proxies never reject one oversized request.
       maxURLLength: 1800,
-      headers() {
-        // Preview auto-login fallback: when the browser blocks iframe cookies
-        // (Safari ITP / private browsing / WebView), the runtime mirrors the
-        // session into sessionStorage so we can forward it as a Bearer token.
-        // The regular OAuth cookie flow keeps working and takes priority server-side.
-        const headers: Record<string, string> = {};
-        try {
-          const raw = sessionStorage.getItem("manus-cookie");
-          if (raw) {
-            const prefix = `${COOKIE_NAME}=`;
-            const pair = raw.split(";").find(s => s.trim().startsWith(prefix));
-            const token = pair?.trim().slice(prefix.length);
-            if (token) {
-              headers.Authorization = `Bearer ${token}`;
-            }
-          }
-          const catalogToken = sessionStorage.getItem("abu_catalog_admin_token");
-          if (catalogToken) headers["x-abu-catalog-session"] = catalogToken;
-          const employeeFinanceToken = sessionStorage.getItem("abu_employee_finance_token");
-          if (employeeFinanceToken) headers["x-abu-employee-finance-session"] = employeeFinanceToken;
-          const staffSyncToken = sessionStorage.getItem("abu_staff_sync_token") || localStorage.getItem("abu_staff_sync_token");
-          if (staffSyncToken) headers["x-abu-staff-session"] = staffSyncToken;
-        } catch {
-          // sessionStorage unavailable
-        }
-        return headers;
-      },
       fetch(input, init) {
         return globalThis.fetch(input, {
           ...(init ?? {}),

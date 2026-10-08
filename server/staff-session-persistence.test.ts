@@ -4,28 +4,45 @@ import { describe, expect, it } from "vitest";
 
 describe("استمرارية جلسة الموظف", () => {
   const root = resolve(import.meta.dirname, "..");
-  it("يحفظ جلسة cookie طويلة ويستخدمها دون عرض الرمز للمستخدم", () => {
-    const router = readFileSync(resolve(root, "server/routers.ts"), "utf8");
-    const auth = readFileSync(resolve(root, "client/src/pages/Auth.tsx"), "utf8");
-    expect(router).toContain('maxAge: STAFF_SYNC_COOKIE_MAX_AGE_MS');
-    expect(router).toContain('httpOnly: true');
-    expect(router).toContain('return { token, user: publicStaffUser');
-    expect(auth).toContain('trpc.staffSync.me.useQuery(undefined, { retry: false');
-    expect(auth).toContain('localStorage.setItem("abu_staff_cookie_session", "1")');
-    expect(auth).not.toContain('setError(syncToken)');
+  it("يسجل الدخول عبر Supabase Auth ويستعيد العضوية من الجلسة المعتمدة في cookie", () => {
+    const authPage = readFileSync(resolve(root, "client/src/pages/Auth.tsx"), "utf8");
+    const auth = readFileSync(resolve(root, "client/src/lib/supabase/auth.ts"), "utf8");
+    const client = readFileSync(resolve(root, "client/src/lib/supabase/client.ts"), "utf8");
+    const staffHook = readFileSync(resolve(root, "client/src/hooks/useStaffAccess.ts"), "utf8");
+    expect(authPage).toContain("supabase.auth.signInWithPassword");
+    expect(authPage).toContain("loadCurrentStaffSession()");
+    expect(auth).toContain("supabase.auth.getUser()");
+    expect(auth).toContain('.from("shop_memberships")');
+    expect(client).toContain("createBrowserClient");
+    expect(client).toContain("cookieOptions");
+    expect(client).toContain('name: "abu-raghwa-auth"');
+    expect(client).toContain("persistSession: true");
+    expect(staffHook).toContain("loadCurrentStaffSession");
   });
 
-  it("لا يمسح الجلسة عند خطأ شبكة مؤقت", () => {
-    const app = readFileSync(resolve(root, "client/src/App.tsx"), "utf8");
-    expect(app).toContain("temporary network/proxy failure must never destroy");
-    expect(app).toContain('!isTerminalStaffSessionError(staffSession.error)');
-    expect(app).toContain('localStorage.removeItem("abu_staff_cookie_session")');
+  it("لا يخزن جلسة الموظف أو رمزها في localStorage أو sessionStorage", () => {
+    const files = [
+      "client/src/pages/Auth.tsx",
+      "client/src/lib/supabase/auth.ts",
+      "client/src/lib/supabase/client.ts",
+      "client/src/hooks/useStaffAccess.ts",
+      "client/src/_core/hooks/useAuth.ts",
+    ];
+    const authSources = files.map(path => readFileSync(resolve(root, path), "utf8")).join("\n");
+    expect(authSources).not.toMatch(/\b(?:localStorage|sessionStorage)\b/);
+    expect(authSources).not.toContain("abu_staff_sync_token");
+    expect(authSources).not.toContain("staffSync");
   });
 
-  it("لا يمسح cookie marker إلا من تسجيل الخروج الصريح", () => {
-    const layout = readFileSync(resolve(root, "client/src/components/DashboardLayout.tsx"), "utf8");
+  it("يعيد التحقق من الجلسة عند تغير حالة Supabase ويستخدم Auth عند تسجيل الخروج", () => {
+    const staffHook = readFileSync(resolve(root, "client/src/hooks/useStaffAccess.ts"), "utf8");
+    const authHook = readFileSync(resolve(root, "client/src/_core/hooks/useAuth.ts"), "utf8");
     const gate = readFileSync(resolve(root, "client/src/components/AccessControlGate.tsx"), "utf8");
-    expect(layout).toContain('localStorage.removeItem("abu_staff_cookie_session")');
-    expect(gate).toContain('localStorage.getItem("abu_staff_cookie_session")');
+    expect(staffHook).toContain("retry: false");
+    expect(staffHook).toContain("supabase.auth.onAuthStateChange");
+    expect(staffHook).toContain("invalidateQueries({ queryKey: CURRENT_STAFF_QUERY_KEY })");
+    expect(authHook).toContain('getSupabaseClient().auth.signOut({ scope: "local" })');
+    expect(gate).toContain("useStaffAccess()");
+    expect(gate).toContain("isUserAllowed(user)");
   });
 });

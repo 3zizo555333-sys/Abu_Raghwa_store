@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect, useMemo } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
@@ -10,10 +11,8 @@ import { InventoryAlertManager } from "@/components/InventoryAlertManager";
 import { AdvancedInventoryAlerts } from "@/components/AdvancedInventoryAlerts";
 import { toast } from "sonner";
 import { calculateStoreProfitSummary, calculateTradeMarginSummary } from "@/lib/profit";
-import { useCloudState } from "@/lib/cloudSync";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
-import { trpc } from "@/lib/trpc";
 import { getPackageDescription } from "@/lib/packageUnits";
 import { prepareProductImageForUpload } from "@/lib/itemImageUpload";
 import { countProductsByCategory, filterProductsByCategory } from "@/lib/productCategories";
@@ -21,10 +20,13 @@ import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
+import { createProduct, deleteProducts, listProductCategories, updateProduct, uploadProductImage, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
+import { useCloudProducts } from "@/lib/supabase/useProducts";
 
 interface Product {
   id: string;
   code: string;
+  barcode?: string;
   plu?: string;
   saleMode?: "unit" | "weight";
   barcodes?: string[];
@@ -48,12 +50,71 @@ interface Product {
   catalogImageUrl?: string;
   contentUnit?: string;
   loyaltyPoints?: number;
+  version: number;
+  categoryId?: string | null;
+  imageStoragePath?: string | null;
 }
 
 const PACKAGE_TYPES = ["كرتونة", "حقيبة", "شكارة", "كيس", "عبوة", "بالة", "دستة", "جركن", "زجاجة", "رول", "شرينك"];
 const CONTENT_UNITS = ["قطعة", "كيلو", "جرام", "لتر", "مل", "باكيت", "رول", "منديل", "علبة"];
 const DEFAULT_CATEGORIES = ["منظفات", "ورقيات", "بامبرز وحفاضات", "مساحيق", "مستلزمات منزلية", "تجميل", "مبيدات حشرية"];
 const normalizeBarcodes = (value: string | string[] | undefined) => Array.from(new Set((Array.isArray(value) ? value : String(value || "").split(/[\s,;]+/)).map(item => item.trim()).filter(Boolean)));
+const mapCloudProduct = (product: CloudProduct): Product => ({
+  id: product.id,
+  code: product.code || "",
+  barcode: product.barcode || undefined,
+  plu: product.plu || undefined,
+  saleMode: product.saleMode,
+  barcodes: product.barcodes ?? [],
+  name: product.name,
+  unit: product.unit,
+  unitsPerPackage: product.unitsPerPackage,
+  wholesalePricePerUnit: product.wholesalePricePerUnit ?? 0,
+  wholesalePricePerPiece: product.wholesalePricePerPiece ?? 0,
+  retailPrice: product.retailPrice,
+  wholesaleRetailPrice: product.wholesaleRetailPrice,
+  bulkPrice: product.bulkPrice,
+  bulkProfitPercent: product.bulkProfitPercent ?? 0,
+  retailProfitPercent: product.retailProfitPercent ?? 0,
+  wholesalePrice: product.wholesalePricePerUnit ?? 0,
+  category: product.category,
+  categoryId: product.categoryId,
+  createdDate: product.createdAt,
+  quantity: product.quantity,
+  availableQuantity: product.quantity,
+  minQuantity: product.minQuantity,
+  contentUnit: product.contentUnit,
+  loyaltyPoints: product.loyaltyPoints,
+  imageUrl: product.imageUrl,
+  catalogImageUrl: product.imageUrl,
+  imageStoragePath: product.imageStoragePath,
+  version: product.version,
+});
+const toProductInput = (product: Product, category = product.category, categoryId = product.categoryId): ProductInput => ({
+  name: product.name,
+  code: product.code || null,
+  barcode: product.barcode ?? null,
+  barcodes: normalizeBarcodes(product.barcodes),
+  plu: product.plu || product.code || null,
+  saleMode: product.saleMode || "unit",
+  unit: product.unit,
+  contentUnit: product.contentUnit || "قطعة",
+  unitsPerPackage: product.unitsPerPackage || 1,
+  wholesalePricePerUnit: product.wholesalePricePerUnit || 0,
+  wholesalePricePerPiece: product.wholesalePricePerPiece || 0,
+  retailPrice: product.retailPrice || 0,
+  wholesaleRetailPrice: product.wholesaleRetailPrice ?? product.retailPrice ?? 0,
+  bulkPrice: product.bulkPrice || 0,
+  costPerUnit: product.wholesalePricePerUnit || 0,
+  costPerPiece: product.wholesalePricePerPiece || 0,
+  bulkProfitPercent: product.bulkProfitPercent || 0,
+  retailProfitPercent: product.retailProfitPercent || 0,
+  categoryId: categoryId ?? null,
+  category,
+  quantity: product.availableQuantity ?? product.quantity ?? 0,
+  minQuantity: product.minQuantity || 0,
+  loyaltyPoints: product.loyaltyPoints || 0,
+});
 const createEmptyProductForm = () => ({
   code: "",
   plu: "",
@@ -76,13 +137,19 @@ const createEmptyProductForm = () => ({
 export default function Products() {
   const [, navigate] = useLocation();
   const { isSeller, canViewSensitiveFinancials } = useStaffAccess();
-  const [products, setProducts] = useCloudState<Product[]>("abu_raghwa_products", []);
-  const [recipes] = useCloudState<any[]>("abu_raghwa_recipes", []);
-  const [customCategories, setCustomCategories] = useCloudState<string[]>("abu_raghwa_product_categories", []);
+  const queryClient = useQueryClient();
+  const [searchQuery, setSearchQuery] = useState("");
+  const productsQuery = useCloudProducts({ search: searchQuery, pageSize: 100 });
+  const products = useMemo(() => productsQuery.products.map(mapCloudProduct), [productsQuery.products]);
+  const [recipes] = useState<any[]>([]);
+  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const [categoryRecords, setCategoryRecords] = useState<ProductCategory[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingVersion, setEditingVersion] = useState<number | null>(null);
+  const [pendingImage, setPendingImage] = useState<{ blob: Blob; mimeType: "image/jpeg" | "image/png" | "image/webp" } | null>(null);
+  const [savingProduct, setSavingProduct] = useState(false);
   const [viewingProductId, setViewingProductId] = useState<string | null>(null);
-  const [searchQuery, setSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
@@ -98,11 +165,20 @@ export default function Products() {
   const [moveCategory, setMoveCategory] = useState("");
   const bulkPasteRef = useRef<HTMLTextAreaElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const uploadProductImage = trpc.productImages.upload.useMutation();
   const [formData, setFormData] = useState(createEmptyProductForm);
   const barcodeFieldError = getBarcodeFieldError(formData.code, formData.barcodes);
-  const availableCategories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...(Array.isArray(customCategories) ? customCategories : []), ...products.map(product => product.category).filter(Boolean)])), [customCategories, products]);
+  const availableCategories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...categoryRecords.map(item => item.name), ...customCategories, ...products.map(product => product.category).filter(Boolean)])), [categoryRecords, customCategories, products]);
   const categoryCounts = useMemo(() => countProductsByCategory(products, availableCategories), [products, availableCategories]);
+
+  useEffect(() => {
+    let active = true;
+    void listProductCategories().then(categories => { if (active) setCategoryRecords(categories); }).catch(error => {
+      console.warn("Could not load Supabase product categories", error);
+    });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => { setSelectedProductIds([]); }, [searchQuery]);
 
   const addProductCategory = () => {
     const category = newCategoryName.trim();
@@ -113,10 +189,10 @@ export default function Products() {
       setNewCategoryName("");
       return toast.message("الفئة موجودة بالفعل وتم اختيارها");
     }
-    setCustomCategories(current => [...(Array.isArray(current) ? current : []), category]);
+    setCustomCategories(current => [...current, category]);
     setFormData(current => ({ ...current, category }));
     setNewCategoryName("");
-    toast.success(`تمت إضافة فئة «${category}» وأصبحت متاحة للجميع`);
+    toast.success(`تم اختيار فئة «${category}»؛ ستُحفظ مع المنتج عند حفظه`);
   };
 
   const resetProductForm = () => {
@@ -181,12 +257,9 @@ export default function Products() {
     if (!canViewSensitiveFinancials) return;
     resetProductForm();
     setEditingId(null);
+    setEditingVersion(null);
+    setPendingImage(null);
     setShowForm(true);
-  };
-
-  const saveProducts = (updated: Product[]) => {
-    const sorted = [...updated].sort((a, b) => `${a.category || ""}-${a.name || ""}`.localeCompare(`${b.category || ""}-${b.name || ""}`, 'ar'));
-    setProducts(sorted);
   };
 
   const toggleProductSelection = (id: string) => {
@@ -200,80 +273,79 @@ export default function Products() {
       : Array.from(new Set([...current, ...visibleIds])));
   };
 
-  const moveSelectedProducts = () => {
+  const moveSelectedProducts = async () => {
+    if (!canViewSensitiveFinancials) return;
     const target = moveCategory.trim();
     if (!selectedProductIds.length) return toast.error("حدد منتجًا واحدًا على الأقل أولًا");
     if (!target) return toast.error("اختر الفئة التي ستُنقل إليها المنتجات");
-    const existing = availableCategories.find(item => item.localeCompare(target, "ar", { sensitivity: "base" }) === 0);
-    if (!existing) setCustomCategories(current => [...(Array.isArray(current) ? current : []), target]);
-    saveProducts(products.map(product => selectedProductIds.includes(product.id) ? { ...product, category: existing || target } : product));
+    const existing = availableCategories.find(item => item.localeCompare(target, "ar", { sensitivity: "base" }) === 0) || target;
+    const categoryId = categoryRecords.find(item => item.name === existing)?.id ?? null;
+    const selected = products.filter(product => selectedProductIds.includes(product.id));
+    if (selected.length !== selectedProductIds.length) return toast.error("تعذر العثور على كل المنتجات المحددة في الصفحات المحمّلة؛ ألغِ التحديد ثم أعد المحاولة.");
+    const outcomes = await Promise.allSettled(selected.map(product => updateProduct({ ...toProductInput(product, existing, categoryId), id: product.id, expectedVersion: product.version })));
+    await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+    setCustomCategories(current => current.includes(existing) ? current : [...current, existing]);
     setSelectedProductIds([]);
     setMoveCategory("");
-    toast.success(`تم نقل المنتجات المحددة إلى فئة «${existing || target}»`);
+    const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+    if (failures.length) {
+      const reason = failures[0].reason;
+      toast.error(`تم نقل ${selected.length - failures.length} من ${selected.length} منتجات فقط؛ راجع القائمة بعد التحديث. ${reason instanceof Error ? reason.message : "تعذر حفظ بعض الصفوف."}`);
+    } else {
+      toast.success(`تم نقل المنتجات المحددة إلى فئة «${existing}»`);
+    }
   };
 
-  const deleteSelectedProducts = () => {
+  const deleteSelectedProducts = async () => {
     if (!canViewSensitiveFinancials || !selectedProductIds.length) return toast.error("حدد منتجًا واحدًا على الأقل أولًا");
     if (!confirm(`هل أنت متأكد من حذف ${selectedProductIds.length} منتجًا محددًا؟`)) return;
-    saveProducts(products.filter(product => !selectedProductIds.includes(product.id)));
-    setSelectedProductIds([]);
-    toast.success("تم حذف المنتجات المحددة");
+    try {
+      const deleted = await deleteProducts(selectedProductIds);
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      setSelectedProductIds([]);
+      toast.success(`تم حذف ${deleted} منتجًا`);
+    } catch (error) {
+      toast.error(`تعذر حذف المنتجات؛ لم يؤكد الخادم الحذف. ${error instanceof Error ? error.message : "تحقق من الاتصال وحاول مجددًا."}`);
+    }
   };
 
-  const importProductsInBulk = () => {
+  const importProductsInBulk = async () => {
     if (!canViewSensitiveFinancials) return;
     const category = bulkCategoryName.trim();
-    if (!category) {
-      toast.error("اكتب اسم الفئة التي ستوضع فيها المنتجات أولًا");
-      return;
-    }
+    if (!category) return toast.error("اكتب اسم الفئة التي ستوضع فيها المنتجات أولًا");
     const rows = bulkImportText.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
-    if (!rows.length) {
-      toast.error("الصق أسماء المنتجات أولًا");
-      return;
+    if (!rows.length) return toast.error("الصق أسماء المنتجات أولًا");
+    const existingCategory = availableCategories.find(item => item.localeCompare(category, "ar", { sensitivity: "base" }) === 0) || category;
+    const categoryId = categoryRecords.find(item => item.name === existingCategory)?.id ?? null;
+    const imported = rows.map(row => {
+      const [name, code = ""] = row.split(/\t|\s*;\s*|\s*,\s*/).map(value => value.trim());
+      return { name, code };
+    }).filter(item => item.name);
+    if (!imported.length) return toast.error("لم أجد أسماء منتجات صالحة في النص الملصوق");
+    let savedCount = 0;
+    try {
+      for (let index = 0; index < imported.length; index++) {
+        const item = imported[index];
+        const generatedCode = item.code || `PRD-${Date.now().toString().slice(-4)}-${index + 1}`;
+        await createProduct({
+          name: item.name, code: generatedCode, barcode: item.code || null, barcodes: item.code ? [item.code] : [],
+          unit: "كرتونة", contentUnit: "قطعة", unitsPerPackage: 1, wholesalePricePerUnit: 0, wholesalePricePerPiece: 0,
+          retailPrice: 0, wholesaleRetailPrice: 0, bulkPrice: 0, costPerUnit: 0, costPerPiece: 0, categoryId, category: existingCategory,
+          quantity: 0, minQuantity: 0, loyaltyPoints: 0,
+        });
+        savedCount++;
+      }
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      setCustomCategories(current => current.includes(existingCategory) ? current : [...current, existingCategory]);
+      setBulkImportText("");
+      setBulkCategoryName("");
+      setShowBulkPaste(true);
+      setShowBulkImport(false);
+      toast.success(`تمت إضافة ${savedCount} منتجًا داخل فئة «${existingCategory}»؛ يمكنك إدخال الأسعار والوحدات يدويًا`);
+    } catch (error) {
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.error(`تم حفظ ${savedCount} من ${imported.length} منتج قبل تعذر متابعة الإضافة. ${error instanceof Error ? error.message : "تحقق من الاتصال ثم راجع القائمة."}`);
     }
-    const existingCategory = availableCategories.find(item => item.localeCompare(category, "ar", { sensitivity: "base" }) === 0);
-    if (!existingCategory) {
-      setCustomCategories(current => [...(Array.isArray(current) ? current : []), category]);
-    }
-    const imported: Product[] = rows.map((row, index) => {
-      const columns = row.split(/\t|\s*;\s*|\s*,\s*/).map(value => value.trim());
-      const [name, code = ""] = columns;
-      const id = `bulk_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 8)}`;
-      return {
-        id,
-        code: code || `PRD-${Date.now().toString().slice(-4)}-${index + 1}`,
-        barcodes: code ? [code] : [],
-        name,
-        unit: "كرتونة",
-        unitsPerPackage: 1,
-        wholesalePricePerUnit: 0,
-        wholesalePricePerPiece: 0,
-        retailPrice: 0,
-        wholesaleRetailPrice: 0,
-        bulkPrice: 0,
-        bulkProfitPercent: 0,
-        retailProfitPercent: 0,
-        wholesalePrice: 0,
-        category: existingCategory || category,
-        contentUnit: "قطعة",
-        loyaltyPoints: 0,
-        createdDate: new Date().toLocaleDateString("ar-EG"),
-        availableQuantity: 0,
-        quantity: 0,
-      };
-    }).filter(product => product.name.trim());
-    if (!imported.length) {
-      toast.error("لم أجد أسماء منتجات صالحة في النص الملصوق");
-      return;
-    }
-    const nextProducts = [...products, ...imported];
-    setBulkImportText("");
-    setBulkCategoryName("");
-    setShowBulkPaste(true);
-    setShowBulkImport(false);
-    window.setTimeout(() => saveProducts(nextProducts), 0);
-    toast.success(`تمت إضافة ${imported.length} منتجًا داخل فئة «${existingCategory || category}»؛ يمكنك الآن إدخال الأسعار والوحدات يدويًا`);
   };
 
   const scrollBulkPaste = (position: "top" | "bottom") => {
@@ -288,12 +360,11 @@ export default function Products() {
     setIsUploadingImage(true);
     try {
       const prepared = await prepareProductImageForUpload(file);
-      const productId = editingId || `product_${Date.now()}`;
-      const uploaded = await uploadProductImage.mutateAsync({ productId, fileName: prepared.fileName, mimeType: prepared.mimeType, dataUrl: prepared.dataUrl });
-      setFormData(current => ({ ...current, imageUrl: uploaded.url }));
-      toast.success("تم رفع صورة المنتج وحفظها سحابيًا");
+      setPendingImage({ blob: prepared.blob, mimeType: prepared.mimeType });
+      setFormData(current => ({ ...current, imageUrl: prepared.dataUrl }));
+      toast.message("تم تجهيز الصورة؛ ستُرفع إلى Supabase عند حفظ المنتج.");
     } catch (error) {
-      toast.error(error instanceof DOMException && error.name === "AbortError" ? "تعذر رفع الصورة خلال 20 ثانية؛ تحقق من الاتصال وحاول مرة أخرى" : error instanceof Error && error.message.includes("large") ? "الصورة كبيرة جدًا؛ جرّب صورة أصغر من 16 ميجابايت" : "تعذر تجهيز أو رفع صورة المنتج، حاول مرة أخرى");
+      toast.error(error instanceof Error && error.message.toLowerCase().includes("large") ? "الصورة كبيرة جدًا؛ جرّب صورة أصغر من 16 ميجابايت" : `تعذر تجهيز صورة المنتج. ${error instanceof Error ? error.message : "حاول مرة أخرى."}`);
     } finally {
       setIsUploadingImage(false);
     }
@@ -336,17 +407,11 @@ export default function Products() {
     return Number(((retailPrice - costPrice) / costPrice * 100).toFixed(1));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canViewSensitiveFinancials) return;
-    if (barcodeFieldError) {
-      toast.error("أدخل باركودًا واحدًا فقط في كل خانة؛ احذف الفاصلة أو أضف خانة جديدة لكل كود.");
-      return;
-    }
-    if (!formData.name.trim()) {
-      toast.error("❌ اسم المنتج مطلوب");
-      return;
-    }
+    if (barcodeFieldError) return toast.error("أدخل باركودًا واحدًا فقط في كل خانة؛ احذف الفاصلة أو أضف خانة جديدة لكل كود.");
+    if (!formData.name.trim()) return toast.error("اسم المنتج مطلوب");
 
     const wholesalePrice = Number(formData.wholesalePrice) || 0;
     const unitsPerPkg = Number(formData.unitsPerPackage) || 1;
@@ -354,49 +419,46 @@ export default function Products() {
     const retailPrice = Number(formData.retailPrice) || 0;
     const wholesaleRetailPrice = Number(formData.wholesaleRetailPrice) || retailPrice;
     const bulkPrice = Number(formData.bulkPrice) || 0;
-    const bulkProfit = calculateBulkProfit(bulkPrice, pieceCost);
-    const retailProfit = calculateRetailProfitPercent(wholesaleRetailPrice, pieceCost);
-
-    const productData: Product = {
-      id: editingId || Date.now().toString(),
-      code: formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`,
-      plu: formData.plu.trim() || formData.code.trim() || undefined,
-      saleMode: formData.saleMode,
-      barcodes: collectProductBarcodes(formData.code, formData.barcodes),
-      name: formData.name.trim(),
-      unit: formData.unit,
-      unitsPerPackage: unitsPerPkg,
-      wholesalePricePerUnit: wholesalePrice,
-      wholesalePricePerPiece: pieceCost,
-      retailPrice: retailPrice,
-      wholesaleRetailPrice,
-      bulkPrice: bulkPrice,
-      bulkProfitPercent: bulkProfit,
-      retailProfitPercent: retailProfit,
-      wholesalePrice: wholesalePrice,
-      category: formData.category.trim() || "منظفات عامة",
-      contentUnit: formData.contentUnit.trim() || "قطعة",
-      loyaltyPoints: normalizeLoyaltyPoints(formData.loyaltyPoints),
-      createdDate: new Date().toLocaleDateString('ar-EG'),
-      availableQuantity: Math.max(0, Number(formData.availableQuantity) || 0),
-      quantity: Math.max(0, Number(formData.availableQuantity) || 0),
-      imageUrl: formData.imageUrl || undefined,
-      catalogImageUrl: formData.imageUrl || undefined
+    const category = formData.category.trim() || "منظفات عامة";
+    const categoryId = categoryRecords.find(item => item.name === category)?.id ?? null;
+    const code = formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
+    const input: ProductInput = {
+      name: formData.name.trim(), code, barcode: formData.code.trim() || null,
+      plu: formData.plu.trim() || formData.code.trim() || null,
+      saleMode: formData.saleMode, barcodes: collectProductBarcodes(formData.code, formData.barcodes),
+      unit: formData.unit, unitsPerPackage: unitsPerPkg, wholesalePricePerUnit: wholesalePrice,
+      wholesalePricePerPiece: pieceCost, retailPrice, wholesaleRetailPrice, bulkPrice,
+      bulkProfitPercent: calculateBulkProfit(bulkPrice, pieceCost),
+      retailProfitPercent: calculateRetailProfitPercent(wholesaleRetailPrice, pieceCost),
+      costPerUnit: wholesalePrice, costPerPiece: pieceCost, categoryId, category,
+      contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: normalizeLoyaltyPoints(formData.loyaltyPoints),
+      quantity: Math.max(0, Number(formData.availableQuantity) || 0), minQuantity: 0,
     };
 
-    if (editingId) {
-      const updated = products.map(p => p.id === editingId ? productData : p);
-      saveProducts(updated);
-      toast.success("✨ تم تحديث المنتج بنجاح وتحديثه سحابياً لجميع الأجهزة");
-    } else {
-      const updated = [...products, productData];
-      saveProducts(updated);
-      toast.success("✨ تمت إضافة المنتج بنجاح ومزامنته مع أجهزة الموظفين");
+    setSavingProduct(true);
+    try {
+      const saved = editingId
+        ? await updateProduct({ ...input, id: editingId, expectedVersion: editingVersion ?? 0 })
+        : await createProduct(input);
+      setEditingId(saved.id);
+      setEditingVersion(saved.version);
+      if (pendingImage) {
+        await uploadProductImage({ productId: saved.id, expectedVersion: saved.version, blob: pendingImage.blob, mimeType: pendingImage.mimeType });
+        setEditingVersion(saved.version + 1);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.success(editingId ? "تم تحديث المنتج في Supabase بنجاح" : "تمت إضافة المنتج إلى Supabase بنجاح");
+      setFormData(createEmptyProductForm());
+      setShowForm(false);
+      setEditingId(null);
+      setEditingVersion(null);
+      setPendingImage(null);
+    } catch (error) {
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.error(`لم يؤكد الخادم حفظ التغييرات. ${error instanceof Error ? error.message : "تحقق من الاتصال ثم أعد المحاولة."}`);
+    } finally {
+      setSavingProduct(false);
     }
-
-    setFormData(createEmptyProductForm());
-    setShowForm(false);
-    setEditingId(null);
   };
 
   const handleEdit = (product: Product) => {
@@ -420,32 +482,40 @@ export default function Products() {
       imageUrl: product.imageUrl || product.catalogImageUrl || ""
     });
     setEditingId(product.id);
+    setEditingVersion(product.version);
+    setPendingImage(null);
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (!canViewSensitiveFinancials) return;
     if (!confirm("هل أنت متأكد من حذف هذا المنتج؟")) return;
-    const updated = products.filter(p => p.id !== id);
-    saveProducts(updated);
-    toast.success("🗑️ تم حذف المنتج بنجاح وتحديث السحابة");
+    try {
+      const deleted = await deleteProducts([id]);
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.success(deleted ? "تم حذف المنتج" : "لم يحذف الخادم المنتج المحدد");
+    } catch (error) {
+      toast.error(`تعذر حذف المنتج؛ لم يؤكد الخادم الحذف. ${error instanceof Error ? error.message : "تحقق من الاتصال وحاول مجددًا."}`);
+    }
   };
 
-  const updateStock = (product: Product, difference: number) => {
+  const updateStock = async (product: Product, difference: number) => {
     if (!canViewSensitiveFinancials) return;
     const nextQuantity = Math.max(0, Number(product.availableQuantity || 0) + difference);
-    saveProducts(products.map(item => item.id === product.id ? {
-      ...item,
-      availableQuantity: nextQuantity,
-      quantity: nextQuantity
-    } : item));
-    toast.success(`تم تحديث مخزون ${product.name} إلى ${nextQuantity} ${product.unit || "وحدة"} ومزامنته سحابياً`);
+    try {
+      await updateProduct({ ...toProductInput({ ...product, availableQuantity: nextQuantity, quantity: nextQuantity }), id: product.id, expectedVersion: product.version });
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.success(`تم تحديث مخزون ${product.name} إلى ${nextQuantity} ${product.unit || "وحدة"}`);
+    } catch (error) {
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.error(`تعذر تحديث المخزون. ${error instanceof Error ? error.message : "تحقق من الاتصال وأعد المحاولة."}`);
+    }
   };
 
   const categoryProducts = useMemo(() => filterProductsByCategory(products, categoryFilter), [products, categoryFilter]);
   const filteredProducts = useMemo(() => categoryProducts.filter(p => {
     const query = searchQuery.toLowerCase();
-    return p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query) || normalizeBarcodes(p.barcodes || p.code).some(code => code.toLowerCase().includes(query)) || (p.category && p.category.toLowerCase().includes(query));
+    return p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query) || (p.barcode || "").toLowerCase().includes(query) || normalizeBarcodes(p.barcodes || p.code).some(code => code.toLowerCase().includes(query)) || (p.category && p.category.toLowerCase().includes(query));
   }), [categoryProducts, searchQuery]);
   const visibleProducts = useMemo(() => filteredProducts.slice(0, 120), [filteredProducts]);
   const bulkImportCount = useMemo(() => bulkImportText.split(/\r?\n/).map(row => row.trim()).filter(Boolean).length, [bulkImportText]);
@@ -477,6 +547,8 @@ export default function Products() {
     return (
       <div className="min-h-screen bg-slate-50 p-4 pb-24" dir="rtl">
         <main className="mx-auto max-w-5xl space-y-5">
+          {productsQuery.isLoading && <Card><CardContent className="p-4 text-sm text-slate-600">جاري تحميل المنتجات من Supabase...</CardContent></Card>}
+          {productsQuery.isError && <Card className="border-red-200"><CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-red-700"><span>تعذر تحميل المنتجات من Supabase: {productsQuery.error instanceof Error ? productsQuery.error.message : "تحقق من الاتصال والجلسة."}</span><Button type="button" variant="outline" onClick={() => void productsQuery.refetch()}>إعادة المحاولة</Button></CardContent></Card>}
           <header className="rounded-3xl bg-white p-5 shadow-sm">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
@@ -490,12 +562,14 @@ export default function Products() {
           <Card className="border border-blue-100 shadow-sm">
             <CardContent className="space-y-3 p-4">
               <div className="flex flex-wrap items-center justify-between gap-2"><p className="font-black text-slate-900">الفئات</p>{categoryFilter !== "all" && <Button type="button" size="sm" variant="outline" onClick={() => selectCategory("all")}><X className="ml-1 h-4 w-4" />كل الفئات</Button>}</div>
-              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"><Button type="button" size="sm" variant={categoryFilter === "all" ? "default" : "outline"} onClick={() => selectCategory("all")} className="justify-between">كل المنتجات <span>{products.length}</span></Button>{categoryCounts.map(({ category, count }) => <Button key={category} type="button" size="sm" variant={categoryFilter === category ? "default" : "outline"} onClick={() => selectCategory(category)} className="justify-between whitespace-normal text-right">{category} <span>{count}</span></Button>)}</div>
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5"><Button type="button" size="sm" variant={categoryFilter === "all" ? "default" : "outline"} onClick={() => selectCategory("all")} className="justify-between">كل المنتجات <span>{productsQuery.total}</span></Button>{categoryCounts.map(({ category, count }) => <Button key={category} type="button" size="sm" variant={categoryFilter === category ? "default" : "outline"} onClick={() => selectCategory(category)} className="justify-between whitespace-normal text-right">{category} <span>{count}</span></Button>)}</div>
               <div className="flex gap-2"><div className="relative min-w-0 flex-1"><Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" /><Input value={searchQuery} onChange={(event) => setSearchQuery(event.target.value)} placeholder="ابحث باسم المنتج أو الكود..." className="pr-10" /></div><Button type="button" variant="outline" onClick={() => setShowBarcodeSearchScanner(true)} className="shrink-0 border-orange-300 text-orange-700"><Camera className="ml-1 h-4 w-4" />تصوير الكود</Button></div>
             </CardContent>
           </Card>
 
-          {filteredProducts.length === 0 ? (
+          {productsQuery.isLoading && products.length === 0 ? (
+            <Card className="border-0 shadow-sm"><CardContent className="py-16 text-center text-slate-500">جاري تحميل المنتجات...</CardContent></Card>
+          ) : filteredProducts.length === 0 ? (
             <Card className="border-0 shadow-sm"><CardContent className="py-16 text-center text-slate-500">لا توجد منتجات مطابقة للبحث.</CardContent></Card>
           ) : (
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -512,6 +586,7 @@ export default function Products() {
               ))}
             </section>
           )}
+          {productsQuery.hasNextPage && <div className="flex justify-center"><Button type="button" variant="outline" onClick={() => void productsQuery.fetchNextPage()} disabled={productsQuery.isFetchingNextPage}>{productsQuery.isFetchingNextPage ? "جاري تحميل المزيد..." : `تحميل المزيد (${products.length} من ${productsQuery.total})`}</Button></div>}
           <AdvancedBarcodeScanner isOpen={showBarcodeSearchScanner} onClose={() => setShowBarcodeSearchScanner(false)} onDetect={(code) => { setSearchQuery(code); setCategoryFilter("all"); setShowBarcodeSearchScanner(false); toast.success(`تم البحث بالكود: ${code}`); }} title="تصوير باركود للبحث عن السعر" />
         </main>
       </div>
@@ -561,6 +636,8 @@ export default function Products() {
       </header>
 
       <main className="max-w-7xl mx-auto space-y-6">
+        {productsQuery.isLoading && <Card><CardContent className="p-4 text-sm text-slate-600">جاري تحميل المنتجات من Supabase...</CardContent></Card>}
+        {productsQuery.isError && <Card className="border-red-200"><CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-red-700"><span>تعذر تحميل المنتجات من Supabase: {productsQuery.error instanceof Error ? productsQuery.error.message : "تحقق من الاتصال والجلسة."}</span><Button type="button" variant="outline" onClick={() => void productsQuery.refetch()}>إعادة المحاولة</Button></CardContent></Card>}
         {/* Store Profit Summary Banner */}
         {showStats && (
           <Card className="border-2 border-indigo-200 bg-gradient-to-r from-indigo-50 to-blue-50 shadow-lg">
@@ -604,14 +681,14 @@ export default function Products() {
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <CardTitle className="text-lg">قائمة الفئات</CardTitle>
-                <p className="mt-1 text-xs text-slate-500">اضغط على أي فئة لعرض المنتجات المسجلة داخلها فقط.</p>
+                <p className="mt-1 text-xs text-slate-500">اضغط على أي فئة لعرض المنتجات المحمّلة المسجلة داخلها فقط؛ حمّل المزيد لاستكمال الصفحات.</p>
               </div>
               {categoryFilter !== "all" && <Button type="button" size="sm" variant="outline" onClick={() => selectCategory("all")}><X className="ml-1 h-4 w-4" />عرض كل الفئات</Button>}
             </div>
           </CardHeader>
           <CardContent className="grid grid-cols-2 gap-2 p-4 sm:grid-cols-3 lg:grid-cols-5">
             <Button type="button" variant={categoryFilter === "all" ? "default" : "outline"} onClick={() => selectCategory("all")} className="h-auto min-h-16 justify-between gap-2 whitespace-normal text-right">
-              <span>كل المنتجات</span><span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{products.length}</span>
+              <span>كل المنتجات</span><span className="rounded-full bg-white/20 px-2 py-0.5 text-xs">{productsQuery.total}</span>
             </Button>
             {categoryCounts.map(({ category, count }) => (
               <Button key={category} type="button" variant={categoryFilter === category ? "default" : "outline"} onClick={() => selectCategory(category)} className="h-auto min-h-16 justify-between gap-2 whitespace-normal text-right">
@@ -670,7 +747,9 @@ export default function Products() {
                 <Button type="button" variant="ghost" onClick={() => setSelectedProductIds([])}>إلغاء التحديد</Button>
               </div>
             </div>}
-            {filteredProducts.length === 0 ? (
+            {productsQuery.isLoading && products.length === 0 ? (
+              <div className="text-center py-16 text-gray-500">جاري تحميل المنتجات من Supabase...</div>
+            ) : filteredProducts.length === 0 ? (
               <div className="text-center py-16 text-gray-500">
                 <Package className="w-16 h-16 mx-auto text-gray-300 mb-3" />
                 <p className="font-semibold text-lg">لا توجد منتجات مسجلة حتى الآن</p>
@@ -808,6 +887,7 @@ export default function Products() {
               </div>
               </>
             )}
+            {productsQuery.hasNextPage && <div className="mt-5 flex justify-center"><Button type="button" variant="outline" onClick={() => void productsQuery.fetchNextPage()} disabled={productsQuery.isFetchingNextPage}>{productsQuery.isFetchingNextPage ? "جاري تحميل المزيد..." : `تحميل المزيد (${products.length} من ${productsQuery.total})`}</Button></div>}
           </CardContent>
         </Card>
       </main>
@@ -978,7 +1058,7 @@ export default function Products() {
                 <div className="md:col-span-2 rounded-xl border border-violet-200 bg-violet-50 p-4">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                     {formData.imageUrl ? <img src={formData.imageUrl} alt="معاينة المنتج" className="h-24 w-24 rounded-2xl border-2 border-white bg-white object-cover shadow" /> : <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-white text-violet-400"><ImagePlus className="h-8 w-8" /></div>}
-                    <div className="flex-1"><p className="font-black text-violet-950">صورة المنتج أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">اختَر صورة من المعرض أو صوّر المنتج مباشرة بالكاميرا.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label>{formData.imageUrl && <Button type="button" size="sm" variant="outline" onClick={() => setFormData(current => ({ ...current, imageUrl: "" }))}>إزالة الصورة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري تجهيز ورفع صورة الكاميرا...</p>}</div>
+                    <div className="flex-1"><p className="font-black text-violet-950">صورة المنتج أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">اختَر صورة من المعرض أو صوّر المنتج مباشرة بالكاميرا.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label>{pendingImage && <Button type="button" size="sm" variant="outline" onClick={() => { setPendingImage(null); setFormData(current => ({ ...current, imageUrl: editingId ? products.find(product => product.id === editingId)?.imageUrl || "" : "" })); }}>إلغاء الصورة الجديدة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري تجهيز ورفع صورة الكاميرا...</p>}</div>
                   </div>
                 </div>
               </div>
@@ -987,15 +1067,16 @@ export default function Products() {
                 <Button
                   type="button"
                   variant="outline"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => { setShowForm(false); setPendingImage(null); }}
                 >
                   إلغاء
                 </Button>
                 <Button
                   type="submit"
                   className="bg-blue-600 hover:bg-blue-700 text-white font-bold px-6"
+                  disabled={savingProduct || isUploadingImage}
                 >
-                  {editingId ? "حفظ التعديلات" : "إضافة وحفظ سحابي"}
+                  {savingProduct ? "جاري الحفظ في Supabase..." : editingId ? "حفظ التعديلات" : "إضافة وحفظ سحابي"}
                 </Button>
               </div>
             </form>
@@ -1037,7 +1118,7 @@ export default function Products() {
             <div className="mt-4 rounded-2xl border border-indigo-200 bg-indigo-50 p-4">
               <label className="mb-2 block text-sm font-black text-indigo-950">اسم الفئة التي ستوضع فيها كل المنتجات *</label>
               <Input value={bulkCategoryName} onChange={event => setBulkCategoryName(event.target.value)} placeholder="مثال: منظفات أو ورقيات أو مستحضرات تجميل" />
-              <p className="mt-2 text-xs text-indigo-700">إن كانت الفئة جديدة ستُضاف تلقائيًا إلى قائمة الفئات.</p>
+              <p className="mt-2 text-xs text-indigo-700">تُحفظ الفئة باسمها مع كل منتج جديد؛ لا تتوفر عملية مستقلة لإنشاء سجل فئة في الطبقة الحالية.</p>
             </div>
             <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50 p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">

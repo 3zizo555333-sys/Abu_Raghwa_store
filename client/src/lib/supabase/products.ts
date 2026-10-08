@@ -17,6 +17,8 @@ export type CloudProduct = {
   retailPrice: number;
   wholesaleRetailPrice: number;
   bulkPrice: number;
+  bulkProfitPercent?: number;
+  retailProfitPercent?: number;
   wholesalePricePerUnit?: number;
   wholesalePricePerPiece?: number;
   costPerUnit?: number;
@@ -27,6 +29,7 @@ export type CloudProduct = {
   minQuantity: number;
   imageId?: string | null;
   imageStoragePath?: string | null;
+  imageUrl?: string;
   loyaltyPoints: number;
   version: number;
   createdAt: string;
@@ -60,33 +63,48 @@ export type ProductInput = {
   loyaltyPoints?: number;
 };
 
-type ShopContext = { shopId: string; role: "manager" | "admin" | "supervisor" | "seller" };
+export type ProductCategory = { id: string; name: string };
+
+export type ShopContext = { userId: string; shopId: string; role: "manager" | "admin" | "supervisor" | "seller" };
 
 /** Membership is read from the authoritative database; the short-lived cache is memory-only. */
 let shopContextPromise: Promise<ShopContext> | undefined;
 let shopContextExpiresAt = 0;
+let shopContextUserId: string | undefined;
+
+export function resetActiveShopContextCache() {
+  shopContextPromise = undefined;
+  shopContextExpiresAt = 0;
+  shopContextUserId = undefined;
+}
+
 export async function getActiveShopContext(forceRefresh = false): Promise<ShopContext> {
-  if (!forceRefresh && shopContextPromise && Date.now() < shopContextExpiresAt) return shopContextPromise;
+  const supabase = getSupabaseClient();
+  const { data: sessionResult, error: sessionError } = await supabase.auth.getSession();
+  const userId = sessionResult.session?.user.id;
+  if (sessionError || !userId) {
+    resetActiveShopContextCache();
+    throw new Error("انتهت الجلسة السحابية. سجّل الدخول مجددًا.");
+  }
+  if (!forceRefresh && shopContextUserId === userId && shopContextPromise && Date.now() < shopContextExpiresAt) return shopContextPromise;
+  shopContextUserId = userId;
   shopContextPromise = (async () => {
-    const supabase = getSupabaseClient();
-    const { data: userResult, error: userError } = await supabase.auth.getUser();
-    if (userError || !userResult.user) throw new Error("انتهت الجلسة السحابية. سجّل الدخول مجددًا.");
     const { data, error } = await supabase
       .from("shop_memberships")
       .select("shop_id, role, status")
-      .eq("user_id", userResult.user.id)
+      .eq("user_id", userId)
       .eq("status", "active")
       .limit(2);
     if (error) throw new Error(error.message);
     if (!data?.length) throw new Error("لا يوجد للمستخدم عضوية نشطة في المحل. اطلب من المدير تفعيل الحساب.");
     if (data.length > 1) throw new Error("للمستخدم أكثر من محل. يجب اختيار المحل النشط قبل متابعة العمل.");
-    return { shopId: data[0].shop_id, role: data[0].role };
+    return { userId, shopId: data[0].shop_id, role: data[0].role };
   })();
   shopContextExpiresAt = Date.now() + 15_000;
   try {
     return await shopContextPromise;
   } catch (error) {
-    shopContextPromise = undefined;
+    if (shopContextUserId === userId) resetActiveShopContextCache();
     throw error;
   }
 }
@@ -106,6 +124,7 @@ export function mapProductRow(row: Partial<ProductRow> & Record<string, unknown>
     unit: String(row.unit_name ?? "عبوة"), contentUnit: String(row.content_unit ?? "قطعة"),
     unitsPerPackage: numberOr(row.units_per_package, 1),
     retailPrice: numberOr(row.retail_price), wholesaleRetailPrice: numberOr(row.wholesale_retail_price), bulkPrice: numberOr(row.bulk_price),
+    bulkProfitPercent: row.bulk_profit_percent == null ? undefined : numberOr(row.bulk_profit_percent), retailProfitPercent: row.retail_profit_percent == null ? undefined : numberOr(row.retail_profit_percent),
     wholesalePricePerUnit: row.wholesale_price_per_unit == null ? undefined : numberOr(row.wholesale_price_per_unit),
     wholesalePricePerPiece: row.wholesale_price_per_piece == null ? undefined : numberOr(row.wholesale_price_per_piece),
     costPerUnit: row.cost_per_unit == null ? undefined : numberOr(row.cost_per_unit),
@@ -145,7 +164,39 @@ export async function listProductsPage(input: { cursor?: ProductCursor | null; s
     p_limit: Math.min(Math.max(input.limit ?? 50, 1), 100),
   });
   const data = requireCloudResult(result) as unknown as ProductPage;
-  return { ...data, items: data.items.map(item => mapProductRow(item as unknown as Partial<ProductRow> & Record<string, unknown>, shopId)) };
+  const items = await Promise.all(data.items.map(async item => {
+    const product = mapProductRow(item as unknown as Partial<ProductRow> & Record<string, unknown>, shopId);
+    if (product.imageStoragePath) {
+      try { product.imageUrl = await getSignedProductImageUrl(product.imageStoragePath); } catch { /* Keep product rows available if a private image URL expires or cannot be signed. */ }
+    }
+    return product;
+  }));
+  return { ...data, items };
+}
+
+export async function searchProductsByBarcode(barcode: string): Promise<ProductPage> {
+  const code = barcode.trim();
+  if (!code) return { items: [], total: 0, has_more: false, next_cursor: null };
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  const result = await supabase.rpc("search_products_by_barcode", { p_shop_id: shopId, p_barcode: code });
+  const rows = requireCloudResult(result);
+  if (!Array.isArray(rows)) throw new Error("استجابة بحث الباركود السحابي غير صالحة.");
+  const items = await Promise.all(rows.map(async row => {
+    const product = mapProductRow(row as Partial<ProductRow> & Record<string, unknown>, shopId);
+    if (product.imageStoragePath) {
+      try { product.imageUrl = await getSignedProductImageUrl(product.imageStoragePath); } catch { /* A missing signed URL must not hide the product result. */ }
+    }
+    return product;
+  }));
+  return { items, total: items.length, has_more: false, next_cursor: null };
+}
+
+export async function listProductCategories(): Promise<ProductCategory[]> {
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  const result = await supabase.from("product_categories").select("id, name").eq("shop_id", shopId).order("sort_order").order("name");
+  return requireCloudResult(result).map(category => ({ id: category.id, name: category.name }));
 }
 
 export async function createProduct(input: ProductInput): Promise<CloudProduct> {
@@ -176,6 +227,40 @@ export async function deleteProducts(ids: string[]): Promise<number> {
   const { shopId } = await getActiveShopContext();
   const result = await supabase.rpc("soft_delete_products", { p_shop_id: shopId, p_product_ids: ids });
   return requireCloudResult(result);
+}
+
+export async function uploadProductImage(input: { productId: string; expectedVersion: number; blob: Blob; mimeType: "image/jpeg" | "image/png" | "image/webp" }): Promise<{ imageId: string; storagePath: string }> {
+  assertCloudOnline();
+  if (input.blob.size < 1 || input.blob.size > 5 * 1024 * 1024) throw new Error("حجم صورة المنتج يجب ألا يتجاوز 5 ميجابايت بعد التجهيز.");
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  const imageId = crypto.randomUUID();
+  const extension = input.mimeType === "image/png" ? "png" : input.mimeType === "image/webp" ? "webp" : "jpg";
+  const storagePath = `${shopId}/products/${input.productId}/${imageId}.${extension}`;
+  const upload = await supabase.storage.from("product-images").upload(storagePath, input.blob, { contentType: input.mimeType, upsert: false });
+  if (upload.error) requireCloudResult({ data: null, error: upload.error });
+  const registered = await supabase.rpc("register_product_image", {
+    p_shop_id: shopId,
+    p_product_id: input.productId,
+    p_expected_version: input.expectedVersion,
+    p_image_id: imageId,
+    p_storage_path: storagePath,
+    p_content_type: input.mimeType,
+    p_size_bytes: input.blob.size,
+  });
+  requireCloudResult(registered);
+  return { imageId, storagePath };
+}
+
+export async function getSignedProductImageUrl(storagePath: string, expiresInSeconds = 3600): Promise<string> {
+  const supabase = getSupabaseClient();
+  const { data, error } = await supabase.storage.from("product-images").createSignedUrl(storagePath, Math.min(Math.max(expiresInSeconds, 60), 3600));
+  if (error) {
+    requireCloudResult<string>({ data: null, error });
+    throw new Error(error.message);
+  }
+  if (!data?.signedUrl) throw new Error("تعذر إنشاء رابط صورة المنتج.");
+  return data.signedUrl;
 }
 
 export async function subscribeToShopChanges(shopId: string, onChange: () => void): Promise<() => Promise<unknown>> {

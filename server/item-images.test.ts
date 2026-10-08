@@ -5,15 +5,20 @@ import { describe, expect, it } from "vitest";
 const projectRoot = resolve(import.meta.dirname, "..");
 
 describe("رفع صور المنتجات والتركيبات", () => {
-  it("يوفر مسار تخزين صور منفصلًا ويقيد نوع وحجم الصورة", () => {
+  it("يرفع صورة المنتج كـ Blob مباشرة إلى Supabase Storage مع تسجيلها سحابيًا", () => {
     const router = readFileSync(resolve(projectRoot, "server/routers.ts"), "utf8");
+    const productsApi = readFileSync(resolve(projectRoot, "client/src/lib/supabase/products.ts"), "utf8");
+    const productsPage = readFileSync(resolve(projectRoot, "client/src/pages/Products.tsx"), "utf8");
     expect(router).toContain("itemImages: router");
     expect(router).toContain("item-images/${safeItemId}");
-    expect(router).toContain("productImages: router");
-    expect(router).toContain("product-images/${safeProductId}");
-    expect(router).toContain("await requireStaffSyncSession(ctx.req)");
     expect(router).toContain("image/webp");
     expect(router).toContain("6 * 1024 * 1024");
+    expect(productsApi).toContain('supabase.storage.from("product-images").upload(storagePath, input.blob');
+    expect(productsApi).toContain('supabase.rpc("register_product_image"');
+    expect(productsApi).toContain("5 * 1024 * 1024");
+    expect(productsApi).not.toContain("dataUrl");
+    expect(productsPage).toContain("uploadProductImage({ productId: saved.id");
+    expect(productsPage).toContain("blob: pendingImage.blob");
   });
 
   it("يعرض الصورة ويتيح المعرض والكاميرا لكل من المنتج والتركيبة", () => {
@@ -28,7 +33,8 @@ describe("رفع صور المنتجات والتركيبات", () => {
     }
     expect(products).toContain("prepareProductImageForUpload");
     expect(recipes).toContain("prepareItemImageForUpload");
-    expect(products).toContain("productImages.upload");
+    expect(products).toContain("uploadProductImage({ productId: saved.id");
+    expect(recipes).toContain("uploadRecipeImage.mutateAsync");
     expect(uploadHelper).toContain("convertToJpeg");
     expect(uploadHelper).toContain("DIRECT_UPLOAD_BYTES");
     expect(products).toContain("imageUrl: product.imageUrl || product.catalogImageUrl");

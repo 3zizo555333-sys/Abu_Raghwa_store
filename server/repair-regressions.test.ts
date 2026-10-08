@@ -23,14 +23,18 @@ describe("large catalog repair regressions", () => {
     expect(db).toContain("loyaltyPoints?: number");
   });
 
-  it("matches every saved alias in the cashier and disambiguates shared codes", () => {
+  it("matches barcode aliases returned by Supabase and disambiguates shared codes", () => {
     const cashier = read("client/src/pages/Cashier.tsx");
-    expect(cashier).toContain("findProductsByBarcode(safeProducts, rawCode)");
+    const products = read("client/src/lib/supabase/products.ts");
+    const productHook = read("client/src/lib/supabase/useProducts.ts");
+    expect(products).toContain('supabase.rpc("search_products_by_barcode"');
+    expect(productHook).toContain("searchProductsByBarcode(input.barcode)");
+    expect(cashier).toContain("findProductsByBarcode(barcodeProducts, code)");
+    expect(cashier).toContain("normalizeBarcodeToken(barcodeLookup)");
     expect(read("client/src/lib/barcodes.ts")).toContain("normalizeBarcodeValues(product.barcodes)");
     expect(cashier).toContain("setBarcodeChoices(matches)");
     expect(cashier).toContain("barcodeChoices.map(product =>");
-    expect(cashier).toContain("getProductBarcodes(product).join");
-    expect(cashier).toContain("loyaltyPoints: Math.max");
+    expect(cashier).toContain("[product.barcode, ...(product.barcodes ?? [])].filter(Boolean).join");
   });
 
   it("keeps each product barcode in its own editable field and preserves legacy values", () => {

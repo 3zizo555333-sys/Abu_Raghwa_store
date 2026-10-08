@@ -1,5 +1,5 @@
 import { Toaster } from "@/components/ui/sonner";
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
 import { Route, Switch, useLocation } from "wouter";
@@ -68,12 +68,12 @@ import VoiceCommandHandler from "./components/VoiceCommandHandler";
 import { NotificationProvider } from "./components/NotificationSystem";
 import { SecurityProvider } from "./contexts/SecurityContext";
 import { withPasswordProtection } from "./components/withPasswordProtection";
-import LegacyCloudBridge from "./components/LegacyCloudBridge";
 import AccessControlGate, { withManagerRole, withSupervisorRole } from "./components/AccessControlGate";
-import { trpc } from "@/lib/trpc";
 import PageLoadingSkeleton from "./components/PageLoadingSkeleton";
 import { isPublicCustomerPath } from "@shared/pwaInstallability";
 import { syncPwaInstallability } from "./lib/pwaInstallability";
+import { useStaffAccess } from "@/hooks/useStaffAccess";
+import { isUserAllowed } from "@/lib/accessControl";
 
 const Home = lazy(() => import("./pages/Home"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -188,7 +188,7 @@ function Router() {
       <Route path={"/cashier"} component={withPasswordProtection(Cashier, 'newsale', 'كاشير الكمبيوتر')} />
       <Route path={"/reports"} component={withManagerRole(withPasswordProtection(Reports, 'viewreports', 'عرض التقارير'))} />
       <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'viewreports', 'جرد المبيعات والأرباح'))} />
-      <Route path={"/employees"} component={Employees} />
+      <Route path={"/employees"} component={withSupervisorRole(Employees)} />
       <Route path={"/tasks"} component={withPasswordProtection(Tasks, 'tasks', 'إدارة المهام')} />
       <Route path={"/points-system"} component={withPasswordProtection(PointsSystem, 'points', 'نظام النقط')} />
       <Route path={"/offers"} component={withSupervisorRole(withPasswordProtection(Offers, 'offers', 'العروض'))} />
@@ -206,17 +206,17 @@ function Router() {
       <Route path={"/calculator"} component={Calculator} />
       <Route path={"/invoice-ocr"} component={InvoiceOCR} />
       <Route path={"/invoice"} component={Invoice} />
-      <Route path={"/audit-log"} component={AuditLog} />
+      <Route path={"/audit-log"} component={withSupervisorRole(AuditLog)} />
 
-      <Route path={"/inventory-alerts"} component={InventoryAlerts} />
+      <Route path={"/inventory-alerts"} component={withSupervisorRole(InventoryAlerts)} />
       <Route path={"/recipe-production"} component={withSupervisorRole(RecipeProduction)} />
-      <Route path={"/data-export-import"} component={DataExportImport} />
+      <Route path={"/data-export-import"} component={withManagerRole(DataExportImport)} />
       <Route path={"/recipes-display"} component={withSupervisorRole(RecipesDisplay)} />
       <Route path={"/advanced-search"} component={withSupervisorRole(AdvancedSearch)} />
       <Route path={"/settings"} component={withSupervisorRole(Settings)} />
       <Route path={"/email-notifications"} component={EmailNotifications} />
       <Route path={"/payment-gateway"} component={PaymentGateway} />
-      <Route path={"/user-management"} component={UserManagement} />
+      <Route path={"/user-management"} component={withManagerRole(UserManagement)} />
       <Route path={"/expenses"} component={withSupervisorRole(withPasswordProtection(Expenses, 'expenses', 'إدارة المصاريف'))} />
       <Route path={"/checks"} component={withSupervisorRole(withPasswordProtection(Checks, 'checks', 'الشيكات'))} />
 
@@ -235,7 +235,7 @@ function Router() {
       <Route path={"/notifications-advanced"} component={AdvancedNotificationsPage} />
       <Route path={"/apartment-management"} component={withPasswordProtection(ApartmentManagement, 'apartment', 'إدارة الشقة')} />
       <Route path={"/leaderboard"} component={withPasswordProtection(Leaderboard, 'leaderboard', 'لوحة الشرف')} />
-      <Route path={"/security-settings"} component={withSupervisorRole(SecuritySettings)} />
+      <Route path={"/security-settings"} component={withManagerRole(SecuritySettings)} />
       <Route path={"/credits-suppliers"} component={withSupervisorRole(withPasswordProtection(CreditsAndSuppliersAdvanced, 'suppliers', 'الموردين والخامات'))} />
 
       <Route path={"/shortages"} component={Shortages} />
@@ -251,66 +251,25 @@ function App() {
   const [, navigate] = useLocation();
   const isPublicCustomerRoute = isPublicCustomerPath(location);
   const isAuthRoute = location === "/auth";
-  // A previously validated local session is enough to render the shell now;
-  // the server session check continues in the background and remains the
-  // authority for protected API calls. This avoids blocking every navigation
-  // behind a network round-trip.
-  const [syncReady, setSyncReady] = useState(true);
-  let hasLocalStaffSession = false;
-  try {
-    hasLocalStaffSession = Boolean(localStorage.getItem("abu_raghwa_current_user") && (sessionStorage.getItem("abu_staff_sync_token") || localStorage.getItem("abu_staff_sync_token") || localStorage.getItem("abu_staff_cookie_session")));
-  } catch {
-    // بعض المتصفحات تمنع localStorage؛ تبقى شاشة الدخول قابلة للاستخدام.
-  }
-  const staffSession = trpc.staffSync.me.useQuery(undefined, { enabled: !isPublicCustomerRoute && !isAuthRoute && hasLocalStaffSession, retry: false, refetchInterval: 15_000 });
-  const isTerminalStaffSessionError = (error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error || "");
-    return message.includes("انتهت جلسة الموظف") || message.includes("سجّل دخول الموظف") || message.includes("تم إيقاف حسابك");
-  };
+  const { user, isLoading: authLoading } = useStaffAccess({ monitorMembership: true });
+  const hasStaffSession = Boolean(user && isUserAllowed(user));
+  const routeScopeKey = `${user?.id ?? "guest"}:${user?.role ?? "none"}:${user?.status ?? "none"}:${hasStaffSession ? "active" : "restricted"}`;
+  const syncReady = isPublicCustomerRoute || isAuthRoute || !authLoading;
   useEffect(() => {
     syncPwaInstallability(location);
   }, [location]);
   useEffect(() => {
-    if (hasLocalStaffSession) preloadFrequentPages();
+    if (hasStaffSession) preloadFrequentPages();
     else preloadPublicPages();
-  }, [hasLocalStaffSession]);
+  }, [hasStaffSession]);
   useEffect(() => {
-    if (isPublicCustomerRoute || isAuthRoute) {
-      setSyncReady(true);
+    if (isPublicCustomerRoute || authLoading) return;
+    if (isAuthRoute) {
+      if (hasStaffSession) navigate("/dashboard");
       return;
     }
-    if (!hasLocalStaffSession) {
-      setSyncReady(false);
-      sessionStorage.removeItem("abu_staff_sync_token");
-      localStorage.removeItem("abu_raghwa_current_user");
-      localStorage.removeItem("abu_raghwa_device_id");
-      navigate("/auth");
-      return;
-    }
-    if (staffSession.isLoading) {
-      setSyncReady(true);
-      return;
-    }
-    // A temporary network/proxy failure must never destroy a valid local
-    // session. Only an explicit server-side invalidation (logout, block, or
-    // removed account) is allowed to clear the session and redirect to login.
-    if (staffSession.isError && !isTerminalStaffSessionError(staffSession.error)) {
-      setSyncReady(true);
-      return;
-    }
-    if ((staffSession.isError && isTerminalStaffSessionError(staffSession.error)) || (!staffSession.isError && !staffSession.data)) {
-      sessionStorage.removeItem("abu_staff_sync_token");
-      localStorage.removeItem("abu_staff_cookie_session");
-      localStorage.removeItem("abu_raghwa_current_user");
-      localStorage.removeItem("abu_raghwa_device_id");
-      setSyncReady(false);
-      navigate("/auth");
-      return;
-    }
-    localStorage.setItem("abu_raghwa_current_user", JSON.stringify(staffSession.data));
-    window.dispatchEvent(new Event("abu-staff-session-update"));
-    setSyncReady(true);
-  }, [hasLocalStaffSession, isAuthRoute, isPublicCustomerRoute, navigate, staffSession.data, staffSession.error, staffSession.isError, staffSession.isLoading]);
+    if (!hasStaffSession) navigate("/auth");
+  }, [authLoading, hasStaffSession, isAuthRoute, isPublicCustomerRoute, navigate]);
   if (!isPublicCustomerRoute && !isAuthRoute && !syncReady) return <PageLoadingSkeleton />;
   return (
     <ErrorBoundary>
@@ -322,12 +281,11 @@ function App() {
           >
             <TooltipProvider>
               <Toaster />
-              {/* LegacyCloudBridge used to mount dozens of background queries and
-                  could flood mobile browsers with sync requests. Page-level
-                  cloud hooks remain active only where a page needs them. */}
-              <LegacyCloudBridge enabled={!isAuthRoute} publicOnly={isPublicCustomerRoute} />
-              <VoiceCommandHandler enabled={hasLocalStaffSession || isPublicCustomerRoute} />
-              {isPublicCustomerRoute ? <Router /> : <AccessControlGate><Router /></AccessControlGate>}
+              {/* Legacy snapshot synchronization is retired. Migrated pages use
+                  typed Supabase tables/RPCs; remaining pages must not upload
+                  local business-data snapshots. */}
+              <VoiceCommandHandler enabled={hasStaffSession || isPublicCustomerRoute} />
+              {isPublicCustomerRoute ? <Router key="public-customer" /> : <AccessControlGate><Router key={routeScopeKey} /></AccessControlGate>}
             </TooltipProvider>
           </ThemeProvider>
         </NotificationProvider>

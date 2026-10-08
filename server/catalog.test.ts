@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { catalogProductMatchesSearch, getCatalogDiscountPercent, getCatalogPrice, getCatalogTotal, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "../client/src/lib/catalog";
 vi.mock("./_core/llm", () => ({
   invokeLLM: vi.fn(async () => ({ choices: [{ message: { content: JSON.stringify({ productId: "p1", confidence: 0.92 }) } }] })),
@@ -45,6 +45,16 @@ describe("حسابات كتالوج المتجر", () => {
 });
 
 describe("طلبات كتالوج العملاء", () => {
+  let staffAccounts: any[] = [];
+
+  beforeEach(() => {
+    staffAccounts = [];
+    vi.spyOn(db, "getStaffAccounts").mockImplementation(async () => staffAccounts as any);
+    vi.spyOn(db, "importStaffAccounts").mockImplementation(async accounts => { staffAccounts = [...accounts] as any; });
+    vi.spyOn(db, "updateStaffAccount").mockImplementation(async (email, changes) => { staffAccounts = staffAccounts.map(account => account.email === email ? { ...account, ...changes } : account); });
+    vi.spyOn(db, "deleteStaffAccount").mockImplementation(async email => { staffAccounts = staffAccounts.filter(account => account.email !== email); });
+  });
+
   afterEach(async () => {
     await db.deleteStaffAccount("catalog-orders-manager@example.com").catch(() => undefined);
     await db.deleteStaffAccount("catalog-images-manager@example.com").catch(() => undefined);

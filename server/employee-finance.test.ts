@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildEmployeeFinanceSummary, getMonthKey, hashEmployeeFinancePin } from "./employeeFinance";
 import { appRouter } from "./routers";
 import * as db from "./db";
@@ -8,6 +8,16 @@ const activeAssignment = { employeeId: "e1", pinHash: hashEmployeeFinancePin("43
 const employeeStore = (isActive = true) => ({ profiles: [{ id: "e1", name: "عامل", salary: 3000 }], assignments: [{ ...activeAssignment, isActive }], withdrawals: [], managerWithdrawals: [] });
 
 describe("حسابات الموظفين وسلامة بطاقة العامل", () => {
+  let staffAccounts: any[] = [];
+
+  beforeEach(() => {
+    staffAccounts = [];
+    vi.spyOn(db, "getStaffAccounts").mockImplementation(async () => staffAccounts as any);
+    vi.spyOn(db, "importStaffAccounts").mockImplementation(async accounts => { staffAccounts = [...accounts] as any; });
+    vi.spyOn(db, "updateStaffAccount").mockImplementation(async (email, changes) => { staffAccounts = staffAccounts.map(account => account.email === email ? { ...account, ...changes } : account); });
+    vi.spyOn(db, "deleteStaffAccount").mockImplementation(async email => { staffAccounts = staffAccounts.filter(account => account.email !== email); });
+  });
+
   afterEach(async () => {
     await db.deleteStaffAccount("finance-stop-manager@example.com").catch(() => undefined);
     await db.deleteStaffAccount("finance-private-manager@example.com").catch(() => undefined);
