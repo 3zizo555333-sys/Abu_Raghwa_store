@@ -11,6 +11,7 @@ import { storageGetSignedUrl, storagePreparePut, storagePut } from "./storage";
 import { parseInvoiceDataUrl, safeInvoiceFilename } from "./invoiceUpload";
 import { invokeLLM } from "./_core/llm";
 import { buildEmployeeFinanceSummary, EMPLOYEE_FINANCE_KEY, getMonthKey, hashEmployeeFinancePin, normalizeEmployeeFinanceStore, type EmployeeFinanceStore } from "./employeeFinance";
+import { publicOfferJson } from "./sharedOffers";
 
 export const appRouter = router({
   system: systemRouter,
@@ -27,23 +28,26 @@ export const appRouter = router({
 
   offers: router({
     save: publicProcedure
-      .input(z.object({ id: z.string(), offerData: z.string() }))
-      .mutation(async ({ input }: { input: { id: string; offerData: string } }) => {
+      .input(z.object({ id: z.string().min(1).max(64), offerData: z.string().max(100_000) }))
+      .mutation(async ({ input, ctx }) => {
+        await requireLegacySyncAccess(ctx.req, "abu_raghwa_offers");
         await db.saveSharedOffer(input.id, input.offerData);
         return { success: true };
       }),
-    list: publicProcedure.query(async () => db.listSharedOffers()),
+    list: publicProcedure.query(async ({ ctx }) => {
+      await requireLegacySyncAccess(ctx.req, "abu_raghwa_offers");
+      return db.listSharedOffers();
+    }),
     get: publicProcedure
-      .input(z.object({ id: z.string() }))
-      .query(async ({ input }: { input: { id: string } }) => {
+      .input(z.object({ id: z.string().min(1).max(64) }))
+      .query(async ({ input }) => {
         const row = await db.getSharedOffer(input.id);
-        return row ? row.offerData : null;
+        return publicOfferJson(row?.offerData);
       }),
-    // دخول إدارة المحل يتم بحساب التطبيق المحلي، وليس بجلسة Manus OAuth.
-    // لذلك نجعل الحذف متاحًا بنفس مسار حفظ العرض حتى لا يفشل الحذف ويعيد الواجهة.
     delete: publicProcedure
-      .input(z.object({ id: z.string() }))
-      .mutation(async ({ input }: { input: { id: string } }) => {
+      .input(z.object({ id: z.string().min(1).max(64) }))
+      .mutation(async ({ input, ctx }) => {
+        await requireLegacySyncAccess(ctx.req, "abu_raghwa_offers");
         await db.deleteSharedOffer(input.id);
         return { success: true };
       }),
@@ -624,7 +628,7 @@ export const appRouter = router({
       .input(z.object({ key: z.string().min(1).max(128), dataJson: z.string().max(16_000_000), baseDataJson: z.string().max(16_000_000).optional() }))
       .mutation(async ({ input, ctx }: { input: { key: string; dataJson: string; baseDataJson?: string }; ctx: { req: any } }) => {
         if (input.key === EMPLOYEE_FINANCE_KEY || input.key === "abu_raghwa_users") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات الموظفين لا تُدار من مسار المزامنة العام" });
-        await requireStaffSyncSession(ctx.req);
+        await requireLegacySyncAccess(ctx.req, input.key);
         // Every product save is one atomic cloud snapshot. Existing IDs are
         // updated in place and new IDs are appended; no client can publish a
         // half-written page or delete products from another device.
@@ -649,7 +653,7 @@ export const appRouter = router({
       .input(z.object({ key: z.string().min(1).max(128), offset: z.number().int().min(0).max(1_000_000).default(0), dataJson: z.string().min(2).max(1_200_000) }))
       .mutation(async ({ input, ctx }: { input: { key: string; offset: number; dataJson: string }; ctx: { req: any } }) => {
         if (input.key === EMPLOYEE_FINANCE_KEY || input.key === "abu_raghwa_users") throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات خاصة" });
-        await requireStaffSyncSession(ctx.req);
+        await requireLegacySyncAccess(ctx.req, input.key);
         await db.mergeGlobalAppSettingChunk(input.key, input.dataJson, input.offset);
         return { success: true };
       }),
@@ -657,7 +661,7 @@ export const appRouter = router({
       .input(z.object({ key: z.string().min(1).max(128), offset: z.number().int().min(0).max(1_000_000).default(0), limit: z.number().int().min(1).max(500).default(500), afterPosition: z.number().int().min(0).optional(), afterRecordId: z.string().max(191).optional() }))
       .query(async ({ input, ctx }: { input: { key: string; offset: number; limit: number; afterPosition?: number; afterRecordId?: string }; ctx: { req: any } }) => {
         if (input.key === EMPLOYEE_FINANCE_KEY || input.key === "abu_raghwa_users") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات الموظفين خاصة" });
-        if (!PUBLIC_SYNC_READ_KEYS.has(input.key)) await requireStaffSyncSession(ctx.req);
+        if (MANAGER_ONLY_SYNC_KEYS.has(input.key) || !PUBLIC_SYNC_READ_KEYS.has(input.key)) await requireLegacySyncAccess(ctx.req, input.key);
         const after = input.afterPosition !== undefined && input.afterRecordId !== undefined
           ? { position: input.afterPosition, recordId: input.afterRecordId }
           : undefined;
@@ -667,7 +671,7 @@ export const appRouter = router({
       .input(z.object({ key: z.string() }))
       .query(async ({ input, ctx }: { input: { key: string }; ctx: { req: any } }) => {
         if (input.key === EMPLOYEE_FINANCE_KEY || input.key === "abu_raghwa_users") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات الموظفين خاصة" });
-        if (!PUBLIC_SYNC_READ_KEYS.has(input.key)) await requireStaffSyncSession(ctx.req);
+        if (MANAGER_ONLY_SYNC_KEYS.has(input.key) || !PUBLIC_SYNC_READ_KEYS.has(input.key)) await requireLegacySyncAccess(ctx.req, input.key);
         const row = await db.getGlobalAppSetting(input.key);
         return row ? row.dataJson : null;
       }),
@@ -718,7 +722,15 @@ const STAFF_SYNC_SESSION_SECRET = new TextEncoder().encode(process.env.JWT_SECRE
 const STAFF_SYNC_HEADER = "x-abu-staff-session";
 const STAFF_SYNC_COOKIE = "abu_staff_sync_session";
 const STAFF_SYNC_COOKIE_MAX_AGE_MS = 10 * 365 * 24 * 60 * 60 * 1000;
-const PUBLIC_SYNC_READ_KEYS = new Set(["abu_raghwa_products", "abu_raghwa_product_categories", "abu_catalog_manual_products", "abu_catalog_categories", "abu_catalog_companies", "abu_catalog_pricing", "abu_raghwa_global_offers", "abu_raghwa_offers", "abu_raghwa_display_settings"]);
+const PUBLIC_SYNC_READ_KEYS = new Set(["abu_raghwa_product_categories", "abu_catalog_categories", "abu_catalog_companies", "abu_raghwa_display_settings"]);
+const MANAGER_ONLY_SYNC_KEYS = new Set([
+  "abu_raghwa_products", "abu_catalog_manual_products", "abu_catalog_pricing", "abu_raghwa_global_offers", "abu_raghwa_offers", "abu_raghwa_saved_offers",
+  "abu_raghwa_employees", "abu_raghwa_attendance", "abu_raghwa_employee_finance", "abu_raghwa_sales", "abu_raghwa_expenses", "abu_raghwa_debts", "abu_raghwa_receivables", "abu_raghwa_checks",
+  "abu_raghwa_suppliers_advanced", "abu_raghwa_raw_materials", "abu_raghwa_materials", "abu_raghwa_shortages", "abu_raghwa_productions", "abu_raghwa_customers", "abu_raghwa_customers_advanced",
+  "abu_raghwa_audit_log", "abu_raghwa_alert_history", "abu_raghwa_manual_products", "abu_raghwa_processed_sales", "abu_gift_delivery_logs", "points_system_employees", "abu_reward_levels",
+  "abu_raghwa_tasks", "abu_raghwa_penalty_rules", "abu_raghwa_penalty_logs", "abu_raghwa_apartment_items", "abu_raghwa_apartment_categories", "abu_raghwa_scanned_invoices",
+  "abu_raghwa_custom_voice_commands", "abu_raghwa_shortage_categories", "abu_raghwa_invoice_categories_v2", "abu_raghwa_notifications",
+]);
 
 export type StoredAccessUser = { id?: string; email: string; password?: string; passwordHash?: string; role: string; status?: "PENDING_APPROVAL" | "APPROVED" | "ACTIVE" | "pending" | "approved"; createdDate?: string; lastLogin?: string; deviceIds?: string[]; isApproved?: boolean; isBlocked?: boolean };
 
@@ -878,6 +890,14 @@ async function requireStaffSyncSession(req: { protocol?: string; headers?: Recor
   } catch {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة الموظف؛ سجّل الدخول مرة أخرى" });
   }
+}
+
+async function requireLegacySyncAccess(req: { protocol?: string; headers?: Record<string, string | string[] | undefined> }, key: string) {
+  const user = await requireStaffSyncSession(req);
+  if (MANAGER_ONLY_SYNC_KEYS.has(key) && !["manager", "admin", "supervisor"].includes(user.role)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "هذه البيانات المالية أو الإدارية متاحة للمدير والمشرف فقط" });
+  }
+  return user;
 }
 
 async function assertEmployeeFinanceUser(email: string, password: string) {

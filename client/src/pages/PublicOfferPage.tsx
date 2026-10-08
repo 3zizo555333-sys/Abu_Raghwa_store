@@ -14,9 +14,8 @@ interface SmartOffer {
   id: string;
   title: string;
   strategyName: string;
-  items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
+  items: Array<{ name: string; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
-  totalCostPrice: number;
   offerPrice: number;
   discountAmount: number;
   discountPercent: number;
@@ -28,12 +27,6 @@ interface SmartOffer {
   endAt?: number;
   qrCodeDataUrl?: string;
   loyaltyPoints?: number;
-}
-
-interface RewardLevel {
-  points: number;
-  giftName: string;
-  confirmed?: boolean;
 }
 
 interface CustomerLoyalty {
@@ -56,7 +49,6 @@ export default function PublicOfferPage() {
   const [customerRecord, setCustomerRecord] = useState<CustomerLoyalty | null>(null);
   const [purchaseRequestId, setPurchaseRequestId] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const [rewardLevels, setRewardLevels] = useState<RewardLevel[]>([]);
   const registerOfferCustomer = trpc.catalog.registerOfferCustomer.useMutation();
   const createOfferPurchaseRequest = trpc.catalog.createOfferPurchaseRequest.useMutation();
   const rewardLevelsQuery = trpc.catalog.getPublicLoyaltyRewardLevels.useQuery(undefined, { staleTime: 30_000, retry: false });
@@ -104,77 +96,8 @@ export default function PublicOfferPage() {
       return;
     }
 
-    // fallback محلي للتخزين المحلي إن وجد
-    if (offerId) {
-      try {
-        const globalOffers = JSON.parse(localStorage.getItem("abu_raghwa_global_offers") || "{}");
-        if (globalOffers[offerId]) {
-          setOffer(globalOffers[offerId]);
-          setLoading(false);
-          return;
-        }
-
-        const savedOffers = JSON.parse(localStorage.getItem("abu_raghwa_saved_offers") || "[]");
-        const found = savedOffers.find((o: SmartOffer) => o.id === offerId);
-        if (found) {
-          setOffer(found);
-          setLoading(false);
-          return;
-        }
-      } catch (e) {}
-    }
-
     setLoading(false);
   }, [serverOfferJson, serverLoading, serverOfferLookupSucceeded, offerId]);
-
-  useEffect(() => {
-    // تحميل مستويات المكافآت المؤكدة
-    const savedRewards = localStorage.getItem("abu_reward_levels");
-    if (savedRewards) {
-      try {
-        const parsed = JSON.parse(savedRewards);
-        setRewardLevels(parsed.filter((r: RewardLevel) => r.confirmed));
-      } catch (e) {
-        setRewardLevels([
-          { points: 20, giftName: "كيس مسحوق غسيل 1 كيلو هدية 🎁", confirmed: true },
-          { points: 50, giftName: "جركن صابون سائل 4 لتر مميز 🧴", confirmed: true },
-          { points: 100, giftName: "باكدج منظفات منزلية شاملة 🌟", confirmed: true },
-          { points: 200, giftName: "هدية كبرى خاصة (100 ج أو تيشيرت أو فرخة) ⭐", confirmed: true }
-        ]);
-      }
-    } else {
-      setRewardLevels([
-        { points: 20, giftName: "كيس مسحوق غسيل 1 كيلو هدية 🎁", confirmed: true },
-        { points: 50, giftName: "جركن صابون سائل 4 لتر مميز 🧴", confirmed: true },
-        { points: 100, giftName: "باكدج منظفات منزلية شاملة 🌟", confirmed: true },
-        { points: 200, giftName: "هدية كبرى خاصة (100 ج أو تيشيرت أو فرخة) ⭐", confirmed: true }
-      ]);
-    }
-
-    const savedUserPhone = localStorage.getItem("abu_active_customer_phone");
-    const savedUserCode = localStorage.getItem("abu_active_customer_code");
-    if (savedUserPhone || savedUserCode) {
-      const allCustomers: CustomerLoyalty[] = JSON.parse(localStorage.getItem("abu_raghwa_customers") || "[]");
-      const foundCust = allCustomers.find(c => (savedUserCode && c.customerCode === savedUserCode) || (savedUserPhone && c.phone === savedUserPhone));
-      if (foundCust) {
-        setCustomerName(foundCust.name);
-        setCustomerPhone(foundCust.phone || "");
-        setCustomerCode(foundCust.customerCode);
-        setCustomerRecord(foundCust);
-        setIsRegistered(true);
-      }
-    }
-
-  }, []);
-
-  useEffect(() => {
-    if (!offerId || !activeCustomerCode) return;
-    try {
-      setPurchaseRequestId(localStorage.getItem(`abu_offer_purchase_${offerId}_${activeCustomerCode}`) || "");
-    } catch {
-      setPurchaseRequestId("");
-    }
-  }, [offerId, activeCustomerCode]);
 
   useEffect(() => {
     const profile = refreshedCustomerProfileQuery.data;
@@ -183,11 +106,6 @@ export default function PublicOfferPage() {
     setCustomerName(profile.name);
     setCustomerPhone(profile.phone || "");
     setCustomerCode(profile.customerCode);
-    try {
-      localStorage.setItem("abu_active_customer_code", profile.customerCode);
-      if (profile.phone) localStorage.setItem("abu_active_customer_phone", profile.phone);
-      localStorage.setItem("abu_raghwa_customers", JSON.stringify([{ ...profile, usedCoupons: profile.usedCoupons || [] }]));
-    } catch {}
   }, [refreshedCustomerProfileQuery.data]);
 
   useEffect(() => {
@@ -210,9 +128,6 @@ export default function PublicOfferPage() {
     try {
       const profile = await registerOfferCustomer.mutateAsync({ name: customerName.trim(), phone: customerPhone.trim() || undefined, customerCode: customerCode.trim() || undefined });
       if (!profile) throw new Error("تعذر إنشاء بطاقة الولاء");
-      if (profile.phone) localStorage.setItem("abu_active_customer_phone", profile.phone);
-      localStorage.setItem("abu_active_customer_code", profile.customerCode);
-      localStorage.setItem("abu_raghwa_customers", JSON.stringify([{ ...profile, usedCoupons: profile.usedCoupons || [] }]));
       setCustomerName(profile.name);
       setCustomerPhone(profile.phone || "");
       setCustomerCode(profile.customerCode);
@@ -242,7 +157,6 @@ export default function PublicOfferPage() {
     try {
       const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code });
       setPurchaseRequestId(request.id);
-      try { localStorage.setItem(`abu_offer_purchase_${offer.id}_${code}`, request.id); } catch {}
       toast.success("وصل طلب شراء العرض إلى المحل. ستُضاف النقاط بعد تأكيد إتمام الشراء.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر إرسال طلب شراء العرض الآن.");
@@ -296,7 +210,7 @@ export default function PublicOfferPage() {
   }
 
   const currentPoints = Math.max(0, Math.trunc(Number(customerRecord?.points) || 0));
-  const activeRewardLevels = rewardLevelsQuery.data ?? rewardLevels;
+  const activeRewardLevels = rewardLevelsQuery.data ?? [];
   const expiryInfo = getOfferExpiryInfo(offer, now);
   const isExpired = expiryInfo.status === "expired";
 
@@ -402,7 +316,7 @@ export default function PublicOfferPage() {
               <div className="space-y-2 text-center bg-white p-3 rounded-xl border border-purple-200">
                 <p className="text-xs font-extrabold text-gray-900">أهلاً بك يا {customerName} 🌟</p>
                 <p className="text-[11px] text-purple-700">كود نقاطك: <strong dir="ltr">{customerRecord?.customerCode || customerCode}</strong></p>
-                <LoyaltyRewardProgressCard points={currentPoints} levels={activeRewardLevels} compact isLoading={rewardLevelsQuery.isLoading && rewardLevels.length === 0} />
+                <LoyaltyRewardProgressCard points={currentPoints} levels={activeRewardLevels} compact isLoading={rewardLevelsQuery.isLoading && activeRewardLevels.length === 0} />
               </div>
             )}
             {isRegistered && (

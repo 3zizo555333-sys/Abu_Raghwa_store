@@ -1,25 +1,24 @@
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Trash2, Share2 } from "lucide-react";
+import { toast } from "sonner";
+import { createCloudDeferredCheck, deleteCloudDeferredCheck, listCloudDeferredChecks, subscribeToCheckChanges, type CloudDeferredCheck } from "@/lib/supabase/checks";
 
-interface Check {
-  id: string;
-  customerName: string;
-  employeeName: string;
-  productsList: string;
-  invoiceNumber: string;
-  totalAmount: number;
-  paidAmount: number;
-  remainingAmount: number;
-  date: string;
-  time: string;
+type Check = CloudDeferredCheck;
+
+function formatCreatedAt(value: string): string {
+  const timestamp = new Date(value);
+  return `${timestamp.toLocaleDateString("ar-EG")} - ${timestamp.toLocaleTimeString("ar-EG")}`;
 }
 
 export default function ChecksPage() {
   const [, navigate] = useLocation();
   const [checks, setChecks] = useState<Check[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({
     customerName: "",
@@ -30,36 +29,70 @@ export default function ChecksPage() {
     paidAmount: 0,
   });
 
-  const handleAddCheck = () => {
-    if (!formData.customerName || !formData.employeeName) return;
+  const loadChecks = useCallback(async () => {
+    setLoadError("");
+    try {
+      setChecks(await listCloudDeferredChecks());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل القيود الآجلة من Supabase.";
+      setLoadError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
+  }, []);
 
-    const newCheck: Check = {
-      id: Date.now().toString(),
-      customerName: formData.customerName,
-      employeeName: formData.employeeName,
-      productsList: formData.productsList,
-      invoiceNumber: formData.invoiceNumber,
-      totalAmount: formData.totalAmount,
-      paidAmount: formData.paidAmount,
-      remainingAmount: formData.totalAmount - formData.paidAmount,
-      date: new Date().toLocaleDateString("ar-EG"),
-      time: new Date().toLocaleTimeString("ar-EG"),
-    };
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    void loadChecks();
+    void subscribeToCheckChanges(() => { if (active) void loadChecks(); })
+      .then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); })
+      .catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تفعيل تحديثات القيود الآجلة."); });
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
+  }, [loadChecks]);
 
-    setChecks([newCheck, ...checks]);
-    setFormData({
-      customerName: "",
-      employeeName: "",
-      productsList: "",
-      invoiceNumber: "",
-      totalAmount: 0,
-      paidAmount: 0,
-    });
-    setShowForm(false);
+  const handleAddCheck = async () => {
+    const totalAmount = Number(formData.totalAmount);
+    const paidAmount = Number(formData.paidAmount);
+    if (isSaving) return;
+    if (!formData.customerName.trim() || !formData.employeeName.trim() || !Number.isFinite(totalAmount) || totalAmount <= 0 || !Number.isFinite(paidAmount) || paidAmount < 0 || paidAmount > totalAmount) {
+      toast.error("أدخل اسم العميل والموظف وإجماليًا موجبًا ومدفوعًا لا يتجاوز الإجمالي.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await createCloudDeferredCheck({
+        customerName: formData.customerName.trim(),
+        employeeName: formData.employeeName.trim(),
+        productsList: formData.productsList.trim(),
+        invoiceNumber: formData.invoiceNumber.trim(),
+        totalAmount,
+        paidAmount,
+      });
+      toast.success("تم حفظ القيد الآجل في Supabase.");
+      setFormData({ customerName: "", employeeName: "", productsList: "", invoiceNumber: "", totalAmount: 0, paidAmount: 0 });
+      setShowForm(false);
+      await loadChecks();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ القيد سحابيًا؛ لم يُحفظ محليًا.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleDeleteCheck = (id: string) => {
-    setChecks(checks.filter(check => check.id !== id));
+  const handleDeleteCheck = async (id: string) => {
+    if (isSaving || !confirm("هل تريد حذف هذا القيد الآجل من السجل السحابي؟")) return;
+    setIsSaving(true);
+    try {
+      await deleteCloudDeferredCheck(id);
+      toast.success("تم حذف القيد الآجل من Supabase.");
+      await loadChecks();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حذف القيد سحابيًا؛ لم يُحذف السجل.");
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   const handleShareCheck = (check: Check) => {
@@ -86,12 +119,16 @@ export default function ChecksPage() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         <Button
+          disabled={isSaving}
           onClick={() => setShowForm(!showForm)}
           className="mb-6 bg-blue-600 hover:bg-blue-700 text-white"
         >
           <Plus className="w-4 h-4 ml-2" />
           إضافة شيك جديد
         </Button>
+
+        {loadError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{loadError}<Button variant="outline" disabled={isSaving} className="mr-3" onClick={() => void loadChecks()}>إعادة المحاولة</Button></div>}
+        {isLoading && <p className="mb-4 text-sm text-slate-600">جاري تحميل القيود الآجلة من Supabase...</p>}
 
         {showForm && (
           <Card className="mb-6">
@@ -101,6 +138,7 @@ export default function ChecksPage() {
             <CardContent>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <input
+                  disabled={isSaving}
                   type="text"
                   placeholder="اسم العميل"
                   value={formData.customerName}
@@ -108,6 +146,7 @@ export default function ChecksPage() {
                   className="border rounded px-3 py-2"
                 />
                 <input
+                  disabled={isSaving}
                   type="text"
                   placeholder="اسم الموظف"
                   value={formData.employeeName}
@@ -115,6 +154,7 @@ export default function ChecksPage() {
                   className="border rounded px-3 py-2"
                 />
                 <input
+                  disabled={isSaving}
                   type="text"
                   placeholder="المنتجات"
                   value={formData.productsList}
@@ -122,6 +162,7 @@ export default function ChecksPage() {
                   className="border rounded px-3 py-2"
                 />
                 <input
+                  disabled={isSaving}
                   type="text"
                   placeholder="رقم الفاتورة"
                   value={formData.invoiceNumber}
@@ -129,6 +170,7 @@ export default function ChecksPage() {
                   className="border rounded px-3 py-2"
                 />
                 <input
+                  disabled={isSaving}
                   type="number"
                   placeholder="الإجمالي"
                   value={formData.totalAmount}
@@ -136,6 +178,7 @@ export default function ChecksPage() {
                   className="border rounded px-3 py-2"
                 />
                 <input
+                  disabled={isSaving}
                   type="number"
                   placeholder="المدفوع"
                   value={formData.paidAmount}
@@ -144,6 +187,7 @@ export default function ChecksPage() {
                 />
               </div>
               <Button
+                disabled={isSaving}
                 onClick={handleAddCheck}
                 className="mt-4 bg-green-600 hover:bg-green-700 text-white w-full"
               >
@@ -154,6 +198,7 @@ export default function ChecksPage() {
         )}
 
         <div className="grid grid-cols-1 gap-4">
+          {!isLoading && !loadError && checks.length === 0 && <Card><CardContent className="py-10 text-center text-gray-600">لا توجد قيود آجلة مسجلة.</CardContent></Card>}
           {checks.map((check) => (
             <Card key={check.id}>
               <CardContent className="pt-6">
@@ -168,7 +213,7 @@ export default function ChecksPage() {
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">التاريخ والوقت</p>
-                    <p className="font-bold">{check.date} - {check.time}</p>
+                    <p className="font-bold">{formatCreatedAt(check.createdAt)}</p>
                   </div>
                   <div>
                     <p className="text-sm text-gray-600">رقم الفاتورة</p>
@@ -199,6 +244,7 @@ export default function ChecksPage() {
 
                 <div className="flex gap-2">
                   <Button
+                    disabled={isSaving}
                     onClick={() => handleShareCheck(check)}
                     className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                   >
@@ -206,6 +252,7 @@ export default function ChecksPage() {
                     مشاركة
                   </Button>
                   <Button
+                    disabled={isSaving}
                     onClick={() => handleDeleteCheck(check.id)}
                     variant="destructive"
                     className="flex-1"

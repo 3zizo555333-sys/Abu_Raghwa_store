@@ -50,6 +50,9 @@ export type Database = {
       shops: Table<{ id: string; name: string; timezone: string; currency: string; created_at: string; updated_at: string }>;
       profiles: Table<{ user_id: string; display_name: string | null; phone: string | null; created_at: string; updated_at: string }>;
       shop_memberships: Table<{ user_id: string; shop_id: string; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; approved_by: string | null; created_at: string; updated_at: string }>;
+      expenses: Table<{ id: string; shop_id: string; description: string; category: string; amount: number; occurred_at: string; expense_type: "daily" | "monthly"; notes: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      bank_checks: Table<{ id: string; shop_id: string; check_number: string; amount: number; issue_date: string; due_date: string; bank_name: string; account_holder: string; status: "pending" | "cleared" | "cancelled" | "returned"; direction: "outgoing" | "incoming"; notes: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      deferred_check_records: Table<{ id: string; shop_id: string; customer_name: string; employee_name: string; products_list: string; invoice_number: string; total_amount: number; paid_amount: number; remaining_amount: number; created_by: string | null; created_at: string; deleted_at: string | null }>;
       product_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string }>;
       products: Table<ProductRow>;
       product_images: Table<{ id: string; shop_id: string; product_id: string; storage_path: string; content_type: string; size_bytes: number; created_by: string | null; created_at: string }>;
@@ -71,6 +74,18 @@ export type Database = {
       soft_delete_products: { Args: { p_shop_id: string; p_product_ids: string[] }; Returns: number };
       register_product_image: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
       create_invoice_with_stock: { Args: { p_shop_id: string; p_idempotency_key: string; p_items: Json; p_sale_type?: string; p_payment_method?: string; p_customer_name?: string; p_customer_phone?: string; p_discount_type?: string; p_discount_value?: number }; Returns: Json };
+      create_invoice_intent: { Args: { p_shop_id: string; p_idempotency_key: string; p_payload: Json }; Returns: Json };
+      get_recoverable_invoice_intent: { Args: { p_shop_id: string }; Returns: Json };
+      complete_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      acknowledge_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      cancel_pending_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      save_expense: { Args: { p_shop_id: string; p_expense_id?: string | null; p_expected_version?: number | null; p_payload: Json }; Returns: Database["public"]["Tables"]["expenses"]["Row"] };
+      delete_expense: { Args: { p_shop_id: string; p_expense_id: string; p_expected_version: number }; Returns: number };
+      get_expense_summary: { Args: { p_shop_id: string }; Returns: Json };
+      save_bank_check: { Args: { p_shop_id: string; p_check_id?: string | null; p_expected_version?: number | null; p_payload: Json }; Returns: Database["public"]["Tables"]["bank_checks"]["Row"] };
+      delete_bank_check: { Args: { p_shop_id: string; p_check_id: string; p_expected_version: number }; Returns: number };
+      create_deferred_check_record: { Args: { p_shop_id: string; p_payload: Json }; Returns: Database["public"]["Tables"]["deferred_check_records"]["Row"] };
+      delete_deferred_check_record: { Args: { p_shop_id: string; p_record_id: string }; Returns: boolean };
       list_shop_members: { Args: { p_shop_id: string }; Returns: Array<{ user_id: string; email: string; display_name: string | null; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; created_at: string; updated_at: string; last_sign_in_at: string | null }> };
       set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
     };

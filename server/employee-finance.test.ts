@@ -74,9 +74,27 @@ describe("حسابات الموظفين وسلامة بطاقة العامل", (
     vi.spyOn(db, "getGlobalAppSetting").mockImplementation(async key => key === "abu_raghwa_users" ? { key, dataJson: JSON.stringify([manager]), updatedAt: new Date() } as any : { key, dataJson: "[]", updatedAt: new Date() } as any);
     await expect(caller().sync.get({ key: "abu_raghwa_tasks" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller().sync.set({ key: "abu_raghwa_tasks", dataJson: "[]" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    await expect(caller().sync.get({ key: "abu_raghwa_products" })).resolves.toBe("[]");
+    await expect(caller().sync.get({ key: "abu_raghwa_products" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller().sync.get({ key: "abu_raghwa_product_categories" })).resolves.toBe("[]");
     const login = await caller().staffSync.login({ email: manager.email, password: manager.password });
+    await expect(caller({ "x-abu-staff-session": login.token }).sync.get({ key: "abu_raghwa_products" })).resolves.toBe("[]");
     await expect(caller({ "x-abu-staff-session": login.token }).sync.set({ key: "abu_raghwa_tasks", dataJson: "[]" })).resolves.toEqual({ success: true });
     expect(save).toHaveBeenCalledWith("abu_raghwa_tasks", "[]");
+  });
+
+  it("يمنع البائع من قراءة أو تعديل snapshots الموظفين والمنتجات والمبيعات", async () => {
+    const seller = { email: "legacy-sync-seller@example.com", password: "seller-pass", role: "seller", isApproved: true, isBlocked: false };
+    vi.spyOn(db, "getGlobalAppSetting").mockImplementation(async key => {
+      if (key === "abu_raghwa_users") return { key, dataJson: JSON.stringify([seller]), updatedAt: new Date() } as any;
+      if (key === "abu_raghwa_employees") return { key, dataJson: JSON.stringify([{ id: "e1", name: "عامل", salary: 9000 }]), updatedAt: new Date() } as any;
+      return null;
+    });
+    const login = await caller().staffSync.login({ email: seller.email, password: seller.password });
+    const sellerCaller = caller({ "x-abu-staff-session": login.token });
+    await expect(sellerCaller.sync.get({ key: "abu_raghwa_employees" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sellerCaller.sync.get({ key: "abu_raghwa_products" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sellerCaller.sync.get({ key: "abu_raghwa_tasks" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sellerCaller.sync.set({ key: "abu_raghwa_penalty_logs", dataJson: "[]" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sellerCaller.sync.set({ key: "abu_raghwa_sales", dataJson: "[]" })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });

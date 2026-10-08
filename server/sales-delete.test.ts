@@ -12,7 +12,10 @@ describe("حذف المبيعات من السجل", () => {
     expect(source).toContain("createCloudInvoice");
     expect(source).toContain("await createCloudInvoice(pendingInvoiceRef.current.payload)");
     expect(source).toContain("listCloudInvoices(offset, PAGE_SIZE)");
-    expect(invoices).toContain('supabase.rpc("create_invoice_with_stock"');
+    expect(invoices).toContain('supabase.rpc("create_invoice_intent"');
+    expect(invoices).toContain('supabase.rpc("complete_invoice_intent"');
+    expect(invoices).toContain('supabase.rpc("acknowledge_invoice_intent"');
+    expect(invoices).not.toContain('supabase.rpc("create_invoice_with_stock"');
     expect(invoices).toContain('.from("invoices")');
     expect(source).not.toContain("localStorage");
     expect(source).not.toContain('"abu_raghwa_sales"');

@@ -1,34 +1,26 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Trash2, Edit2, CheckCircle, AlertCircle, Clock } from "lucide-react";
 import { toast } from "sonner";
+import { deleteCloudBankCheck, listCloudBankChecks, saveCloudBankCheck, subscribeToCheckChanges, type BankCheckInput, type CloudBankCheck } from "@/lib/supabase/checks";
 
-interface Check {
-  id: string;
-  checkNumber: string;
-  amount: number;
-  issueDate: string;
-  dueDate: string;
-  bankName: string;
-  accountHolder: string;
-  status: "معلق" | "مسحوب" | "ملغي" | "مرتجع";
-  type: "صادر" | "وارد";
-  notes: string;
-  createdAt: string;
-}
+type Check = CloudBankCheck;
 
 export default function Checks() {
   const [, navigate] = useLocation();
   const [checks, setChecks] = useState<Check[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
-  const [formData, setFormData] = useState<Partial<Check>>({
+  const [formData, setFormData] = useState<BankCheckInput>({
     checkNumber: "",
     amount: 0,
-    issueDate: "",
-    dueDate: "",
+    issueDate: new Date().toISOString().slice(0, 10),
+    dueDate: new Date().toISOString().slice(0, 10),
     bankName: "",
     accountHolder: "",
     status: "معلق",
@@ -36,57 +28,66 @@ export default function Checks() {
     notes: ""
   });
 
-  useEffect(() => {
-    loadChecks();
+  const loadChecks = useCallback(async () => {
+    setLoadError("");
+    try {
+      setChecks(await listCloudBankChecks());
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل الشيكات من Supabase.";
+      setLoadError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const loadChecks = () => {
-    const stored = localStorage.getItem("abu_raghwa_checks");
-    if (stored) {
-      setChecks(JSON.parse(stored));
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    void loadChecks();
+    void subscribeToCheckChanges(() => { if (active) void loadChecks(); })
+      .then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); })
+      .catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تفعيل تحديثات الشيكات."); });
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
+  }, [loadChecks]);
+
+  const handleAddCheck = async () => {
+    if (isSaving) return;
+    const amount = Number(formData.amount);
+    if (!formData.checkNumber.trim() || !Number.isFinite(amount) || amount <= 0 || !formData.issueDate || !formData.dueDate || formData.dueDate < formData.issueDate) {
+      toast.error("أدخل رقم الشيك ومبلغًا موجبًا وتاريخي إصدار واستحقاق صحيحين.");
+      return;
+    }
+    const current = editingId ? checks.find(check => check.id === editingId) : undefined;
+    if (editingId && !current) {
+      toast.error("لم يعد الشيك موجودًا في السجل السحابي. حدّث الصفحة قبل التعديل.");
+      return;
+    }
+    setIsSaving(true);
+    try {
+      await saveCloudBankCheck({ ...formData, amount, checkNumber: formData.checkNumber.trim() }, current ? { id: current.id, version: current.version } : undefined);
+      toast.success(editingId ? "تم تحديث الشيك في Supabase." : "تم حفظ الشيك في Supabase.");
+      resetForm();
+      await loadChecks();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ الشيك سحابيًا؛ لم يُحفظ محليًا.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
-  const saveChecks = (updatedChecks: Check[]) => {
-    localStorage.setItem("abu_raghwa_checks", JSON.stringify(updatedChecks));
-    setChecks(updatedChecks);
-  };
-
-  const handleAddCheck = () => {
-    // جميع الحقول اختيارية
-
-    const newCheck: Check = {
-      id: editingId || Date.now().toString(),
-      checkNumber: formData.checkNumber!,
-      amount: formData.amount!,
-      issueDate: formData.issueDate!,
-      dueDate: formData.dueDate!,
-      bankName: formData.bankName!,
-      accountHolder: formData.accountHolder!,
-      status: formData.status as any,
-      type: formData.type as any,
-      notes: formData.notes!,
-      createdAt: editingId ? checks.find(c => c.id === editingId)?.createdAt || new Date().toISOString() : new Date().toISOString()
-    };
-
-    let updatedChecks;
-    if (editingId) {
-      updatedChecks = checks.map(c => c.id === editingId ? newCheck : c);
-      toast.success("تم تحديث الشيك بنجاح");
-    } else {
-      updatedChecks = [...checks, newCheck];
-      toast.success("تم إضافة الشيك بنجاح");
-    }
-
-    saveChecks(updatedChecks);
-    resetForm();
-  };
-
-  const handleDeleteCheck = (id: string) => {
-    if (confirm("هل تريد حذف هذا الشيك؟")) {
-      const updatedChecks = checks.filter(c => c.id !== id);
-      saveChecks(updatedChecks);
-      toast.success("تم حذف الشيك بنجاح");
+  const handleDeleteCheck = async (id: string) => {
+    const check = checks.find(item => item.id === id);
+    if (!check || isSaving || !confirm("هل تريد حذف هذا الشيك من السجل السحابي؟")) return;
+    setIsSaving(true);
+    try {
+      await deleteCloudBankCheck({ id: check.id, version: check.version });
+      toast.success("تم حذف الشيك من Supabase.");
+      await loadChecks();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حذف الشيك سحابيًا؛ لم يُحذف السجل.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -100,8 +101,8 @@ export default function Checks() {
     setFormData({
       checkNumber: "",
       amount: 0,
-      issueDate: "",
-      dueDate: "",
+      issueDate: new Date().toISOString().slice(0, 10),
+      dueDate: new Date().toISOString().slice(0, 10),
       bankName: "",
       accountHolder: "",
       status: "معلق",
@@ -169,6 +170,8 @@ export default function Checks() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {loadError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{loadError}<Button variant="outline" disabled={isSaving} className="mr-3" onClick={() => void loadChecks()}>إعادة المحاولة</Button></div>}
+        {isLoading && <p className="mb-4 text-sm text-slate-600">جاري تحميل الشيكات من Supabase...</p>}
         {/* Statistics */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           <Card className="border-0 shadow-sm">
@@ -213,6 +216,7 @@ export default function Checks() {
         {/* Add Check Button */}
         <div className="mb-8">
           <Button
+            disabled={isSaving}
             onClick={() => setShowForm(!showForm)}
             className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
           >
@@ -297,7 +301,7 @@ export default function Checks() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">نوع الشيك</label>
                   <select
                     value={formData.type}
-                    onChange={(e) => setFormData({ ...formData, type: e.target.value as any })}
+                    onChange={(e) => setFormData({ ...formData, type: e.target.value as BankCheckInput["type"] })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="صادر">صادر</option>
@@ -309,7 +313,7 @@ export default function Checks() {
                   <label className="block text-sm font-medium text-gray-700 mb-2">الحالة</label>
                   <select
                     value={formData.status}
-                    onChange={(e) => setFormData({ ...formData, status: e.target.value as any })}
+                    onChange={(e) => setFormData({ ...formData, status: e.target.value as BankCheckInput["status"] })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
                   >
                     <option value="معلق">معلق</option>
@@ -333,12 +337,14 @@ export default function Checks() {
 
               <div className="flex gap-4 mt-6">
                 <Button
+                  disabled={isSaving}
                   onClick={handleAddCheck}
                   className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
                   {editingId ? "تحديث الشيك" : "إضافة الشيك"}
                 </Button>
                 <Button
+                  disabled={isSaving}
                   onClick={resetForm}
                   variant="outline"
                 >
@@ -351,7 +357,7 @@ export default function Checks() {
 
         {/* Checks List */}
         <div className="space-y-4">
-          {checks.length === 0 ? (
+          {checks.length === 0 && !isLoading && !loadError ? (
             <Card className="border-0 shadow-sm">
               <CardContent className="py-12 text-center">
                 <p className="text-gray-600">لا توجد شيكات مسجلة حتى الآن</p>
@@ -402,6 +408,7 @@ export default function Checks() {
 
                     <div className="flex gap-2 mr-4">
                       <Button
+                        disabled={isSaving}
                         onClick={() => handleEditCheck(check)}
                         variant="outline"
                         size="sm"
@@ -411,6 +418,7 @@ export default function Checks() {
                         تعديل
                       </Button>
                       <Button
+                        disabled={isSaving}
                         onClick={() => handleDeleteCheck(check.id)}
                         variant="outline"
                         size="sm"

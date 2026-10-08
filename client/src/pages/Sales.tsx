@@ -3,7 +3,7 @@ import { useLocation } from "wouter";
 import { ArrowLeft, Barcode, Plus, Printer, Search, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
-import { createCloudInvoice, createInvoiceIdempotencyKey, listCloudInvoices, type CloudInvoice, type CreateInvoiceInput } from "@/lib/supabase/invoices";
+import { acknowledgeInvoiceIntent, completeInvoiceIntent, createCloudInvoice, createInvoiceIdempotencyKey, getRecoverableInvoiceIntent, listCloudInvoices, type CloudInvoice, type CreateInvoiceInput } from "@/lib/supabase/invoices";
 import type { CloudProduct } from "@/lib/supabase/products";
 import { getContentUnit, getSalePriceForUnit, getSaleUnitOptions } from "@/lib/packageUnits";
 import Cashier from "@/pages/Cashier";
@@ -40,7 +40,7 @@ export default function Sales() {
   const [discountType, setDiscountType] = useState<"percent" | "fixed">("percent");
   const [discountValue, setDiscountValue] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-  const [attemptLocked, setAttemptLocked] = useState(false);
+  const [attemptLocked, setAttemptLocked] = useState(true);
   const pendingInvoiceRef = useRef<PendingInvoice | null>(null);
 
   const [invoices, setInvoices] = useState<CloudInvoice[] | null>(null);
@@ -93,6 +93,42 @@ export default function Sales() {
       void loadInvoices(true);
     }
   }, [showSalesList, invoices, isLoadingInvoices, loadInvoices]);
+
+  useEffect(() => {
+    let active = true;
+    const recoverPendingInvoice = async () => {
+      try {
+        const intent = await getRecoverableInvoiceIntent();
+        if (!active) return;
+        if (!intent) {
+          setAttemptLocked(false);
+          return;
+        }
+        setAttemptLocked(true);
+        setIsSaving(true);
+        const created = intent.state === "completed" && intent.invoiceResult
+          ? intent.invoiceResult
+          : await completeInvoiceIntent(intent.intentId);
+        try {
+          if (intent.state !== "acknowledged") await acknowledgeInvoiceIntent(intent.intentId);
+        } catch {
+          toast.message("أكد الخادم الفاتورة؛ سيُستكمل تأكيد الاستلام السحابي عند عودة الاتصال.");
+        }
+        if (!active) return;
+        toast.success(`استُعيدت الفاتورة ${created.invoice_number} بأمان من Supabase.`);
+        navigate(`/invoice?invoiceId=${encodeURIComponent(created.invoice_id)}`);
+      } catch (error) {
+        if (!active) return;
+        setAttemptLocked(true);
+        const message = error instanceof Error ? error.message : "تعذر التحقق من محاولة البيع السابقة.";
+        toast.error(`توجد محاولة بيع لم تُحسم بعد. لم نبدأ فاتورة جديدة؛ أعد تحميل الصفحة بعد استعادة الاتصال. ${message}`);
+      } finally {
+        if (active) setIsSaving(false);
+      }
+    };
+    void recoverPendingInvoice();
+    return () => { active = false; };
+  }, [navigate]);
 
   const handleAddProduct = () => {
     if (attemptLocked) return;

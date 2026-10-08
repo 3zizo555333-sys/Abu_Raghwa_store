@@ -1,25 +1,11 @@
-import { useState, useEffect } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { Plus, Trash2, Edit2, TrendingDown, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
-
-interface Expense {
-  id: string;
-  name: string;
-  amount: number;
-  category: string;
-  date: string;
-  type: "daily" | "monthly";
-  notes: string;
-}
-
-interface DailySalesData {
-  date: string;
-  totalRevenue: number;
-  totalProfit: number;
-}
+import { toast } from "sonner";
+import { deleteCloudExpense, getCloudExpenseSummary, listCloudExpenses, saveCloudExpense, subscribeToExpenseChanges, type CloudExpense, type ExpenseSummary } from "@/lib/supabase/expenses";
 
 const EXPENSE_CATEGORIES = [
   "الإيجار",
@@ -34,8 +20,11 @@ const EXPENSE_CATEGORIES = [
 
 export default function Expenses() {
   const [, navigate] = useLocation();
-  const [expenses, setExpenses] = useState<Expense[]>([]);
-  const [salesData, setSalesData] = useState<DailySalesData[]>([]);
+  const [expenses, setExpenses] = useState<CloudExpense[]>([]);
+  const [summary, setSummary] = useState<ExpenseSummary>({ totalRevenue: 0, totalProfit: 0 });
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [loadError, setLoadError] = useState("");
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<"daily" | "monthly" | "all">("all");
@@ -48,63 +37,62 @@ export default function Expenses() {
     notes: ""
   });
 
-  useEffect(() => {
-    loadExpenses();
-    loadSalesData();
+  const loadCloudData = useCallback(async () => {
+    setLoadError("");
+    try {
+      const [nextExpenses, nextSummary] = await Promise.all([listCloudExpenses(), getCloudExpenseSummary()]);
+      setExpenses(nextExpenses);
+      setSummary(nextSummary);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل المصروفات من Supabase.";
+      setLoadError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
-  const loadExpenses = () => {
-    const saved = localStorage.getItem("abu_raghwa_expenses");
-    if (saved) {
-      setExpenses(JSON.parse(saved));
+  useEffect(() => {
+    let active = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    void loadCloudData();
+    void subscribeToExpenseChanges(() => { if (active) void loadCloudData(); })
+      .then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); })
+      .catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تفعيل مزامنة المصروفات."); });
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
+  }, [loadCloudData]);
+
+  const handleAddExpense = async () => {
+    if (isSaving) return;
+    const amount = Number(formData.amount);
+    if (!formData.name.trim() || !Number.isFinite(amount) || amount <= 0) {
+      toast.error("أدخل اسم المصروفة ومبلغًا صحيحًا أكبر من صفر.");
+      return;
     }
-  };
-
-  const loadSalesData = () => {
-    const saved = localStorage.getItem("abu_raghwa_sales");
-    if (saved) {
-      setSalesData(JSON.parse(saved));
+    const current = editingId ? expenses.find(expense => expense.id === editingId) : undefined;
+    if (editingId && !current) {
+      toast.error("لم تعد المصروفة موجودة في السجل السحابي. حدّث الصفحة قبل التعديل.");
+      return;
     }
-  };
-
-  const saveExpenses = (updated: Expense[]) => {
-    localStorage.setItem("abu_raghwa_expenses", JSON.stringify(updated));
-    setExpenses(updated);
-  };
-
-  const handleAddExpense = () => {
-    // جميع الحقول اختيارية
-
-    if (editingId) {
-      const updated = expenses.map(e =>
-        e.id === editingId
-          ? {
-              ...e,
-              name: formData.name,
-              amount: parseFloat(formData.amount),
-              category: formData.category,
-              date: formData.date,
-              type: formData.type,
-              notes: formData.notes
-            }
-          : e
-      );
-      saveExpenses(updated);
-      setEditingId(null);
-    } else {
-      const newExpense: Expense = {
-        id: Date.now().toString(),
+    setIsSaving(true);
+    try {
+      await saveCloudExpense({
         name: formData.name,
-        amount: parseFloat(formData.amount),
+        amount,
         category: formData.category,
         date: formData.date,
         type: formData.type,
-        notes: formData.notes
-      };
-      saveExpenses([...expenses, newExpense]);
+        notes: formData.notes,
+      }, current ? { id: current.id, version: current.version } : undefined);
+      toast.success(editingId ? "تم تحديث المصروفة في Supabase." : "تم حفظ المصروفة في Supabase.");
+      setEditingId(null);
+      resetForm();
+      await loadCloudData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ المصروفة سحابيًا؛ لم تُحفظ محليًا.");
+    } finally {
+      setIsSaving(false);
     }
-
-    resetForm();
   };
 
   const resetForm = () => {
@@ -116,10 +104,11 @@ export default function Expenses() {
       type: "daily",
       notes: ""
     });
+    setEditingId(null);
     setShowForm(false);
   };
 
-  const handleEdit = (expense: Expense) => {
+  const handleEdit = (expense: CloudExpense) => {
     setFormData({
       name: expense.name,
       amount: expense.amount.toString(),
@@ -132,9 +121,18 @@ export default function Expenses() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("هل أنت متأكد من حذف هذه المصروفة؟")) {
-      saveExpenses(expenses.filter(e => e.id !== id));
+  const handleDelete = async (id: string) => {
+    const expense = expenses.find(item => item.id === id);
+    if (!expense || isSaving || !confirm("هل أنت متأكد من حذف هذه المصروفة من السجل السحابي؟")) return;
+    setIsSaving(true);
+    try {
+      await deleteCloudExpense({ id: expense.id, version: expense.version });
+      toast.success("تم حذف المصروفة من Supabase.");
+      await loadCloudData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حذف المصروفة سحابيًا؛ لم يُحذف السجل.");
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -152,8 +150,8 @@ export default function Expenses() {
     .reduce((sum, e) => sum + e.amount, 0);
 
   // حساب الإيرادات والأرباح
-  const totalRevenue = salesData.reduce((sum, s) => sum + s.totalRevenue, 0);
-  const totalProfit = salesData.reduce((sum, s) => sum + s.totalProfit, 0);
+  const totalRevenue = summary.totalRevenue;
+  const totalProfit = summary.totalProfit;
   const netProfit = totalProfit - (dailyExpenses + monthlyExpenses);
   const netProfitPercent = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
@@ -174,6 +172,7 @@ export default function Expenses() {
           </div>
           <div className="flex gap-2">
             <Button
+              disabled={isSaving}
               onClick={() => {
                 setShowForm(!showForm);
                 if (showForm) resetForm();
@@ -194,6 +193,8 @@ export default function Expenses() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {loadError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{loadError}<Button variant="outline" disabled={isSaving} className="mr-3" onClick={() => void loadCloudData()}>إعادة المحاولة</Button></div>}
+        {isLoading && <p className="mb-4 text-sm text-slate-600">جاري تحميل المصروفات والملخص المالي من Supabase...</p>}
         {/* بطاقات الإحصائيات */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
           {/* إجمالي الإيرادات */}
@@ -263,6 +264,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">اسم المصروفة</label>
                   <Input
+                    disabled={isSaving}
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                     placeholder="مثال: إيجار المحل"
@@ -272,6 +274,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">المبلغ (ج.م)</label>
                   <Input
+                    disabled={isSaving}
                     type="number"
                     step="0.01"
                     value={formData.amount}
@@ -283,6 +286,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">الفئة</label>
                   <select
+                    disabled={isSaving}
                     value={formData.category}
                     onChange={(e) => setFormData({ ...formData, category: e.target.value })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -296,6 +300,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">النوع</label>
                   <select
+                    disabled={isSaving}
                     value={formData.type}
                     onChange={(e) => setFormData({ ...formData, type: e.target.value as "daily" | "monthly" })}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg"
@@ -308,6 +313,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">التاريخ</label>
                   <Input
+                    disabled={isSaving}
                     type="date"
                     value={formData.date}
                     onChange={(e) => setFormData({ ...formData, date: e.target.value })}
@@ -317,6 +323,7 @@ export default function Expenses() {
                 <div>
                   <label className="block text-sm font-medium mb-2">ملاحظات</label>
                   <Input
+                    disabled={isSaving}
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="ملاحظات إضافية (اختياري)"
@@ -326,12 +333,14 @@ export default function Expenses() {
 
               <div className="flex gap-2">
                 <Button
+                  disabled={isSaving}
                   onClick={handleAddExpense}
                   className="flex-1 bg-green-600 hover:bg-green-700 text-white"
                 >
                   {editingId ? "تحديث المصروفة" : "إضافة المصروفة"}
                 </Button>
                 <Button
+                  disabled={isSaving}
                   onClick={resetForm}
                   variant="outline"
                   className="flex-1"
@@ -409,6 +418,7 @@ export default function Expenses() {
                             <Button
                               size="sm"
                               variant="outline"
+                              disabled={isSaving}
                               onClick={() => handleEdit(expense)}
                             >
                               ✏️
@@ -416,6 +426,7 @@ export default function Expenses() {
                             <Button
                               size="sm"
                               variant="destructive"
+                              disabled={isSaving}
                               onClick={() => handleDelete(expense.id)}
                             >
                               <Trash2 className="w-3 h-3" />
@@ -461,7 +472,7 @@ export default function Expenses() {
           </Card>
         )}
 
-        {expenses.length === 0 && !showForm && (
+        {expenses.length === 0 && !showForm && !isLoading && !loadError && (
           <Card className="border-0 shadow-sm">
             <CardContent className="pt-6">
               <p className="text-center text-gray-600 py-8">لا توجد مصاريف حتى الآن. أضف مصروفة جديدة للبدء!</p>

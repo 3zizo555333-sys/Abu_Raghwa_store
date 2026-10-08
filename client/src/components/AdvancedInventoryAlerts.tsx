@@ -31,21 +31,7 @@ export const AdvancedInventoryAlerts: React.FC<AdvancedInventoryAlertsProps> = (
   onAlertTriggered
 }) => {
   const { addNotification } = useNotification();
-  const [alertHistory, setAlertHistory] = useState<AlertHistory[]>([]);
   const [lastAlertedProducts, setLastAlertedProducts] = useState<Map<string, Date>>(new Map());
-
-  useEffect(() => {
-    // تحميل سجل التنبيهات من localStorage
-    const saved = localStorage.getItem('abu_raghwa_alert_history');
-    if (saved) {
-      try {
-        const parsed = JSON.parse(saved);
-        setAlertHistory(parsed.map((a: any) => ({ ...a, timestamp: new Date(a.timestamp) })));
-      } catch (e) {
-        console.error('Error loading alert history:', e);
-      }
-    }
-  }, []);
 
   useEffect(() => {
     products.forEach(product => {
@@ -85,12 +71,6 @@ export const AdvancedInventoryAlerts: React.FC<AdvancedInventoryAlertsProps> = (
           timestamp: now,
           quantity: product.quantity
         };
-
-        setAlertHistory(prev => {
-          const updated = [newAlert, ...prev].slice(0, 100); // الاحتفاظ بآخر 100 تنبيه
-          localStorage.setItem('abu_raghwa_alert_history', JSON.stringify(updated));
-          return updated;
-        });
 
         // تحديث وقت آخر تنبيه
         setLastAlertedProducts(prev => {

@@ -1,8 +1,32 @@
 export type SharedOffer = Record<string, unknown> & { id: string };
 
+const PRIVATE_OFFER_FIELD = /cost|profit|margin|wholesale|supplier|purchaseprice/i;
+
 function parseOffer(value: unknown): SharedOffer | null {
   if (!value || typeof value !== "object" || typeof (value as Record<string, unknown>).id !== "string") return null;
   return value as SharedOffer;
+}
+
+function removePrivateOfferFields(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(removePrivateOfferFields);
+  if (value === null || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => !PRIVATE_OFFER_FIELD.test(key))
+      .map(([key, nested]) => [key, removePrivateOfferFields(nested)]),
+  );
+}
+
+/** Serialize a published offer without exposing nested supplier/cost/profit data. */
+export function publicOfferJson(offerData: string | null | undefined): string | null {
+  if (!offerData) return null;
+  try {
+    const parsed: unknown = JSON.parse(offerData);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    return JSON.stringify(removePrivateOfferFields(parsed));
+  } catch {
+    return null;
+  }
 }
 
 export function mergeSharedOfferRecords(legacyDataJson: string | null, individualOfferJsons: string[]): SharedOffer[] {

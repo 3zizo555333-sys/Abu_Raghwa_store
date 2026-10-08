@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { useNotification } from './NotificationSystem';
 
 interface SaleItem {
@@ -32,22 +32,10 @@ export const SalesAlertManager: React.FC<SalesAlertManagerProps> = ({
   onSaleAlert
 }) => {
   const { addNotification } = useNotification();
-  const [processedSales, setProcessedSales] = useState<Set<string>>(new Set());
+  const processedSales = useRef(new Set<string>());
 
   useEffect(() => {
-    // تحميل المبيعات المعالجة من localStorage
-    const saved = localStorage.getItem('abu_raghwa_processed_sales');
-    if (saved) {
-      try {
-        setProcessedSales(new Set(JSON.parse(saved)));
-      } catch (e) {
-        console.error('Error loading processed sales:', e);
-      }
-    }
-  }, []);
-
-  useEffect(() => {
-    if (!sale || processedSales.has(sale.id)) {
+    if (!sale || processedSales.current.has(sale.id)) {
       return;
     }
 
@@ -84,17 +72,12 @@ export const SalesAlertManager: React.FC<SalesAlertManagerProps> = ({
     addNotification(notificationType, title, message);
 
     // تسجيل المبيعة كمعالجة
-    setProcessedSales(prev => {
-      const updated = new Set(prev);
-      updated.add(sale.id);
-      localStorage.setItem('abu_raghwa_processed_sales', JSON.stringify(Array.from(updated)));
-      return updated;
-    });
+    processedSales.current.add(sale.id);
 
     if (onSaleAlert) {
       onSaleAlert(sale, alertType);
     }
-  }, [sale, largeOrderThreshold, addNotification, processedSales, onSaleAlert]);
+  }, [sale, largeOrderThreshold, addNotification, onSaleAlert]);
 
   return null;
 };

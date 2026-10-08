@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
+import { mergeSharedOfferRecords, publicOfferJson, removeOfferFromLegacyData } from "./sharedOffers";
 
 const json = (id: string, title: string) => JSON.stringify({ id, title });
 
@@ -23,5 +23,18 @@ describe("published offers list retention", () => {
     const result = removeOfferFromLegacyData(original, "delete-me");
     expect(result.changed).toBe(true);
     expect(JSON.parse(result.dataJson).map((offer: { id: string }) => offer.id)).toEqual(["keep-a", "keep-b"]);
+  });
+
+  it("removes nested cost and profit fields from public offer JSON", () => {
+    const result = publicOfferJson(JSON.stringify({
+      id: "public-offer",
+      offerPrice: 90,
+      totalCostPrice: 70,
+      items: [{ name: "منتج", retailPrice: 100, costPrice: 60, offerPrice: 90, supplierName: "مورد" }],
+    }));
+    expect(result).not.toBeNull();
+    expect(result).not.toMatch(/cost|profit|supplier/i);
+    expect(JSON.parse(result!)).toMatchObject({ id: "public-offer", offerPrice: 90, items: [{ name: "منتج", retailPrice: 100, offerPrice: 90 }] });
+    expect(publicOfferJson("not-json")).toBeNull();
   });
 });

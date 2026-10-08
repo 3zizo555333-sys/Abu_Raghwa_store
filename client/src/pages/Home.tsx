@@ -1,50 +1,35 @@
-import { useEffect, useState } from "react";
-import { useAuth } from "@/_core/hooks/useAuth";
+import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { LogOut, Settings, Users, BarChart3, Package, ShoppingCart, Gift, Mic, Beaker, Calculator, FileText, Camera } from "lucide-react";
 import SocialMediaLinks from "@/components/SocialMediaLinks";
-
-interface User {
-  id: string;
-  email: string;
-  role: "manager" | "admin" | "seller";
-}
+import { useStaffAccess } from "@/hooks/useStaffAccess";
+import { getSupabaseClient } from "@/lib/supabase/client";
 
 export default function Home() {
-  // The useAuth hook provides authentication state.
-  // To implement login/logout, call logout(), or start login from an event
-  // handler: onClick={() => startLogin()} (imported from "@/const"). Never call
-  // startLogin() during render (no href={startLogin()}) — it mints a one-time
-  // nonce cookie and must run only at the moment of navigation.
-  let { user, loading, error, isAuthenticated, logout } = useAuth();
-
   const [, navigate] = useLocation();
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const { user, isLoading, error, isAuthenticated, membershipState, canViewSensitiveFinancials, refresh } = useStaffAccess({ monitorMembership: true });
 
   useEffect(() => {
-    const user = localStorage.getItem("abu_raghwa_current_user");
-    if (user) {
-      setCurrentUser(JSON.parse(user));
-    } else {
+    if (!isLoading && !error && (!isAuthenticated || membershipState !== "active")) navigate("/auth");
+  }, [error, isAuthenticated, isLoading, membershipState, navigate]);
+
+  const handleLogout = async () => {
+    try {
+      await getSupabaseClient().auth.signOut();
+    } catch (logoutError) {
+      console.error("Supabase logout failed", logoutError);
+    } finally {
       navigate("/auth");
     }
-  }, [navigate]);
-
-  const handleLogout = () => {
-    sessionStorage.removeItem("abu_staff_sync_token");
-    sessionStorage.removeItem("abu_catalog_admin_token");
-    sessionStorage.removeItem("abu_employee_finance_token");
-    localStorage.removeItem("abu_raghwa_current_user");
-    localStorage.removeItem("abu_raghwa_device_id");
-    navigate("/auth");
   };
 
   const getRoleLabel = (role: string) => {
     const labels: { [key: string]: string } = {
       manager: "مدير",
       admin: "مسؤول",
+      supervisor: "مشرف",
       seller: "بائع"
     };
     return labels[role] || role;
@@ -66,6 +51,7 @@ export default function Home() {
         "طباعة الفواتير",
         "إدارة الخامات والتركيبات"
       ],
+      supervisor: ["إدارة المخزون", "عرض البيانات المالية المصرح بها", "مراجعة السجلات الحساسة"],
       seller: [
         "نظام POS",
         "طباعة الفواتير",
@@ -76,7 +62,13 @@ export default function Home() {
     return permissions[role] || [];
   };
 
-  if (!currentUser) {
+  if (isLoading) {
+    return <div className="min-h-screen flex items-center justify-center text-slate-600">جارٍ التحقق من جلسة Supabase...</div>;
+  }
+  if (error) {
+    return <div role="alert" className="min-h-screen flex flex-col items-center justify-center gap-4 p-6 text-center"><p>تعذر التحقق من جلسة المتجر من Supabase: {error instanceof Error ? error.message : "خطأ غير معروف"}</p><Button onClick={() => void refresh()}>إعادة المحاولة</Button></div>;
+  }
+  if (!user || membershipState !== "active") {
     return null;
   }
 
@@ -199,8 +191,8 @@ export default function Home() {
           </div>
           <div className="flex items-center gap-4">
             <div className="text-right">
-              <p className="text-sm font-semibold">{currentUser.email}</p>
-              <p className="text-xs text-gray-600">{getRoleLabel(currentUser.role)}</p>
+              <p className="text-sm font-semibold">{user.email}</p>
+              <p className="text-xs text-gray-600">{getRoleLabel(user.role)}</p>
             </div>
             <Button
               onClick={handleLogout}
@@ -230,11 +222,11 @@ export default function Home() {
         <Card className="mb-8 border-0 shadow-sm">
           <CardHeader>
             <CardTitle>صلاحياتك</CardTitle>
-            <CardDescription>{getRoleLabel(currentUser.role)}</CardDescription>
+            <CardDescription>{getRoleLabel(user.role)}</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {getPermissions(currentUser.role).map((perm, idx) => (
+              {getPermissions(user.role).map((perm, idx) => (
                 <div key={idx} className="bg-blue-50 p-3 rounded-lg text-sm text-blue-800">
                   ✓ {perm}
                 </div>
@@ -319,7 +311,7 @@ export default function Home() {
         </div>
 
         {/* Staff Management */}
-        {(currentUser.role === "manager" || currentUser.role === "admin") && (
+        {canViewSensitiveFinancials && (
           <div className="mb-8">
             <h3 className="text-2xl font-bold mb-4 text-gray-900">إدارة الموظفين</h3>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
