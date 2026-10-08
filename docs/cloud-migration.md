@@ -11,7 +11,7 @@
    supabase link --project-ref YOUR_TEST_PROJECT_REF
    supabase db push
    ```
-3. راجع migrations قبل التطبيق. مخطط المتجر الأساسي مطبق على مشروع `smkqizjpdbnbyoumgdwi` ومسجل بالنسخة `20261008044614`، وRPC البحث المحدود بالباركود مطبق ومسجل بالنسخة `20261008060203`؛ تطابق أسماء الملفات `supabase/migrations/` سجل المشروع، فلا تُعِد تطبيقهما عبر `supabase db push`.
+3. راجع migrations قبل التطبيق. على مشروع `smkqizjpdbnbyoumgdwi` طُبق المخطط الأساسي (النسخة `20261008044614`)، وRPC البحث المحدود بالباركود (`20261008060203`)، وإدارة العضويات/اعتماد الموظفين (`20261008062842`). تطابق أسماء الملفات في `supabase/migrations/` سجل المشروع، فلا تُعِد تطبيق هذه النسخ عبر `supabase db push`.
 4. أنشئ المستخدم الإداري أولًا في Supabase Auth. ثم خزّن القيمتين `SUPABASE_URL` و`SUPABASE_SERVICE_ROLE_KEY` في `.env.local` المستثنى من Git، وشغّل أمر التهيئة لمرة واحدة:
    ```sh
    pnpm supabase:provision-shop --name "أبو رغوة" --manager-user-id USER_UUID --confirm-one-time-provisioning
