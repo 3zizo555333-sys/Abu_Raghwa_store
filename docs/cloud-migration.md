@@ -11,7 +11,7 @@
    supabase link --project-ref YOUR_TEST_PROJECT_REF
    supabase db push
    ```
-3. راجع `supabase/migrations/202610080001_cloud_store.sql` قبل التطبيق. ينشئ الترحيل الجداول والسياسات ودوال RPC وbucket الصور الخاص وRealtime change feed.
+3. راجع `supabase/migrations/20261008044614_cloud_store_initial.sql` قبل التطبيق. تم تطبيق هذا الترحيل على مشروع `smkqizjpdbnbyoumgdwi` عبر موصل Supabase، وسُجل بالنسخة `20261008044614`؛ لذلك يطابق اسم الملف سجل المشروع ولا ينبغي أن يعاد تطبيقه عبر `supabase db push`.
 4. أنشئ المستخدم الإداري أولًا في Supabase Auth. ثم خزّن القيمتين `SUPABASE_URL` و`SUPABASE_SERVICE_ROLE_KEY` في `.env.local` المستثنى من Git، وشغّل أمر التهيئة لمرة واحدة:
    ```sh
    pnpm supabase:provision-shop --name "أبو رغوة" --manager-user-id USER_UUID --confirm-one-time-provisioning
