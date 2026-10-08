@@ -11,13 +11,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10.4.1
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: pnpm
-      - uses: supabase/setup-cli@v3
+      - id: supabase_cli
+        uses: supabase/setup-cli@v3
         with:
           version: 2.84.2
       - run: pnpm install --frozen-lockfile
@@ -29,5 +28,5 @@ jobs:
       - run: python3 -m pip install --quiet pglast
       - run: pnpm supabase:check-sql
       - run: pnpm storage:check
-      - if: always()
+      - if: always() && steps.supabase_cli.outcome == 'success'
         run: supabase stop --no-backup
