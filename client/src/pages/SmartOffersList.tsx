@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Sparkles, Trash2, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
@@ -65,11 +66,11 @@ export default function SmartOffersList() {
       await trpcUtils.offers.list.invalidate();
 
       try {
-        const globalOffers = JSON.parse(localStorage.getItem("abu_raghwa_global_offers") || "{}");
+        const globalOffers = JSON.parse(browserState.get("abu_raghwa_global_offers") || "{}");
         delete globalOffers[offer.id];
-        localStorage.setItem("abu_raghwa_global_offers", JSON.stringify(globalOffers));
+        browserState.set("abu_raghwa_global_offers", JSON.stringify(globalOffers));
       } catch {
-        localStorage.removeItem("abu_raghwa_global_offers");
+        browserState.remove("abu_raghwa_global_offers");
       }
 
       if (expandedOfferId === offer.id) setExpandedOfferId(null);

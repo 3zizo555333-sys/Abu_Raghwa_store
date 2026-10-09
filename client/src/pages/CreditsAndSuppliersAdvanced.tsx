@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
@@ -53,21 +54,21 @@ export default function CreditsAndSuppliersAdvanced() {
     notes: ""
   });
 
-  // Load data from localStorage
+  // Load data from browserState
   useEffect(() => {
-    const savedCustomers = localStorage.getItem("abu_raghwa_customers_advanced");
-    const savedSuppliers = localStorage.getItem("abu_raghwa_suppliers_advanced");
+    const savedCustomers = browserState.get("abu_raghwa_customers_advanced");
+    const savedSuppliers = browserState.get("abu_raghwa_suppliers_advanced");
     if (savedCustomers) setCustomers(JSON.parse(savedCustomers));
     if (savedSuppliers) setSuppliers(JSON.parse(savedSuppliers));
   }, []);
 
-  // Save to localStorage
+  // Save to browserState
   useEffect(() => {
-    localStorage.setItem("abu_raghwa_customers_advanced", JSON.stringify(customers));
+    browserState.set("abu_raghwa_customers_advanced", JSON.stringify(customers));
   }, [customers]);
 
   useEffect(() => {
-    localStorage.setItem("abu_raghwa_suppliers_advanced", JSON.stringify(suppliers));
+    browserState.set("abu_raghwa_suppliers_advanced", JSON.stringify(suppliers));
   }, [suppliers]);
 
   const handleAddCustomer = () => {

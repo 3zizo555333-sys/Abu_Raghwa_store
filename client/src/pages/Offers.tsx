@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -78,12 +79,12 @@ export default function Offers() {
   }, []);
 
   const loadProducts = () => {
-    const saved = localStorage.getItem("abu_raghwa_products");
+    const saved = browserState.get("abu_raghwa_products");
     if (saved) setProducts(JSON.parse(saved));
   };
 
   const loadRecipes = () => {
-    const saved = localStorage.getItem("abu_raghwa_recipes");
+    const saved = browserState.get("abu_raghwa_recipes");
     if (saved) setRecipes(JSON.parse(saved));
   };
 

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -54,7 +55,7 @@ function InvoiceCameraPageContent() {
 
     const migrateLegacyInvoices = async () => {
       try {
-        const rawLegacy = localStorage.getItem("abu_raghwa_invoice_categories") || localStorage.getItem("invoice_categories");
+        const rawLegacy = browserState.get("abu_raghwa_invoice_categories") || browserState.get("invoice_categories");
         const legacyCategories = rawLegacy ? JSON.parse(rawLegacy) as InvoiceCategory[] : [];
         if (!Array.isArray(legacyCategories) || legacyCategories.length === 0) return;
 
@@ -68,7 +69,7 @@ function InvoiceCameraPageContent() {
           })),
         })));
         setCategories(migrated);
-        localStorage.setItem("abu_raghwa_invoice_categories", JSON.stringify(migrated));
+        browserState.set("abu_raghwa_invoice_categories", JSON.stringify(migrated));
         setHasUnsavedChanges(false);
         toast.success("✅ تم نقل معرض الفواتير والصور إلى السحابة بنجاح");
       } catch (error) {

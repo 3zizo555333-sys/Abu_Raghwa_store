@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -57,7 +58,7 @@ export default function InvoiceOCR() {
       return;
     }
 
-    const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
+    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
     
     parsedItems.forEach((item) => {
       const existingMaterial = materials.find((m: any) => m.name === item.name);
@@ -82,7 +83,7 @@ export default function InvoiceOCR() {
       }
     });
 
-    localStorage.setItem("abu_raghwa_raw_materials", JSON.stringify(materials));
+    browserState.set("abu_raghwa_raw_materials", JSON.stringify(materials));
     alert("تم استيراد الفاتورة بنجاح!");
     
     setInvoiceImage(null);

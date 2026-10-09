@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Banknote, CheckCircle2, Clock, Edit2, KeyRound, LockKeyhole, LogOut, Plus, ShieldCheck, Trash2, UnlockKeyhole, WalletCards, XCircle } from "lucide-react";
@@ -34,7 +35,7 @@ export default function Employees() {
   const [storedAttendance, setStoredAttendance] = useCloudState<AttendanceRecord[]>("abu_raghwa_attendance", []);
   const employees = normalizeEmployees(storedEmployees);
   const attendance = normalizeAttendance(storedAttendance);
-  const currentUser = useMemo<CurrentUser | null>(() => { try { return JSON.parse(localStorage.getItem("abu_raghwa_current_user") || "null"); } catch { return null; } }, []);
+  const currentUser = useMemo<CurrentUser | null>(() => { try { return JSON.parse(browserState.get("abu_raghwa_current_user") || "null"); } catch { return null; } }, []);
   const isManager = currentUser?.role === "manager";
   const [financeAccess, setFinanceAccess] = useState<"manager" | "employee" | null>(null);
   const [cardPassword, setCardPassword] = useState("");
@@ -44,8 +45,8 @@ export default function Employees() {
   const [cardPasswords, setCardPasswords] = useState<Record<string, string>>({});
   const [withdrawalDrafts, setWithdrawalDrafts] = useState<Record<string, { amount: string; description: string }>>({});
 
-  const login = trpc.employeeFinance.login.useMutation({ onSuccess: result => { sessionStorage.setItem("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
-  const managerLogin = trpc.employeeFinance.loginWithStaffSession.useMutation({ onSuccess: result => { sessionStorage.setItem("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
+  const login = trpc.employeeFinance.login.useMutation({ onSuccess: result => { browserState.set("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
+  const managerLogin = trpc.employeeFinance.loginWithStaffSession.useMutation({ onSuccess: result => { browserState.set("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
   const managerOverview = trpc.employeeFinance.managerOverview.useQuery(undefined, { enabled: financeAccess === "manager", retry: false });
   const myAccount = trpc.employeeFinance.myAccount.useQuery(undefined, { enabled: financeAccess === "employee", retry: false });
   const configureEmployee = trpc.employeeFinance.configureEmployee.useMutation({ onSuccess: () => { toast.success("تم حفظ كلمة مرور البطاقة وإلغاء الكلمة السابقة فورًا"); utils.employeeFinance.managerOverview.invalidate(); }, onError: error => toast.error(error.message) });
@@ -56,7 +57,7 @@ export default function Employees() {
   const deleteEmployee = trpc.employeeFinance.deleteEmployee.useMutation({ onSuccess: (_, variables) => { setStoredEmployees(current => normalizeEmployees(current).filter(item => item.id !== variables.employeeId)); setStoredAttendance(current => normalizeAttendance(current).filter(item => item.employeeId !== variables.employeeId)); utils.employeeFinance.managerOverview.invalidate(); toast.success("تم حذف العامل نهائيًا"); }, onError: error => toast.error(error.message) });
 
   useEffect(() => { if (isManager && financeAccess !== "manager" && !managerLogin.isPending) managerLogin.mutate(); }, [financeAccess, isManager, managerLogin]);
-  useEffect(() => { if (!isManager) { sessionStorage.removeItem("abu_employee_finance_token"); setFinanceAccess(null); } }, [isManager]);
+  useEffect(() => { if (!isManager) { browserState.remove("abu_employee_finance_token"); setFinanceAccess(null); } }, [isManager]);
 
   const saveEmployee = () => {
     if (!formData.name.trim()) return toast.error("اكتب اسم الموظف");

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -17,14 +18,14 @@ interface ScannedInvoice {
 export default function InvoiceScanner() {
   const [, navigate] = useLocation();
   const [invoices, setInvoices] = useState<ScannedInvoice[]>(() => {
-    const saved = localStorage.getItem('abu_raghwa_scanned_invoices');
+    const saved = browserState.get('abu_raghwa_scanned_invoices');
     return saved ? JSON.parse(saved) : [];
   });
   const [showCamera, setShowCamera] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<ScannedInvoice | null>(null);
 
   const saveInvoices = (updated: ScannedInvoice[]) => {
-    localStorage.setItem('abu_raghwa_scanned_invoices', JSON.stringify(updated));
+    browserState.set('abu_raghwa_scanned_invoices', JSON.stringify(updated));
     setInvoices(updated);
   };
 

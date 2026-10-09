@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -71,9 +72,9 @@ export default function ApartmentManagement() {
     category: '',
   });
 
-  // تحميل البيانات من localStorage عند بدء التطبيق
+  // تحميل البيانات من browserState عند بدء التطبيق
   useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
+    const saved = browserState.get(STORAGE_KEY);
     if (saved) {
       try {
         setItems(JSON.parse(saved));
@@ -84,19 +85,19 @@ export default function ApartmentManagement() {
   }, []);
 
   useEffect(() => {
-    const savedCategories = localStorage.getItem(CATEGORIES_KEY);
+    const savedCategories = browserState.get(CATEGORIES_KEY);
     if (savedCategories) {
       try { setCategoryNames(JSON.parse(savedCategories)); } catch { setCategoryNames([]); }
     }
   }, []);
 
-  // حفظ البيانات في localStorage كلما تغيرت
+  // حفظ البيانات في browserState كلما تغيرت
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    browserState.set(STORAGE_KEY, JSON.stringify(items));
   }, [items]);
 
   useEffect(() => {
-    localStorage.setItem(CATEGORIES_KEY, JSON.stringify(categoryNames));
+    browserState.set(CATEGORIES_KEY, JSON.stringify(categoryNames));
   }, [categoryNames]);
 
   // حساب إجمالي القطع

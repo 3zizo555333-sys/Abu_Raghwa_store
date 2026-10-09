@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,7 +42,7 @@ export default function Settings() {
 
   useEffect(() => {
     try {
-      const raw = localStorage.getItem("abu_raghwa_current_user");
+      const raw = browserState.get("abu_raghwa_current_user");
       setCurrentUser(raw ? JSON.parse(raw) : null);
     } catch {
       // A malformed legacy session must not prevent Settings from opening.
@@ -66,7 +67,7 @@ export default function Settings() {
   }, [displayUrl]);
 
   const handleSaveSettings = () => {
-    // حفظ الإعدادات في localStorage
+    // حفظ الإعدادات في browserState
     const settings = {
       shopName,
       shopPhone,
@@ -78,7 +79,7 @@ export default function Settings() {
       adminEmail
     };
 
-    localStorage.setItem("abu_raghwa_settings", JSON.stringify(settings));
+    browserState.set("abu_raghwa_settings", JSON.stringify(settings));
     const nextDisplaySettings = normalizeDisplaySettings({ ...displaySettings, shopName, shopPhone });
     setDisplaySettings(nextDisplaySettings);
     setDisplayCloudSettings(nextDisplaySettings);

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useMemo, useState } from "react";
 import { Building2, Check, ChevronLeft, CircleHelp, ClipboardList, Clock3, Minus, Package, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, Truck, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -29,7 +30,7 @@ const CUSTOMER_STATUS = {
 
 function loadSavedOrders(): SavedOrderReference[] {
   try {
-    const parsed = JSON.parse(localStorage.getItem(CUSTOMER_ORDERS_KEY) || "[]");
+    const parsed = JSON.parse(browserState.get(CUSTOMER_ORDERS_KEY) || "[]");
     return Array.isArray(parsed) ? parsed.filter(item => typeof item?.id === "string" && typeof item?.phone === "string").slice(0, 20) : [];
   } catch {
     return [];
@@ -54,8 +55,8 @@ export default function PublicCatalogPage() {
   const [savedOrders, setSavedOrders] = useState<SavedOrderReference[]>(loadSavedOrders);
   const [trackingPhone, setTrackingPhone] = useState("");
   const [loyaltyPhone, setLoyaltyPhone] = useState(() => loadSavedOrders()[0]?.phone || "");
-  const [loyaltyCode, setLoyaltyCode] = useState(() => typeof window === "undefined" ? "" : localStorage.getItem("abu_active_customer_code") || "");
-  const [customer, setCustomer] = useState({ name: "", phone: "", customerCode: typeof window === "undefined" ? "" : localStorage.getItem("abu_active_customer_code") || "", address: "", note: "" });
+  const [loyaltyCode, setLoyaltyCode] = useState(() => typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "");
+  const [customer, setCustomer] = useState({ name: "", phone: "", customerCode: typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "", address: "", note: "" });
   const createOrder = trpc.catalog.createOrder.useMutation();
   const fulfillmentMode = typeof window === "undefined" ? "pickup" : getCatalogFulfillmentMode(window.location.search);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
@@ -95,7 +96,7 @@ export default function PublicCatalogPage() {
 
   const persistOrders = (next: SavedOrderReference[]) => {
     setSavedOrders(next);
-    localStorage.setItem(CUSTOMER_ORDERS_KEY, JSON.stringify(next));
+    browserState.set(CUSTOMER_ORDERS_KEY, JSON.stringify(next));
   };
 
   const browseCategory = (category: string) => {
@@ -116,7 +117,7 @@ export default function PublicCatalogPage() {
   };
   const openLoyalty = () => {
     setLoyaltyPhone(loyaltyPhone || savedOrders[0]?.phone || "");
-    setLoyaltyCode(loyaltyCode || savedOrders[0]?.customerCode || localStorage.getItem("abu_active_customer_code") || "");
+    setLoyaltyCode(loyaltyCode || savedOrders[0]?.customerCode || browserState.get("abu_active_customer_code") || "");
     setLoyaltyOpen(true);
   };
 
@@ -152,7 +153,7 @@ export default function PublicCatalogPage() {
         priceAdjustmentPercent: fulfillmentMode === "delivery" ? deliveryMarkup : 0,
       });
       const assignedCustomerCode = result.customerCode || customer.customerCode.trim() || undefined;
-      if (assignedCustomerCode) localStorage.setItem("abu_active_customer_code", assignedCustomerCode);
+      if (assignedCustomerCode) browserState.set("abu_active_customer_code", assignedCustomerCode);
       persistOrders([{ id: result.id, phone, customerCode: assignedCustomerCode }, ...savedOrders.filter(order => order.id !== result.id)].slice(0, 20));
       setTrackingPhone(phone);
       setLoyaltyCode(assignedCustomerCode || loyaltyCode);

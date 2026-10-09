@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -28,7 +29,7 @@ export default function EmailNotifications() {
   }, []);
 
   const loadNotifications = () => {
-    const saved = localStorage.getItem("abu_raghwa_email_notifications");
+    const saved = browserState.get("abu_raghwa_email_notifications");
     if (saved) {
       setNotifications(JSON.parse(saved));
     } else {
@@ -45,7 +46,7 @@ export default function EmailNotifications() {
         }
       ];
       setNotifications(defaultNotifications);
-      localStorage.setItem("abu_raghwa_email_notifications", JSON.stringify(defaultNotifications));
+      browserState.set("abu_raghwa_email_notifications", JSON.stringify(defaultNotifications));
     }
   };
 
@@ -67,7 +68,7 @@ export default function EmailNotifications() {
 
     const updated = [...notifications, newNotification];
     setNotifications(updated);
-    localStorage.setItem("abu_raghwa_email_notifications", JSON.stringify(updated));
+    browserState.set("abu_raghwa_email_notifications", JSON.stringify(updated));
     setNewEmail("");
     alert("تم إضافة الإشعار بنجاح!");
   };
@@ -77,13 +78,13 @@ export default function EmailNotifications() {
       n.id === id ? { ...n, enabled: !n.enabled } : n
     );
     setNotifications(updated);
-    localStorage.setItem("abu_raghwa_email_notifications", JSON.stringify(updated));
+    browserState.set("abu_raghwa_email_notifications", JSON.stringify(updated));
   };
 
   const deleteNotification = (id: string) => {
     const updated = notifications.filter(n => n.id !== id);
     setNotifications(updated);
-    localStorage.setItem("abu_raghwa_email_notifications", JSON.stringify(updated));
+    browserState.set("abu_raghwa_email_notifications", JSON.stringify(updated));
   };
 
   const sendTestEmail = (email: string) => {
@@ -91,8 +92,8 @@ export default function EmailNotifications() {
   };
 
   const generateDailyReport = () => {
-    const products = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
-    const sales = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
+    const products = JSON.parse(browserState.get("abu_raghwa_products") || "[]");
+    const sales = JSON.parse(browserState.get("abu_raghwa_sales") || "[]");
     const todaySales = sales.filter((s: any) => {
       const saleDate = new Date(s.date).toDateString();
       const today = new Date().toDateString();

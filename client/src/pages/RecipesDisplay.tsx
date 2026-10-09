@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -36,7 +37,7 @@ export default function RecipesDisplay() {
   }, []);
 
   const loadRecipes = () => {
-    const recipesData = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
+    const recipesData = JSON.parse(browserState.get("abu_raghwa_recipes") || "[]");
     setRecipes(recipesData);
   };
 
@@ -74,7 +75,7 @@ export default function RecipesDisplay() {
     });
 
     setRecipes(updatedRecipes);
-    localStorage.setItem("abu_raghwa_recipes", JSON.stringify(updatedRecipes));
+    browserState.set("abu_raghwa_recipes", JSON.stringify(updatedRecipes));
 
     if (selectedRecipe?.id === recipe.id) {
       setSelectedRecipe(updatedRecipes.find((r) => r.id === recipe.id) || null);

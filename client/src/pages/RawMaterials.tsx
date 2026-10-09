@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Trash2, Edit2, ChevronDown, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
+import { deleteRawMaterial, listRawMaterials, saveRawMaterial } from "@/lib/supabase/operations";
 
 interface RawMaterial {
   id: string;
@@ -45,18 +46,16 @@ function RawMaterialsContent() {
   });
 
   useEffect(() => {
-    loadMaterials();
+    loadMaterials().catch(() => setMaterials([]));
   }, []);
 
-  const loadMaterials = () => {
-    const saved = localStorage.getItem("abu_raghwa_raw_materials");
-    if (saved) {
-      setMaterials(JSON.parse(saved));
-    }
+  const loadMaterials = async () => {
+    const rows = await listRawMaterials();
+    setMaterials(rows.map(row => ({ id: row.id, name: row.name, supplier: row.supplier, unit: row.unit, totalWeight: row.total_weight, quantity: row.quantity, totalPrice: row.total_price, wholesalePrice: row.wholesale_price, pricePerKilo: row.price_per_kilo, createdDate: row.created_at, description: row.description, usage: row.usage, ratio: row.ratio })));
   };
 
-  const saveMaterials = (updated: RawMaterial[]) => {
-    localStorage.setItem("abu_raghwa_raw_materials", JSON.stringify(updated));
+  const saveMaterials = async (updated: RawMaterial[]) => {
+    await Promise.all(updated.map(material => saveRawMaterial({ id: material.id, name: material.name, supplier: material.supplier, unit: material.unit, total_weight: material.totalWeight, quantity: material.quantity, total_price: material.totalPrice, wholesale_price: material.wholesalePrice, price_per_kilo: material.pricePerKilo, description: material.description || "", usage: material.usage || "", ratio: material.ratio || "" })));
     setMaterials(updated);
   };
 
@@ -65,7 +64,7 @@ function RawMaterialsContent() {
     return totalPrice / totalWeight;
   };
 
-  const handleAddMaterial = () => {
+  const handleAddMaterial = async () => {
     // جميع الحقول اختيارية
 
     const totalWeight = parseFloat(formData.totalWeight);
@@ -90,7 +89,7 @@ function RawMaterialsContent() {
             }
           : m
       );
-      saveMaterials(updated);
+      await saveMaterials(updated);
       setEditingId(null);
     } else {
       const newMaterial: RawMaterial = {
@@ -108,7 +107,9 @@ function RawMaterialsContent() {
         usage: "",
         ratio: ""
       };
-      saveMaterials([...materials, newMaterial]);
+      const saved = await saveRawMaterial({ name: newMaterial.name, supplier: newMaterial.supplier, unit: newMaterial.unit, total_weight: newMaterial.totalWeight, quantity: newMaterial.quantity, total_price: newMaterial.totalPrice, wholesale_price: newMaterial.wholesalePrice, price_per_kilo: newMaterial.pricePerKilo, description: "", usage: "", ratio: "" });
+      newMaterial.id = saved.id;
+      setMaterials([...materials, newMaterial]);
     }
 
     setFormData({
@@ -137,13 +138,14 @@ function RawMaterialsContent() {
     setShowForm(true);
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm("هل أنت متأكد من حذف هذه الخامة؟")) {
-      saveMaterials(materials.filter(m => m.id !== id));
+      await deleteRawMaterial(id);
+      setMaterials(materials.filter(m => m.id !== id));
     }
   };
 
-  const handleSaveDetails = (materialId: string) => {
+  const handleSaveDetails = async (materialId: string) => {
     const updated = materials.map(m =>
       m.id === materialId
         ? {
@@ -154,7 +156,7 @@ function RawMaterialsContent() {
           }
         : m
     );
-    saveMaterials(updated);
+    await saveMaterials(updated);
     setEditingDetailsId(null);
     setDetailsForm({ description: "", usage: "", ratio: "" });
   };
