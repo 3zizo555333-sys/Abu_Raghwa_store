@@ -7,20 +7,13 @@ import { useLocation } from "wouter";
 import { ArrowLeft, Mic, MicOff, Volume2, Navigation, Search, Layers, ShoppingBag, Package, Sparkles, AlertTriangle, Edit2, Trash2, Save } from "lucide-react";
 import { useCloudState } from "@/lib/cloudSync";
 import { findCustomVoiceCommand, getVoiceAction, resolveCustomVoiceInstruction, VOICE_COMMAND_ACTIONS, type CustomVoiceCommand, type VoiceCommandAction } from "@/lib/customVoiceCommands";
-
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
+import { listProductsPage } from "@/lib/supabase/products";
 
 export default function VoiceAssistant() {
   const [, navigate] = useLocation();
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState("");
   const [response, setResponse] = useState("");
-  const [products, setProducts] = useState<Product[]>([]);
   const recognitionRef = useRef<any>(null);
   const listeningStartTimerRef = useRef<number | null>(null);
   const [customCommands, setCustomCommands] = useCloudState<CustomVoiceCommand[]>("abu_raghwa_custom_voice_commands", []);
@@ -29,7 +22,6 @@ export default function VoiceAssistant() {
   const [editingCommandId, setEditingCommandId] = useState<string | null>(null);
 
   useEffect(() => {
-    loadProducts();
     initializeVoiceRecognition();
   }, []);
 
@@ -38,11 +30,6 @@ export default function VoiceAssistant() {
     const timeout = window.setTimeout(() => setResponse(""), 4200);
     return () => window.clearTimeout(timeout);
   }, [response]);
-
-  const loadProducts = () => {
-    const saved = localStorage.getItem("abu_raghwa_products");
-    if (saved) setProducts(JSON.parse(saved));
-  };
 
   const initializeVoiceRecognition = () => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -116,6 +103,23 @@ export default function VoiceAssistant() {
     }
   };
 
+  const searchCloudProduct = async (searchTerm: string) => {
+    try {
+      const page = await listProductsPage({ search: searchTerm, limit: 10 });
+      const normalized = searchTerm.toLocaleLowerCase("ar-EG");
+      const found = page.items.find(product => product.name.toLocaleLowerCase("ar-EG").includes(normalized)) ?? page.items[0];
+      const message = found
+        ? `وجدت المنتج ${found.name}. سعره ${found.retailPrice} جنيه. الكمية المتوفرة: ${found.quantity}`
+        : `عذراً، لم أجد منتج باسم ${searchTerm} في سجل المنتجات السحابي`;
+      setResponse(message);
+      speak(message);
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "تعذر البحث في منتجات Supabase الآن.";
+      setResponse(message);
+      speak(message);
+    }
+  };
+
   const processCommand = (command: string) => {
     const cmd = command.toLowerCase().trim();
     let resMsg = "";
@@ -181,13 +185,8 @@ export default function VoiceAssistant() {
     // 2. أمر البحث عن منتج بالاسم
     else if (cmd.includes("ابحث عن") || cmd.includes("بحث عن") || cmd.includes("وين منتج")) {
       const searchTerm = cmd.replace("ابحث عن", "").replace("بحث عن", "").replace("وين منتج", "").trim();
-      const found = products.find(p => p.name.toLowerCase().includes(searchTerm));
-      if (found) {
-        resMsg = `وجدت المنتج ${found.name}. سعره ${found.price} جنيه. الكمية المتوفرة: ${found.quantity}`;
-      } else {
-        resMsg = `عذراً، لم أجد منتج باسم ${searchTerm} في القائمة المسجلة`;
-      }
-      speak(resMsg);
+      if (searchTerm) void searchCloudProduct(searchTerm);
+      return;
     }
     // 3. المساعدة والأوامر العامة
     else if (cmd.includes("مساعدة") || cmd.includes("الأوامر المتاحة")) {

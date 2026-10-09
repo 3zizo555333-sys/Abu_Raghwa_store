@@ -1,301 +1,99 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, AlertTriangle, TrendingDown, Clock } from "lucide-react";
+import { ArrowLeft, AlertTriangle, LoaderCircle, RefreshCw } from "lucide-react";
+import { listProductsPage, type CloudProduct, type ProductCursor } from "@/lib/supabase/products";
 
-interface Product {
-  id: string;
-  name: string;
-  quantity: number;
-  minStock: number;
-  lastSale?: string;
-  category?: string;
-}
-
-interface Alert {
-  type: "low_stock" | "stagnant";
-  product: Product;
-  severity: "critical" | "warning" | "info";
-}
+type StockAlert = { product: CloudProduct; threshold: number; severity: "critical" | "warning" };
+const PAGE_SIZE = 100;
 
 export default function InventoryAlerts() {
   const [, navigate] = useLocation();
-  const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [products, setProducts] = useState<CloudProduct[]>([]);
+  const [total, setTotal] = useState(0);
+  const [nextCursor, setNextCursor] = useState<ProductCursor | null>(null);
+  const [hasMore, setHasMore] = useState(false);
   const [lowStockThreshold, setLowStockThreshold] = useState(5);
-  const [stagnantDays, setStagnantDays] = useState(30);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    generateAlerts();
-  }, [lowStockThreshold, stagnantDays]);
-
-  const generateAlerts = () => {
-    const products = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
-    const sales = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
-    const newAlerts: Alert[] = [];
-
-    products.forEach((product: any) => {
-      // تنبيهات المخزون الناقص
-      if (product.quantity <= lowStockThreshold) {
-        let severity: "critical" | "warning" | "info" = "warning";
-        if (product.quantity === 0) {
-          severity = "critical";
-        } else if (product.quantity <= lowStockThreshold / 2) {
-          severity = "warning";
-        }
-
-        newAlerts.push({
-          type: "low_stock",
-          product,
-          severity
-        });
-      }
-
-      // تنبيهات المخزون الراكد
-      const lastSale = sales
-        .filter((s: any) => s.items?.some((i: any) => i.productId === product.id))
-        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())[0];
-
-      if (lastSale) {
-        const daysSinceLastSale = Math.floor(
-          (Date.now() - new Date(lastSale.date).getTime()) / (1000 * 60 * 60 * 24)
-        );
-
-        if (daysSinceLastSale > stagnantDays && product.quantity > 0) {
-          newAlerts.push({
-            type: "stagnant",
-            product: { ...product, lastSale: lastSale.date },
-            severity: daysSinceLastSale > stagnantDays * 2 ? "critical" : "warning"
-          });
-        }
-      }
-    });
-
-    setAlerts(newAlerts);
-  };
-
-  const getSeverityColor = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return "bg-red-50 border-l-4 border-l-red-500";
-      case "warning":
-        return "bg-orange-50 border-l-4 border-l-orange-500";
-      case "info":
-        return "bg-blue-50 border-l-4 border-l-blue-500";
-      default:
-        return "bg-gray-50";
+  const loadProducts = useCallback(async (cursor: ProductCursor | null, append: boolean) => {
+    if (append) setLoadingMore(true);
+    else setLoading(true);
+    setError(null);
+    try {
+      const page = await listProductsPage({ cursor, limit: PAGE_SIZE });
+      setProducts(current => {
+        if (!append) return page.items;
+        const merged = new Map(current.map(product => [product.id, product]));
+        for (const product of page.items) merged.set(product.id, product);
+        return Array.from(merged.values());
+      });
+      setTotal(page.total);
+      setHasMore(page.has_more);
+      setNextCursor(page.next_cursor);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذر تحميل المنتجات من Supabase.");
+    } finally {
+      setLoading(false);
+      setLoadingMore(false);
     }
-  };
+  }, []);
 
-  const getSeverityLabel = (severity: string) => {
-    const labels: { [key: string]: string } = {
-      critical: "حرج",
-      warning: "تحذير",
-      info: "معلومة"
-    };
-    return labels[severity] || severity;
-  };
+  useEffect(() => { void loadProducts(null, false); }, [loadProducts]);
 
-  const getSeverityBadgeColor = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return "bg-red-100 text-red-800";
-      case "warning":
-        return "bg-orange-100 text-orange-800";
-      case "info":
-        return "bg-blue-100 text-blue-800";
-      default:
-        return "bg-gray-100 text-gray-800";
-    }
-  };
-
-  const lowStockAlerts = alerts.filter((a) => a.type === "low_stock");
-  const stagnantAlerts = alerts.filter((a) => a.type === "stagnant");
+  const alerts = useMemo<StockAlert[]>(() => products
+    .filter(product => product.quantity <= Math.max(lowStockThreshold, product.minQuantity))
+    .map(product => {
+      const threshold = Math.max(lowStockThreshold, product.minQuantity);
+      return { product, threshold, severity: product.quantity === 0 ? "critical" : "warning" };
+    }), [products, lowStockThreshold]);
+  const criticalCount = alerts.filter(alert => alert.severity === "critical").length;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
+    <div className="min-h-screen bg-gray-50" dir="rtl">
       <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-6">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">تنبيهات المخزون</h1>
-            <p className="text-gray-600 mt-1">الأصناف الناقصة والراكدة</p>
+            <p className="mt-1 text-gray-600">الكمية والحد الأدنى من سجل المنتجات السحابي</p>
           </div>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            العودة
-          </Button>
+          <Button variant="outline" onClick={() => navigate("/dashboard")} className="flex items-center gap-2"><ArrowLeft className="h-4 w-4" />العودة</Button>
         </div>
       </header>
 
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Settings */}
+      <main className="mx-auto max-w-7xl px-4 py-8">
         <Card className="mb-8 border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>إعدادات التنبيهات</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  حد المخزون الناقص (الحد الأدنى)
-                </label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="1"
-                    max="20"
-                    value={lowStockThreshold}
-                    onChange={(e) => setLowStockThreshold(parseInt(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="text-lg font-bold text-orange-600 w-12">
-                    {lowStockThreshold}
-                  </span>
-                </div>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">
-                  عدد أيام الركود (بدون مبيعات)
-                </label>
-                <div className="flex items-center gap-4">
-                  <input
-                    type="range"
-                    min="7"
-                    max="90"
-                    step="7"
-                    value={stagnantDays}
-                    onChange={(e) => setStagnantDays(parseInt(e.target.value))}
-                    className="flex-1"
-                  />
-                  <span className="text-lg font-bold text-blue-600 w-12">
-                    {stagnantDays}
-                  </span>
-                </div>
-              </div>
-            </div>
+          <CardHeader><CardTitle>حد التنبيه العام</CardTitle><CardDescription>يُستخدم الحد الأكبر بين هذا الرقم والحد الأدنى المحفوظ لكل منتج في Supabase. الاختيار هنا مؤقت لهذه الصفحة ولا يُخزّن على الجهاز.</CardDescription></CardHeader>
+          <CardContent className="flex items-center gap-4">
+            <input aria-label="حد المخزون" type="range" min="1" max="20" value={lowStockThreshold} onChange={event => setLowStockThreshold(Number(event.target.value))} className="flex-1" />
+            <span className="w-12 text-lg font-bold text-orange-600">{lowStockThreshold}</span>
+            <Button type="button" variant="outline" onClick={() => void loadProducts(null, false)} disabled={loading}><RefreshCw className={`ml-2 h-4 w-4 ${loading ? "animate-spin" : ""}`} />تحديث</Button>
           </CardContent>
         </Card>
 
-        {/* Statistics */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">إجمالي التنبيهات</p>
-              <p className="text-3xl font-bold text-red-600">{alerts.length}</p>
-            </CardContent>
-          </Card>
+        {error && <div role="alert" className="mb-6 flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 sm:flex-row sm:items-center sm:justify-between"><span>{error}</span><Button type="button" variant="outline" onClick={() => void loadProducts(null, false)}>إعادة المحاولة</Button></div>}
 
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">أصناف ناقصة</p>
-              <p className="text-3xl font-bold text-orange-600">{lowStockAlerts.length}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">أصناف راكدة</p>
-              <p className="text-3xl font-bold text-blue-600">{stagnantAlerts.length}</p>
-            </CardContent>
-          </Card>
+        <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3">
+          <Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">تنبيهات المنتجات المحمّلة</p><p className="text-3xl font-bold text-red-600">{alerts.length}</p></CardContent></Card>
+          <Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">نفد مخزونها</p><p className="text-3xl font-bold text-orange-600">{criticalCount}</p></CardContent></Card>
+          <Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">المنتجات المحمّلة</p><p className="text-3xl font-bold text-blue-600">{products.length} / {total}</p></CardContent></Card>
         </div>
 
-        {/* Low Stock Alerts */}
-        {lowStockAlerts.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <AlertTriangle className="w-6 h-6 text-orange-600" />
-              الأصناف الناقصة
-            </h2>
-            <div className="space-y-3">
-              {lowStockAlerts.map((alert, idx) => (
-                <Card key={idx} className={`border-0 shadow-sm ${getSeverityColor(alert.severity)}`}>
-                  <CardContent className="pt-6">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h3 className="font-semibold text-lg">{alert.product.name}</h3>
-                        <p className="text-sm text-gray-600 mt-1">
-                          الكمية الحالية: <span className="font-bold">{alert.product.quantity}</span>
-                        </p>
-                        {alert.product.minStock && (
-                          <p className="text-sm text-gray-600">
-                            الحد الأدنى: <span className="font-bold">{alert.product.minStock}</span>
-                          </p>
-                        )}
-                      </div>
-                      <span
-                        className={`px-3 py-1 rounded-full text-sm font-semibold ${getSeverityBadgeColor(
-                          alert.severity
-                        )}`}
-                      >
-                        {getSeverityLabel(alert.severity)}
-                      </span>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          </div>
-        )}
+        <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">تنبيه ركود المبيعات غير معروض هنا إلى حين توفر تجميع تاريخي موثوق من دفتر المخزون السحابي؛ لا تُستخدم مبيعات محفوظة في المتصفح.</div>
 
-        {/* Stagnant Stock Alerts */}
-        {stagnantAlerts.length > 0 && (
-          <div className="mb-8">
-            <h2 className="text-2xl font-bold mb-4 flex items-center gap-2">
-              <TrendingDown className="w-6 h-6 text-blue-600" />
-              الأصناف الراكدة (بدون مبيعات)
-            </h2>
-            <div className="space-y-3">
-              {stagnantAlerts.map((alert, idx) => {
-                const daysSinceLastSale = Math.floor(
-                  (Date.now() - new Date(alert.product.lastSale || "").getTime()) /
-                    (1000 * 60 * 60 * 24)
-                );
-                return (
-                  <Card key={idx} className={`border-0 shadow-sm ${getSeverityColor(alert.severity)}`}>
-                    <CardContent className="pt-6">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h3 className="font-semibold text-lg">{alert.product.name}</h3>
-                          <p className="text-sm text-gray-600 mt-1 flex items-center gap-2">
-                            <Clock className="w-4 h-4" />
-                            آخر مبيعة: {daysSinceLastSale} يوم
-                          </p>
-                          <p className="text-sm text-gray-600">
-                            الكمية المتاحة: <span className="font-bold">{alert.product.quantity}</span>
-                          </p>
-                        </div>
-                        <span
-                          className={`px-3 py-1 rounded-full text-sm font-semibold ${getSeverityBadgeColor(
-                            alert.severity
-                          )}`}
-                        >
-                          {getSeverityLabel(alert.severity)}
-                        </span>
-                      </div>
-                    </CardContent>
-                  </Card>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* No Alerts */}
-        {alerts.length === 0 && (
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-12 pb-12 text-center">
-              <p className="text-lg text-gray-600">✅ لا توجد تنبيهات - المخزون بحالة جيدة!</p>
+        {loading && products.length === 0 ? <div className="flex items-center justify-center gap-2 rounded-2xl border border-dashed border-slate-200 bg-white p-10 text-sm text-slate-500"><LoaderCircle className="h-4 w-4 animate-spin" />جارٍ تحميل المنتجات من Supabase…</div> : alerts.length === 0 ? <Card className="border-0 shadow-sm"><CardContent className="py-12 text-center text-gray-600">{products.length === 0 ? "لا توجد منتجات مسجلة في السجل السحابي." : "لا توجد منتجات ناقصة ضمن المنتجات المحمّلة."}</CardContent></Card> : <div className="space-y-3">
+          {alerts.map(({ product, threshold, severity }) => <Card key={product.id} className={`border-0 shadow-sm ${severity === "critical" ? "border-l-4 border-l-red-500 bg-red-50" : "border-l-4 border-l-orange-500 bg-orange-50"}`}>
+            <CardContent className="flex items-center justify-between gap-4 py-5">
+              <div><h3 className="text-lg font-semibold">{product.name}</h3><p className="mt-1 text-sm text-gray-600">الفئة: {product.category || "بدون فئة"} · الكمية الحالية: <strong>{product.quantity}</strong> · حد التنبيه: <strong>{threshold}</strong></p></div>
+              <span className={`inline-flex items-center gap-2 rounded-full px-3 py-1 text-sm font-semibold ${severity === "critical" ? "bg-red-100 text-red-800" : "bg-orange-100 text-orange-800"}`}><AlertTriangle className="h-4 w-4" />{severity === "critical" ? "نفد المخزون" : "مخزون منخفض"}</span>
             </CardContent>
-          </Card>
-        )}
+          </Card>)}
+        </div>}
+
+        {hasMore && nextCursor && <div className="mt-6 flex justify-center"><Button type="button" variant="outline" onClick={() => void loadProducts(nextCursor, true)} disabled={loadingMore}>{loadingMore && <LoaderCircle className="ml-2 h-4 w-4 animate-spin" />}تحميل منتجات إضافية</Button></div>}
       </main>
     </div>
   );

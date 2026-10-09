@@ -23,14 +23,11 @@ export default function VoiceCommandHandler({ onCommand, enabled = true }: Voice
   const [customCommands] = useCloudState<CustomVoiceCommand[]>("abu_raghwa_custom_voice_commands", []);
   const [floatingPosition, setFloatingPosition] = useState<FloatingPosition>(() => {
     if (typeof window === "undefined") return { x: 16, y: 16 };
-    const saved = window.localStorage.getItem("abu_raghwa_voice_button_position");
-    if (!saved) return { x: Math.max(16, window.innerWidth - 72), y: Math.max(16, window.innerHeight - 88) };
-    try {
-      const parsed = JSON.parse(saved) as FloatingPosition;
-      return clampFloatingPosition(parsed, window.innerWidth, window.innerHeight);
-    } catch {
-      return { x: Math.max(16, window.innerWidth - 72), y: Math.max(16, window.innerHeight - 88) };
-    }
+    return clampFloatingPosition(
+      { x: window.innerWidth - 72, y: window.innerHeight - 88 },
+      window.innerWidth,
+      window.innerHeight,
+    );
   });
   const dragRef = useRef<{ pointerId: number; offsetX: number; offsetY: number; moved: boolean } | null>(null);
   const suppressClickRef = useRef(false);
@@ -39,9 +36,7 @@ export default function VoiceCommandHandler({ onCommand, enabled = true }: Voice
     if (typeof window === "undefined") return;
     const handleResize = () => {
       setFloatingPosition(current => {
-        const next = clampFloatingPosition(current, window.innerWidth, window.innerHeight);
-        window.localStorage.setItem("abu_raghwa_voice_button_position", JSON.stringify(next));
-        return next;
+        return clampFloatingPosition(current, window.innerWidth, window.innerHeight);
       });
     };
     window.addEventListener("resize", handleResize);
@@ -335,7 +330,6 @@ export default function VoiceCommandHandler({ onCommand, enabled = true }: Voice
       window.innerHeight,
     );
     setFloatingPosition(next);
-    window.localStorage.setItem("abu_raghwa_voice_button_position", JSON.stringify(next));
   };
 
   const handlePointerEnd = (event: ReactPointerEvent<HTMLDivElement>) => {

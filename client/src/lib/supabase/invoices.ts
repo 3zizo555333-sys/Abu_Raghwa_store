@@ -49,6 +49,7 @@ export type CloudInvoiceItem = {
   quantity: number;
   unitPrice: number;
   total: number;
+  unitCost?: number;
 };
 export type CloudInvoice = {
   invoiceId: string;
@@ -69,7 +70,7 @@ export type CloudInvoice = {
 export type CloudInvoicePage = { items: CloudInvoice[]; nextOffset: number | null };
 
 type InvoiceRow = Database["public"]["Tables"]["invoices"]["Row"];
-type InvoiceItemRow = Database["public"]["Views"]["seller_invoice_items"]["Row"];
+type InvoiceItemRow = Database["public"]["Views"]["seller_invoice_items"]["Row"] & { unit_cost_snapshot?: number };
 
 /** Make once per unsaved invoice and retain only in page memory until the server confirms it. */
 export function createInvoiceIdempotencyKey(): string {
@@ -249,14 +250,18 @@ export async function createCloudInvoice(input: CreateInvoiceInput): Promise<Cre
 export function mapCloudInvoiceRecord(row: InvoiceRow, itemRows: InvoiceItemRow[]): CloudInvoice {
   const items = itemRows
     .filter(item => item.invoice_id === row.id)
-    .map(item => ({
-      productId: item.product_id ?? "",
-      productName: item.product_name_snapshot,
-      selectedUnitType: item.selected_unit_snapshot,
-      quantity: Number(item.quantity),
-      unitPrice: Number(item.unit_price_snapshot),
-      total: Number(item.line_total),
-    }));
+    .map(item => {
+      const unitCost = item.unit_cost_snapshot === undefined ? undefined : Number(item.unit_cost_snapshot);
+      return {
+        productId: item.product_id ?? "",
+        productName: item.product_name_snapshot,
+        selectedUnitType: item.selected_unit_snapshot,
+        quantity: Number(item.quantity),
+        unitPrice: Number(item.unit_price_snapshot),
+        total: Number(item.line_total),
+        ...(unitCost !== undefined && Number.isFinite(unitCost) ? { unitCost } : {}),
+      };
+    });
   return {
     invoiceId: row.id,
     id: row.invoice_number,
@@ -279,13 +284,16 @@ async function getInvoiceItems(invoiceIds: string[], shopId: string, manager: bo
   if (!invoiceIds.length) return [];
   const supabase = getSupabaseClient();
   const view = manager ? "manager_invoice_items" : "seller_invoice_items";
+  const columns = manager
+    ? "id, invoice_id, shop_id, product_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, unit_cost_snapshot, line_total, created_at"
+    : "id, invoice_id, shop_id, product_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, line_total, created_at";
   const result = await supabase
     .from(view)
-    .select("id, invoice_id, shop_id, product_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, line_total, created_at")
+    .select(columns)
     .eq("shop_id", shopId)
     .in("invoice_id", invoiceIds)
     .order("created_at", { ascending: true });
-  return requireCloudResult(result) as InvoiceItemRow[];
+  return requireCloudResult(result) as unknown as InvoiceItemRow[];
 }
 
 /** Fetches a bounded page of invoices and their seller/manager-safe line details from Supabase. */
@@ -325,4 +333,19 @@ export async function getCloudInvoice(invoiceId: string): Promise<CloudInvoice> 
   const row = result.data as InvoiceRow;
   const itemRows = await getInvoiceItems([row.id], shopId, role !== "seller");
   return mapCloudInvoiceRecord(row, itemRows);
+}
+
+export async function voidCloudInvoice(invoiceId: string): Promise<{ invoiceId: string; idempotentReplay: boolean }> {
+  assertCloudOnline();
+  const supabase = getSupabaseClient();
+  const { shopId, role } = await getActiveShopContext();
+  if (!(role === "manager" || role === "admin" || role === "supervisor")) {
+    throw new Error("إبطال الفواتير متاح للمدير أو المشرف فقط.");
+  }
+  const result = await supabase.rpc("void_invoice", { p_shop_id: shopId, p_invoice_id: invoiceId });
+  const row = asJsonObject(requireCloudResult(result), "invoice void result");
+  if (row.invoice_id !== invoiceId || row.status !== "voided" || typeof row.idempotent_replay !== "boolean") {
+    throw new Error("لم يرجع الخادم تأكيدًا صالحًا لإبطال الفاتورة.");
+  }
+  return { invoiceId, idempotentReplay: row.idempotent_replay };
 }

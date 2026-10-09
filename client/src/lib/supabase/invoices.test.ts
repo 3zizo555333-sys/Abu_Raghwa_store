@@ -60,5 +60,22 @@ describe("Supabase invoices", () => {
       total: 100,
     }]);
     expect(mapped).not.toHaveProperty("loyaltyPointsAwarded");
+    const managerItem = {
+      id: "line-uuid",
+      invoice_id: "invoice-uuid",
+      shop_id: "shop-uuid",
+      product_id: "product-uuid",
+      product_name_snapshot: "منظف",
+      product_code_snapshot: "P-1",
+      selected_unit_snapshot: "عبوة",
+      sale_mode_snapshot: "unit",
+      quantity: 2,
+      stock_quantity_delta: 2,
+      unit_price_snapshot: 50,
+      unit_cost_snapshot: 32,
+      line_total: 100,
+      created_at: "2026-10-08T05:00:00.000Z",
+    } as unknown as Database["public"]["Views"]["manager_invoice_items"]["Row"];
+    expect(mapCloudInvoiceRecord(invoice, [managerItem]).items[0]?.unitCost).toBe(32);
   });
 });

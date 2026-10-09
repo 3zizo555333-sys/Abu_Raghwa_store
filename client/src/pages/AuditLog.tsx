@@ -1,330 +1,108 @@
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, Download, Filter, AlertCircle, CheckCircle, Trash2 } from "lucide-react";
+import { ArrowLeft, Download, RefreshCw, ShieldAlert } from "lucide-react";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
+import { getSupabaseClient, requireCloudResult } from "@/lib/supabase/client";
+import { getActiveShopContext } from "@/lib/supabase/products";
 
-interface AuditEntry {
-  id?: string;
-  type: string;
+type AuditEntry = {
+  id: number;
+  entityType: string;
   timestamp: string;
-  userId: string;
+  actorId: string;
   action: string;
+  entityId: string;
+  changedFields: string[];
   details: string;
-  status: "success" | "failed" | "warning";
+};
+const MAX_ROWS = 200;
+
+function csvCell(value: string): string {
+  return `"${value.replaceAll('"', '""')}"`;
 }
 
 function AuditLogContent() {
   const [, navigate] = useLocation();
   const [auditLog, setAuditLog] = useState<AuditEntry[]>([]);
-  const [filteredLog, setFilteredLog] = useState<AuditEntry[]>([]);
   const [filterType, setFilterType] = useState("all");
-  const [filterStatus, setFilterStatus] = useState("all");
   const [searchText, setSearchText] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    loadAuditLog();
+  const loadAuditLog = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const context = await getActiveShopContext();
+      if (!(context.role === "manager" || context.role === "admin" || context.role === "supervisor")) {
+        throw new Error("سجل التدقيق متاح للمدير والمشرف فقط.");
+      }
+      const result = await getSupabaseClient()
+        .from("audit_events")
+        .select("id, actor_id, action, entity_type, entity_id, changed_fields, details, created_at")
+        .eq("shop_id", context.shopId)
+        .order("created_at", { ascending: false })
+        .range(0, MAX_ROWS - 1);
+      const rows = requireCloudResult(result);
+      setAuditLog(rows.map(row => ({
+        id: row.id,
+        entityType: row.entity_type,
+        timestamp: row.created_at,
+        actorId: row.actor_id ?? "system",
+        action: row.action,
+        entityId: row.entity_id ?? "",
+        changedFields: row.changed_fields,
+        details: JSON.stringify(row.details ?? {}),
+      })));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "تعذر تحميل سجل التدقيق من Supabase.");
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  useEffect(() => {
-    filterLog();
-  }, [auditLog, filterType, filterStatus, searchText]);
+  useEffect(() => { void loadAuditLog(); }, [loadAuditLog]);
 
-  const loadAuditLog = () => {
-    const log = JSON.parse(localStorage.getItem("abu_raghwa_audit_log") || "[]");
-    setAuditLog(log);
-  };
+  const filteredLog = useMemo(() => auditLog.filter(entry => {
+    const matchesType = filterType === "all" || entry.entityType === filterType;
+    const searchable = `${entry.actorId} ${entry.action} ${entry.entityId} ${entry.details} ${entry.changedFields.join(" ")}`.toLocaleLowerCase("ar-EG");
+    return matchesType && searchable.includes(searchText.toLocaleLowerCase("ar-EG"));
+  }), [auditLog, filterType, searchText]);
 
-  const filterLog = () => {
-    let filtered = auditLog;
-
-    if (filterType !== "all") {
-      filtered = filtered.filter((entry) => entry.type === filterType);
-    }
-
-    if (filterStatus !== "all") {
-      filtered = filtered.filter((entry) => entry.status === filterStatus);
-    }
-
-    if (searchText) {
-      filtered = filtered.filter(
-        (entry) =>
-          entry.userId.includes(searchText) ||
-          entry.action.includes(searchText) ||
-          entry.details.includes(searchText)
-      );
-    }
-
-    setFilteredLog(filtered);
-  };
-
-  const getStatusIcon = (status: string) => {
-    switch (status) {
-      case "success":
-        return <CheckCircle className="w-4 h-4 text-green-600" />;
-      case "failed":
-        return <AlertCircle className="w-4 h-4 text-red-600" />;
-      case "warning":
-        return <AlertCircle className="w-4 h-4 text-orange-600" />;
-      default:
-        return null;
-    }
-  };
-
-  const getStatusLabel = (status: string) => {
-    const labels: { [key: string]: string } = {
-      success: "نجح",
-      failed: "فشل",
-      warning: "تحذير"
-    };
-    return labels[status] || status;
-  };
-
-  const getTypeLabel = (type: string) => {
-    const labels: { [key: string]: string } = {
-      LOGIN: "تسجيل دخول",
-      LOGOUT: "تسجيل خروج",
-      SALE: "مبيعة",
-      PRODUCT_ADD: "إضافة منتج",
-      PRODUCT_EDIT: "تعديل منتج",
-      PRODUCT_DELETE: "حذف منتج",
-      INVENTORY_UPDATE: "تحديث المخزون",
-      SCREENSHOT_ATTEMPT: "محاولة تصوير شاشة",
-      RECIPE_VIEW: "عرض تركيبة",
-      RECIPE_EDIT: "تعديل تركيبة",
-      MATERIAL_ADD: "إضافة خامة",
-      REPORT_EXPORT: "تصدير تقرير",
-      USER_CREATE: "إنشاء مستخدم",
-      USER_DELETE: "حذف مستخدم",
-      PERMISSION_CHANGE: "تغيير الصلاحيات"
-    };
-    return labels[type] || type;
-  };
+  const getTypeLabel = (type: string) => ({ products: "منتج", invoice: "فاتورة", expenses: "مصروف", bank_checks: "شيك", tasks: "مهمة" } as Record<string, string>)[type] || type;
+  const getTypeColor = (type: string) => type === "invoice" ? "bg-green-50" : type === "products" ? "bg-blue-50" : "bg-gray-50";
 
   const exportLog = () => {
-    const csvContent = [
-      ["التاريخ", "النوع", "المستخدم", "الإجراء", "التفاصيل", "الحالة"].join(","),
-      ...filteredLog.map((entry) =>
-        [
-          entry.timestamp,
-          getTypeLabel(entry.type),
-          entry.userId,
-          entry.action,
-          entry.details,
-          getStatusLabel(entry.status)
-        ].join(",")
-      )
-    ].join("\n");
-
+    const lines = [
+      ["التاريخ", "الكيان", "المستخدم", "الإجراء", "معرف السجل", "الحقول المعدلة", "التفاصيل"].map(csvCell).join(","),
+      ...filteredLog.map(entry => [entry.timestamp, getTypeLabel(entry.entityType), entry.actorId, entry.action, entry.entityId, entry.changedFields.join("; "), entry.details].map(csvCell).join(",")),
+    ];
     const element = document.createElement("a");
-    element.setAttribute("href", "data:text/csv;charset=utf-8," + encodeURIComponent(csvContent));
-    element.setAttribute("download", `audit_log_${new Date().toISOString().split("T")[0]}.csv`);
+    element.setAttribute("href", `data:text/csv;charset=utf-8,${encodeURIComponent(lines.join("\n"))}`);
+    element.setAttribute("download", `audit_log_${new Date().toISOString().slice(0, 10)}.csv`);
     element.style.display = "none";
     document.body.appendChild(element);
     element.click();
     document.body.removeChild(element);
   };
 
-  const clearLog = () => {
-    if (confirm("هل أنت متأكد من حذف سجل التدقيق؟")) {
-      localStorage.setItem("abu_raghwa_audit_log", "[]");
-      setAuditLog([]);
-      setFilteredLog([]);
-    }
-  };
-
-  const getTypeColor = (type: string) => {
-    if (type.includes("SCREENSHOT")) return "bg-red-50";
-    if (type.includes("DELETE")) return "bg-orange-50";
-    if (type.includes("LOGIN")) return "bg-blue-50";
-    if (type.includes("SALE")) return "bg-green-50";
-    return "bg-gray-50";
-  };
+  const productEvents = auditLog.filter(entry => entry.entityType === "products").length;
+  const invoiceEvents = auditLog.filter(entry => entry.entityType === "invoice").length;
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">سجل التدقيق</h1>
-            <p className="text-gray-600 mt-1">تتبع جميع العمليات والتغييرات</p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            العودة
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Filters */}
-        <Card className="mb-8 border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>خيارات التصفية</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">البحث</label>
-                <input
-                  type="text"
-                  placeholder="ابحث عن مستخدم أو إجراء..."
-                  value={searchText}
-                  onChange={(e) => setSearchText(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                />
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">نوع العملية</label>
-                <select
-                  value={filterType}
-                  onChange={(e) => setFilterType(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                >
-                  <option value="all">الكل</option>
-                  <option value="LOGIN">تسجيل دخول</option>
-                  <option value="LOGOUT">تسجيل خروج</option>
-                  <option value="SALE">مبيعة</option>
-                  <option value="PRODUCT_ADD">إضافة منتج</option>
-                  <option value="PRODUCT_EDIT">تعديل منتج</option>
-                  <option value="PRODUCT_DELETE">حذف منتج</option>
-                  <option value="SCREENSHOT_ATTEMPT">محاولة تصوير</option>
-                </select>
-              </div>
-
-              <div>
-                <label className="block text-sm font-medium mb-2">الحالة</label>
-                <select
-                  value={filterStatus}
-                  onChange={(e) => setFilterStatus(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                >
-                  <option value="all">الكل</option>
-                  <option value="success">نجح</option>
-                  <option value="failed">فشل</option>
-                  <option value="warning">تحذير</option>
-                </select>
-              </div>
-
-              <div className="flex items-end gap-2">
-                <Button
-                  onClick={exportLog}
-                  className="flex-1 bg-blue-600 hover:bg-blue-700 text-white flex items-center justify-center gap-2"
-                >
-                  <Download className="w-4 h-4" />
-                  تصدير
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Statistics */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">إجمالي العمليات</p>
-              <p className="text-2xl font-bold text-blue-600">{auditLog.length}</p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">العمليات الناجحة</p>
-              <p className="text-2xl font-bold text-green-600">
-                {auditLog.filter((e) => e.status === "success").length}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">العمليات الفاشلة</p>
-              <p className="text-2xl font-bold text-red-600">
-                {auditLog.filter((e) => e.status === "failed").length}
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card className="border-0 shadow-sm">
-            <CardContent className="pt-6">
-              <p className="text-sm text-gray-600">محاولات التصوير</p>
-              <p className="text-2xl font-bold text-orange-600">
-                {auditLog.filter((e) => e.type === "SCREENSHOT_ATTEMPT").length}
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-
-        {/* Audit Log Table */}
-        <Card className="border-0 shadow-sm">
-          <CardHeader className="flex flex-row items-center justify-between">
-            <CardTitle>سجل العمليات</CardTitle>
-            <Button
-              onClick={clearLog}
-              variant="destructive"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <Trash2 className="w-4 h-4" />
-              مسح السجل
-            </Button>
-          </CardHeader>
-          <CardContent>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-gray-100">
-                  <tr>
-                    <th className="px-4 py-3 text-right font-medium">التاريخ والوقت</th>
-                    <th className="px-4 py-3 text-right font-medium">النوع</th>
-                    <th className="px-4 py-3 text-right font-medium">المستخدم</th>
-                    <th className="px-4 py-3 text-right font-medium">الإجراء</th>
-                    <th className="px-4 py-3 text-right font-medium">التفاصيل</th>
-                    <th className="px-4 py-3 text-right font-medium">الحالة</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredLog.length > 0 ? (
-                    filteredLog.map((entry, idx) => (
-                      <tr key={idx} className={`border-b ${getTypeColor(entry.type)}`}>
-                        <td className="px-4 py-3">
-                          {new Date(entry.timestamp).toLocaleString("ar-EG")}
-                        </td>
-                        <td className="px-4 py-3 font-medium">{getTypeLabel(entry.type)}</td>
-                        <td className="px-4 py-3">{entry.userId}</td>
-                        <td className="px-4 py-3">{entry.action}</td>
-                        <td className="px-4 py-3 text-gray-600 text-xs">{entry.details}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
-                            {getStatusIcon(entry.status)}
-                            <span>{getStatusLabel(entry.status)}</span>
-                          </div>
-                        </td>
-                      </tr>
-                    ))
-                  ) : (
-                    <tr>
-                      <td colSpan={6} className="px-4 py-8 text-center text-gray-500">
-                        لا توجد عمليات مطابقة
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </CardContent>
-        </Card>
+    <div className="min-h-screen bg-gray-50" dir="rtl">
+      <header className="bg-white shadow-sm"><div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-6"><div><h1 className="text-3xl font-bold text-gray-900">سجل التدقيق</h1><p className="mt-1 text-gray-600">أحداث الأعمال المحفوظة في Supabase، بحد أقصى 200 حدث حديث</p></div><Button variant="outline" onClick={() => navigate("/dashboard")} className="flex items-center gap-2"><ArrowLeft className="h-4 w-4" />العودة</Button></div></header>
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-6 flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950"><ShieldAlert className="mt-0.5 h-5 w-5 shrink-0" /><p>سجل التدقيق غير قابل للمسح أو التعديل من الواجهة. يعرض هذا السجل الأحداث التي تسجلها قاعدة البيانات فقط؛ محاولات الدخول الفاشلة ليست ضمن هذا المصدر.</p></div>
+        {error && <div role="alert" className="mb-6 flex flex-col gap-3 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-900 sm:flex-row sm:items-center sm:justify-between"><span>{error}</span><Button type="button" variant="outline" onClick={() => void loadAuditLog()}>إعادة المحاولة</Button></div>}
+        <Card className="mb-8 border-0 shadow-sm"><CardHeader><CardTitle>تصفية الأحداث</CardTitle><CardDescription>البحث محليًا في النتائج السحابية المحمّلة دون حفظها في التخزين المحلي.</CardDescription></CardHeader><CardContent><div className="grid gap-4 md:grid-cols-3"><div><label htmlFor="audit-search" className="mb-2 block text-sm font-medium">البحث</label><input id="audit-search" type="search" placeholder="مستخدم، إجراء، أو معرف سجل" value={searchText} onChange={event => setSearchText(event.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2" /></div><div><label htmlFor="audit-type" className="mb-2 block text-sm font-medium">نوع السجل</label><select id="audit-type" value={filterType} onChange={event => setFilterType(event.target.value)} className="w-full rounded-md border border-gray-300 px-3 py-2"><option value="all">الكل</option><option value="products">المنتجات</option><option value="invoice">الفواتير</option><option value="expenses">المصروفات</option><option value="bank_checks">الشيكات</option></select></div><div className="flex items-end gap-2"><Button type="button" onClick={exportLog} disabled={!filteredLog.length} className="flex-1"><Download className="ml-2 h-4 w-4" />تصدير النتائج</Button><Button type="button" variant="outline" onClick={() => void loadAuditLog()} disabled={loading}><RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} /></Button></div></div></CardContent></Card>
+        <div className="mb-8 grid grid-cols-1 gap-4 md:grid-cols-3"><Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">الأحداث المحمّلة</p><p className="text-2xl font-bold text-blue-600">{auditLog.length}</p></CardContent></Card><Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">تغييرات المنتجات</p><p className="text-2xl font-bold text-orange-600">{productEvents}</p></CardContent></Card><Card className="border-0 shadow-sm"><CardContent className="pt-6"><p className="text-sm text-gray-600">أحداث الفواتير</p><p className="text-2xl font-bold text-green-600">{invoiceEvents}</p></CardContent></Card></div>
+        <Card className="border-0 shadow-sm"><CardHeader><CardTitle>الأحداث الأخيرة</CardTitle><CardDescription>النتيجة مقيدة بالمحل الحالي وسياسات RLS في قاعدة البيانات.</CardDescription></CardHeader><CardContent><div className="overflow-x-auto"><table className="w-full text-sm"><thead className="bg-gray-100"><tr><th className="px-4 py-3 text-right font-medium">التاريخ والوقت</th><th className="px-4 py-3 text-right font-medium">الكيان</th><th className="px-4 py-3 text-right font-medium">المستخدم</th><th className="px-4 py-3 text-right font-medium">الإجراء</th><th className="px-4 py-3 text-right font-medium">معرف السجل</th><th className="px-4 py-3 text-right font-medium">الحقول والتفاصيل</th></tr></thead><tbody>{filteredLog.length ? filteredLog.map(entry => <tr key={entry.id} className={`border-b ${getTypeColor(entry.entityType)}`}><td className="whitespace-nowrap px-4 py-3">{new Date(entry.timestamp).toLocaleString("ar-EG")}</td><td className="px-4 py-3 font-medium">{getTypeLabel(entry.entityType)}</td><td className="max-w-48 truncate px-4 py-3 font-mono text-xs">{entry.actorId}</td><td className="px-4 py-3">{entry.action}</td><td className="max-w-40 truncate px-4 py-3 font-mono text-xs">{entry.entityId || "—"}</td><td className="max-w-md px-4 py-3 text-xs text-gray-600"><div>{entry.changedFields.join(", ") || "—"}</div><div className="mt-1 break-all">{entry.details}</div></td></tr>) : <tr><td colSpan={6} className="px-4 py-8 text-center text-gray-500">{loading ? "جارٍ تحميل سجل التدقيق…" : "لا توجد أحداث مطابقة ضمن النتائج المحمّلة."}</td></tr>}</tbody></table></div></CardContent></Card>
       </main>
     </div>
   );
 }
 
-export default withPasswordProtection(AuditLogContent, 'logs', 'السجل');
+export default withPasswordProtection(AuditLogContent, "logs", "السجل");

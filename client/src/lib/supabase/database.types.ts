@@ -79,6 +79,7 @@ export type Database = {
       complete_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
       acknowledge_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
       cancel_pending_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      void_invoice: { Args: { p_shop_id: string; p_invoice_id: string }; Returns: Json };
       save_expense: { Args: { p_shop_id: string; p_expense_id?: string | null; p_expected_version?: number | null; p_payload: Json }; Returns: Database["public"]["Tables"]["expenses"]["Row"] };
       delete_expense: { Args: { p_shop_id: string; p_expense_id: string; p_expected_version: number }; Returns: number };
       get_expense_summary: { Args: { p_shop_id: string }; Returns: Json };

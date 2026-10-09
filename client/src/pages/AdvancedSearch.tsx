@@ -1,151 +1,119 @@
-import { useState, useEffect } from "react";
+import { useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, Search, Barcode, Mic, Image, Camera } from "lucide-react";
+import { ArrowLeft, Search, Mic, Camera, LoaderCircle, Package, ReceiptText } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { AdvancedBarcodeScanner } from "@/components/AdvancedBarcodeScanner";
-import { useCloudState } from "@/lib/cloudSync";
+import { listProductsPage } from "@/lib/supabase/products";
+import { listCloudInvoices } from "@/lib/supabase/invoices";
 
-interface SearchResult {
-  type: "product" | "sale" | "material" | "recipe";
+type SearchType = "all" | "products" | "sales";
+type SearchResult = {
+  type: "product" | "sale";
   id: string;
   name: string;
   details: string;
   price?: number;
   quantity?: number;
+};
+type SpeechRecognitionLike = {
+  lang: string;
+  onstart: (() => void) | null;
+  onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null;
+  onerror: (() => void) | null;
+  onend: (() => void) | null;
+  start: () => void;
+};
+type SpeechRecognitionConstructor = new () => SpeechRecognitionLike;
+type SpeechWindow = Window & { SpeechRecognition?: SpeechRecognitionConstructor; webkitSpeechRecognition?: SpeechRecognitionConstructor };
+
+function readInitialType(value: string | null): SearchType {
+  return value === "products" || value === "sales" ? value : "all";
 }
 
 export default function AdvancedSearch() {
   const [, navigate] = useLocation();
   const initialSearchParams = new URLSearchParams(window.location.search);
   const [searchQuery, setSearchQuery] = useState(() => initialSearchParams.get("query") || "");
-  const [searchType, setSearchType] = useState(() => initialSearchParams.get("type") || "all");
+  const [searchType, setSearchType] = useState<SearchType>(() => readInitialType(initialSearchParams.get("type")));
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isListening, setIsListening] = useState(false);
   const [scannerOpen, setScannerOpen] = useState(false);
-  const [cloudProducts] = useCloudState<any[]>("abu_raghwa_products", []);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const searchSequence = useRef(0);
 
-  const performSearch = (query: string) => {
-    // جميع الحقول اختيارية
-
-    const lowerQuery = query.toLowerCase();
-    const allResults: SearchResult[] = [];
-
-    // البحث في المنتجات
-    if (searchType === "all" || searchType === "products") {
-      const products = Array.isArray(cloudProducts) ? cloudProducts : [];
-      products.forEach((product: any) => {
-        const productName = String(product.name || "");
-        const productCode = String(product.code || product.barcode || product.sku || "");
-        const price = Number(product.wholesaleRetailPrice) || Number(product.retailPrice) || Number(product.bulkPrice) || 0;
-        const quantity = Number(product.availableQuantity ?? product.quantity ?? 0);
-        if (productName.toLocaleLowerCase("ar-EG").includes(lowerQuery) || productCode.toLocaleLowerCase("en-US").includes(lowerQuery)) {
-          allResults.push({
-            type: "product",
-            id: String(product.id),
-            name: productName,
-            details: `الفئة: ${product.category || "بدون فئة"} | الكمية: ${quantity} | السعر: ${price} ج.م | الكود: ${productCode || "غير مسجل"}`,
-            price,
-            quantity
-          });
-        }
-      });
-    }
-
-    // البحث في المبيعات
-    if (searchType === "all" || searchType === "sales") {
-      const sales = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
-      sales.forEach((sale: any) => {
-        if (
-          sale.id.toLowerCase().includes(lowerQuery) ||
-          sale.items?.some((item: any) => item.name.toLowerCase().includes(lowerQuery))
-        ) {
-          allResults.push({
-            type: "sale",
-            id: sale.id,
-            name: `فاتورة: ${sale.id}`,
-            details: `التاريخ: ${new Date(sale.date).toLocaleDateString("ar-EG")} | الإجمالي: ${sale.total} ج.م`,
-            price: sale.total
-          });
-        }
-      });
-    }
-
-    // البحث في الخامات
-    if (searchType === "all" || searchType === "materials") {
-      const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
-      materials.forEach((material: any) => {
-        if (material.name.toLowerCase().includes(lowerQuery)) {
-          allResults.push({
-            type: "material",
-            id: material.id,
-            name: material.name,
-            details: `الكمية: ${material.quantity} | السعر: ${material.pricePerKilo} ج.م/كيلو`,
-            quantity: material.quantity
-          });
-        }
-      });
-    }
-
-    // البحث في التركيبات
-    if (searchType === "all" || searchType === "recipes") {
-      const recipes = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
-      recipes.forEach((recipe: any) => {
-        if (recipe.name.toLowerCase().includes(lowerQuery)) {
-          allResults.push({
-            type: "recipe",
-            id: recipe.id,
-            name: recipe.name,
-            details: `التكلفة: ${recipe.costPerUnit} ج.م | السعر: ${recipe.salePrice} ج.م`,
-            price: recipe.salePrice
-          });
-        }
-      });
-    }
-
-    setResults(allResults);
-  };
-
-  const handleSearch = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const query = e.target.value;
-    setSearchQuery(query);
-    performSearch(query);
-  };
-
-  useEffect(() => {
-    if (searchQuery) performSearch(searchQuery);
-  }, []);
-
-  const handleVoiceSearch = () => {
-    if (!("webkitSpeechRecognition" in window) && !("SpeechRecognition" in window)) {
-      alert("المتصفح الخاص بك لا يدعم البحث الصوتي");
+  const performSearch = async (query: string, requestedType: SearchType = searchType) => {
+    const normalized = query.trim();
+    const sequence = ++searchSequence.current;
+    setError(null);
+    if (!normalized) {
+      setResults([]);
+      setLoading(false);
       return;
     }
+    setLoading(true);
+    const term = normalized.toLocaleLowerCase("ar-EG");
+    try {
+      const tasks: Array<Promise<SearchResult[]>> = [];
+      if (requestedType === "all" || requestedType === "products") {
+        tasks.push(listProductsPage({ search: normalized, limit: 50 }).then(page => page.items.map(product => ({
+          type: "product" as const,
+          id: product.id,
+          name: product.name,
+          details: `الفئة: ${product.category || "بدون فئة"} | الكمية: ${product.quantity} | السعر: ${product.retailPrice} ج.م | الكود: ${product.code || product.barcode || "غير مسجل"}`,
+          price: product.retailPrice,
+          quantity: product.quantity,
+        }))));
+      }
+      if (requestedType === "all" || requestedType === "sales") {
+        tasks.push(listCloudInvoices(0, 50).then(page => page.items
+          .filter(invoice => invoice.status === "completed")
+          .filter(invoice => invoice.id.toLocaleLowerCase("en-US").includes(term)
+            || invoice.customerName.toLocaleLowerCase("ar-EG").includes(term)
+            || invoice.items.some(item => item.productName.toLocaleLowerCase("ar-EG").includes(term)))
+          .map(invoice => ({
+            type: "sale" as const,
+            id: invoice.invoiceId,
+            name: `فاتورة: ${invoice.id}`,
+            details: `التاريخ: ${new Date(invoice.date).toLocaleDateString("ar-EG")} | العميل: ${invoice.customerName || "—"} | الإجمالي: ${invoice.total.toFixed(2)} ج.م`,
+            price: invoice.total,
+          }))));
+      }
+      const nextResults = (await Promise.all(tasks)).flat();
+      if (sequence === searchSequence.current) setResults(nextResults);
+    } catch (cause) {
+      if (sequence === searchSequence.current) {
+        setResults([]);
+        setError(cause instanceof Error ? cause.message : "تعذر البحث في بيانات Supabase.");
+      }
+    } finally {
+      if (sequence === searchSequence.current) setLoading(false);
+    }
+  };
 
-    const SpeechRecognition = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
+  const handleVoiceSearch = () => {
+    const speechWindow = window as SpeechWindow;
+    const SpeechRecognition = speechWindow.webkitSpeechRecognition || speechWindow.SpeechRecognition;
+    if (!SpeechRecognition) {
+      window.alert("المتصفح الخاص بك لا يدعم البحث الصوتي");
+      return;
+    }
     const recognition = new SpeechRecognition();
     recognition.lang = "ar-EG";
-
-    recognition.onstart = () => {
-      setIsListening(true);
-    };
-
-    recognition.onresult = (event: any) => {
-      const transcript = event.results[0][0].transcript;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onresult = event => {
+      const transcript = event.results[0]?.[0]?.transcript?.trim();
+      if (!transcript) return;
       setSearchQuery(transcript);
-      performSearch(transcript);
+      void performSearch(transcript);
     };
-
     recognition.onerror = () => {
-      alert("خطأ في التعرف على الصوت");
+      window.alert("خطأ في التعرف على الصوت");
       setIsListening(false);
     };
-
-    recognition.onend = () => {
-      setIsListening(false);
-    };
-
+    recognition.onend = () => setIsListening(false);
     recognition.start();
   };
 
@@ -153,191 +121,24 @@ export default function AdvancedSearch() {
     const normalized = barcode.trim();
     if (!normalized) return;
     setSearchQuery(normalized);
-    performSearch(normalized);
+    setSearchType("products");
+    void performSearch(normalized, "products");
     setScannerOpen(false);
   };
 
-  const getTypeIcon = (type: string) => {
-    switch (type) {
-      case "product":
-        return "📦";
-      case "sale":
-        return "🛒";
-      case "material":
-        return "🧪";
-      case "recipe":
-        return "👨‍🍳";
-      default:
-        return "📄";
-    }
-  };
-
-  const getTypeLabel = (type: string) => {
-    const labels: { [key: string]: string } = {
-      product: "منتج",
-      sale: "مبيعة",
-      material: "خامة",
-      recipe: "تركيبة"
-    };
-    return labels[type] || type;
-  };
+  const getTypeIcon = (type: SearchResult["type"]) => type === "product" ? <Package className="h-5 w-5 text-blue-700" /> : <ReceiptText className="h-5 w-5 text-green-700" />;
+  const getTypeLabel = (type: SearchResult["type"]) => type === "product" ? "منتج" : "فاتورة";
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">البحث المتقدم</h1>
-            <p className="text-gray-600 mt-1">بحث متقدم بالنص والصوت والباركود</p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            العودة
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {/* Search Options */}
-        <Card className="mb-8 border-0 shadow-sm">
-          <CardHeader>
-            <CardTitle>خيارات البحث</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
-              {/* Text Search */}
-              <div>
-                <label className="block text-sm font-medium mb-2">البحث بالنص</label>
-                <div className="flex gap-2">
-                  <Input
-                    type="text"
-                    placeholder="ابحث عن منتج أو مبيعة..."
-                    value={searchQuery}
-                    onChange={handleSearch}
-                    className="flex-1"
-                  />
-                  <Button type="button" className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2" onClick={() => performSearch(searchQuery)}>
-                    <Search className="w-4 h-4" />
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setScannerOpen(true)} className="flex items-center gap-2 border-orange-300 text-orange-700">
-                    <Camera className="w-4 h-4" /> تصوير الكود
-                  </Button>
-                </div>
-              </div>
-
-              {/* Voice Search */}
-              <div>
-                <label className="block text-sm font-medium mb-2">البحث الصوتي</label>
-                <Button
-                  onClick={handleVoiceSearch}
-                  disabled={isListening}
-                  className={`w-full flex items-center justify-center gap-2 ${
-                    isListening
-                      ? "bg-red-600 hover:bg-red-700"
-                      : "bg-green-600 hover:bg-green-700"
-                  } text-white`}
-                >
-                  <Mic className="w-4 h-4" />
-                  {isListening ? "جاري الاستماع..." : "ابدأ البحث الصوتي"}
-                </Button>
-              </div>
-            </div>
-
-            {/* Search Type Filter */}
-            <div>
-              <label className="block text-sm font-medium mb-2">نوع البحث</label>
-              <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
-                {[
-                  { value: "all", label: "الكل" },
-                  { value: "products", label: "المنتجات" },
-                  { value: "sales", label: "المبيعات" },
-                  { value: "materials", label: "الخامات" },
-                  { value: "recipes", label: "التركيبات" }
-                ].map((option) => (
-                  <Button
-                    key={option.value}
-                    onClick={() => {
-                      setSearchType(option.value);
-                      performSearch(searchQuery);
-                    }}
-                    variant={searchType === option.value ? "default" : "outline"}
-                    className="text-sm"
-                  >
-                    {option.label}
-                  </Button>
-                ))}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-
-        <AdvancedBarcodeScanner isOpen={scannerOpen} onClose={() => setScannerOpen(false)} onDetect={handleBarcodeSearch} title="تصوير باركود للبحث عن السعر" />
-
-        {/* Results */}
-        <div>
-          <h2 className="text-2xl font-bold mb-6">
-            نتائج البحث ({results.length})
-          </h2>
-
-          {results.length > 0 ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {results.map((result) => (
-                <Card key={`${result.type}-${result.id}`} className="border-0 shadow-sm">
-                  <CardContent className="pt-6">
-                    <div className="flex items-start gap-3 mb-3">
-                      <span className="text-2xl">{getTypeIcon(result.type)}</span>
-                      <div className="flex-1">
-                        <h3 className="font-semibold text-lg">{result.name}</h3>
-                        <p className="text-xs text-gray-500">
-                          {getTypeLabel(result.type)}
-                        </p>
-                      </div>
-                    </div>
-
-                    <p className="text-sm text-gray-600 mb-4">{result.details}</p>
-
-                    <div className="flex gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1"
-                      >
-                        عرض التفاصيل
-                      </Button>
-                      <Button
-                        size="sm"
-                        className="flex-1 bg-orange-600 hover:bg-orange-700 text-white"
-                      >
-                        تحديث
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
-              ))}
-            </div>
-          ) : searchQuery ? (
-            <Card className="border-0 shadow-sm">
-              <CardContent className="pt-12 pb-12 text-center text-gray-500">
-                <Search className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                <p className="text-lg">لم يتم العثور على نتائج</p>
-                <p className="text-sm mt-2">حاول البحث عن شيء آخر</p>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card className="border-0 shadow-sm">
-              <CardContent className="pt-12 pb-12 text-center text-gray-500">
-                <Search className="w-12 h-12 mx-auto mb-4 text-gray-400" />
-                <p className="text-lg">ابدأ البحث عن منتج أو مبيعة</p>
-              </CardContent>
-            </Card>
-          )}
-        </div>
+    <div className="min-h-screen bg-gray-50" dir="rtl">
+      <header className="bg-white shadow-sm"><div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-6"><div><h1 className="text-3xl font-bold text-gray-900">البحث المتقدم</h1><p className="mt-1 text-gray-600">بحث مباشر في المنتجات والفواتير المحفوظة في Supabase</p></div><Button variant="outline" onClick={() => navigate("/dashboard")} className="flex items-center gap-2"><ArrowLeft className="h-4 w-4" />العودة</Button></div></header>
+      <main className="mx-auto max-w-7xl px-4 py-8">
+        <div className="mb-6 rounded-2xl border border-sky-200 bg-sky-50 p-4 text-sm text-sky-950">الخامات والوصفات غير مشمولة في البحث حتى اكتمال ترحيل جداولها؛ لا تُقرأ بيانات من التخزين المحلي. تُفحص أحدث 50 فاتورة عند البحث عن المبيعات.</div>
+        <Card className="mb-8 border-0 shadow-sm"><CardHeader><CardTitle>خيارات البحث</CardTitle></CardHeader><CardContent><div className="mb-6 grid grid-cols-1 gap-6 md:grid-cols-2"><div><label htmlFor="advanced-search" className="mb-2 block text-sm font-medium">البحث بالنص أو الباركود</label><div className="flex gap-2"><Input id="advanced-search" type="search" placeholder="اسم منتج أو رمز أو رقم فاتورة..." value={searchQuery} onChange={event => setSearchQuery(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void performSearch(searchQuery); }} className="flex-1" /><Button type="button" aria-label="بحث" onClick={() => void performSearch(searchQuery)} disabled={loading}><Search className="h-4 w-4" /></Button><Button type="button" variant="outline" onClick={() => setScannerOpen(true)} className="border-orange-300 text-orange-700"><Camera className="h-4 w-4" /> تصوير</Button></div></div><div><label className="mb-2 block text-sm font-medium">البحث الصوتي</label><Button onClick={handleVoiceSearch} disabled={isListening} className={`flex w-full items-center justify-center gap-2 ${isListening ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"} text-white`}><Mic className="h-4 w-4" />{isListening ? "جاري الاستماع…" : "ابدأ البحث الصوتي"}</Button></div></div>
+          <div><label className="mb-2 block text-sm font-medium">نوع البحث</label><div className="grid grid-cols-3 gap-2">{([{ value: "all", label: "الكل" }, { value: "products", label: "المنتجات" }, { value: "sales", label: "الفواتير" }] as const).map(option => <Button key={option.value} type="button" onClick={() => { setSearchType(option.value); void performSearch(searchQuery, option.value); }} variant={searchType === option.value ? "default" : "outline"} className="text-sm">{option.label}</Button>)}</div></div>
+        </CardContent></Card>
+        <AdvancedBarcodeScanner isOpen={scannerOpen} onClose={() => setScannerOpen(false)} onDetect={handleBarcodeSearch} title="تصوير باركود للبحث عن المنتج" />
+        <div><h2 className="mb-6 text-2xl font-bold">نتائج البحث ({results.length})</h2>{error && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-900">{error}</div>}{loading ? <Card className="border-0 shadow-sm"><CardContent className="flex items-center justify-center gap-2 py-12 text-gray-500"><LoaderCircle className="h-5 w-5 animate-spin" />جارٍ البحث في Supabase…</CardContent></Card> : results.length > 0 ? <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">{results.map(result => <Card key={`${result.type}-${result.id}`} className="border-0 shadow-sm"><CardContent className="pt-6"><div className="mb-3 flex items-start gap-3">{getTypeIcon(result.type)}<div className="flex-1"><h3 className="text-lg font-semibold">{result.name}</h3><p className="text-xs text-gray-500">{getTypeLabel(result.type)}</p></div></div><p className="mb-4 text-sm text-gray-600">{result.details}</p><Button type="button" variant="outline" size="sm" className="w-full" onClick={() => navigate(result.type === "product" ? "/products" : "/sales-inventory")}>فتح السجل</Button></CardContent></Card>)}</div> : searchQuery.trim() ? <Card className="border-0 shadow-sm"><CardContent className="py-12 text-center text-gray-500"><Search className="mx-auto mb-4 h-12 w-12 text-gray-400" /><p className="text-lg">لم يتم العثور على نتائج في البيانات المحمّلة</p><p className="mt-2 text-sm">جرّب رمزًا أو اسمًا مختلفًا</p></CardContent></Card> : <Card className="border-0 shadow-sm"><CardContent className="py-12 text-center text-gray-500"><Search className="mx-auto mb-4 h-12 w-12 text-gray-400" /><p className="text-lg">ابدأ البحث في المنتجات أو الفواتير</p></CardContent></Card>}</div>
       </main>
     </div>
   );
