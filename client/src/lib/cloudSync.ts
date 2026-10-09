@@ -11,6 +11,7 @@ const PUBLIC_SYNC_KEYS = new Set([
   'abu_raghwa_global_offers',
   'abu_raghwa_offers',
   'abu_raghwa_display_settings',
+  'abu_raghwa_products',
 ]);
 
 const parsedStorageCache = new Map<string, { raw: string; value: unknown }>();
@@ -21,6 +22,10 @@ const LARGE_COLLECTION_KEY = 'abu_raghwa_products';
 // never fall back to whole-list browser snapshots or legacy sync RPCs.
 const ROW_BACKED_KEYS = new Set(['abu_raghwa_products', 'abu_raghwa_product_categories']);
 const COLLECTION_PAGE_SIZE = 500;
+const CLOUD_REFRESH_EVENT = "abu-raghwa-cloud-refresh";
+export function requestCloudStateRefresh(key: string) {
+  if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent(CLOUD_REFRESH_EVENT, { detail: { key } }));
+}
 const getStableCloudItemId = (item: unknown) => {
   if (item && typeof item === "object") {
     const value = item as Record<string, unknown>;
@@ -167,6 +172,18 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
 
   const serverData = isLargeCollection ? chunkedServerData : regularQuery.data;
   const cloudError = isLargeCollection ? (firstChunkQuery.error || chunkedCloudError) : regularQuery.error;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const refresh = (event: Event) => {
+      const detail = (event as CustomEvent<{ key?: string }>).detail;
+      if (detail?.key !== key) return;
+      if (isLargeCollection) void firstChunkQuery.refetch();
+      else void regularQuery.refetch();
+    };
+    window.addEventListener(CLOUD_REFRESH_EVENT, refresh);
+    return () => window.removeEventListener(CLOUD_REFRESH_EVENT, refresh);
+  }, [firstChunkQuery.refetch, isLargeCollection, key, regularQuery.refetch]);
 
   // الحفظ في الخادم
   const saveMutation = trpc.sync.set.useMutation({
