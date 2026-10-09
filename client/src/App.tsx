@@ -112,7 +112,6 @@ const TasksPage = lazy(() => import("./pages/TasksPage"));
 const loadInventoryPage = () => import("./pages/InventoryPage");
 const InventoryPage = lazy(loadInventoryPage);
 const RawMaterialDetails = lazy(() => import("./pages/RawMaterialDetails"));
-const InvoiceCamera = lazy(() => import("./pages/InvoiceCamera"));
 const InvoiceCameraPage = lazy(() => import("./pages/InvoiceCameraPage"));
 const InvoiceScanner = lazy(() => import("./pages/InvoiceScanner"));
 const AdvancedInvoices = lazy(() => import("./pages/AdvancedInvoices"));
