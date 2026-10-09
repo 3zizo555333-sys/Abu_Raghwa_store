@@ -135,6 +135,7 @@ const CatalogOffersPage = lazy(() => import("./pages/CatalogOffersPage"));
 const LoyaltyPage = lazy(() => import("./pages/LoyaltyPage"));
 const Cashier = lazy(() => import("./pages/Cashier"));
 const CustomerDisplay = lazy(() => import("./pages/CustomerDisplay"));
+const LedDisplay = lazy(() => import("./pages/LedDisplay"));
 
 function preloadFrequentPages() {
   const preload = () => {
@@ -199,6 +200,7 @@ function Router() {
       <Route path={"/catalog"} component={PublicCatalogPage} />
       <Route path={"/catalog-manager"} component={withManagerRole(withPasswordProtection(CatalogManager, 'products', 'إدارة كتالوج المحل'))} />
       <Route path={"/customer-display"} component={CustomerDisplay} />
+      <Route path={"/led-display"} component={LedDisplay} />
       <Route path={"/voice"} component={withPasswordProtection(VoiceAssistant, 'voice', 'المساعد الصوتي')} />
       <Route path={"/materials"} component={withSupervisorRole(withPasswordProtection(RawMaterials, 'materials', 'قائمة الخامات'))} />
       <Route path={"/recipes"} component={withSupervisorRole(withPasswordProtection(Recipes, 'compositions', 'قائمة التركيبات'))} />

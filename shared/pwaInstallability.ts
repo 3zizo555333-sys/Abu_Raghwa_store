@@ -1,4 +1,4 @@
-const PUBLIC_CUSTOMER_PATHS = ["/catalog", "/loyalty"] as const;
+const PUBLIC_CUSTOMER_PATHS = ["/catalog", "/loyalty", "/customer-display", "/led-display"] as const;
 const PUBLIC_CUSTOMER_PREFIXES = ["/public-offer", "/catalog-offers"] as const;
 
 export function isPublicCustomerPath(pathname: string): boolean {
