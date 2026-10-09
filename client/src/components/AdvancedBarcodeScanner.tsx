@@ -12,6 +12,7 @@ interface AdvancedBarcodeScannerProps {
   onClose: () => void;
   onDetect: (barcode: string) => void;
   title?: string;
+  continuous?: boolean;
 }
 
 type BarcodeDetectorResult = { rawValue?: string };
@@ -217,6 +218,7 @@ export function AdvancedBarcodeScanner({
   onClose,
   onDetect,
   title = "ماسح الباركود",
+  continuous = false,
 }: AdvancedBarcodeScannerProps) {
   const scannerElementId = `barcode-scanner-${useId().replace(/:/g, "")}`;
   const [cameraReady, setCameraReady] = useState(false);
@@ -229,6 +231,7 @@ export function AdvancedBarcodeScanner({
   const startingRef = useRef(false);
   const sessionRef = useRef(0);
   const mountedRef = useRef(true);
+  const lastDetectedRef = useRef<{ value: string; at: number } | null>(null);
 
   const stopScanning = () => {
     sessionRef.current += 1;
@@ -287,9 +290,11 @@ export function AdvancedBarcodeScanner({
               if (!scanningRef.current || sessionRef.current !== session) return;
               const barcode = decodedText.trim();
               if (!barcode) return;
-              scanningRef.current = false;
+              const now = Date.now();
+              if (continuous && lastDetectedRef.current?.value === barcode && now - lastDetectedRef.current.at < 1400) return;
+              lastDetectedRef.current = { value: barcode, at: now };
               onDetect(barcode);
-              handleClose();
+              if (!continuous) handleClose();
             },
             () => {
               // عدم العثور على كود في إطار واحد أمر طبيعي، ولا نعرضه كخطأ.
@@ -358,7 +363,7 @@ export function AdvancedBarcodeScanner({
         }
       }
       onDetect(barcode);
-      handleClose();
+      if (!continuous) handleClose();
     } catch {
       setError("لم أجد باركودًا واضحًا في الصورة. صوّر المربع قريبًا وبإضاءة جيدة، وتأكد أن الخطوط كاملة داخل الصورة، أو استخدم الإدخال اليدوي.");
     } finally {
@@ -370,7 +375,7 @@ export function AdvancedBarcodeScanner({
     const barcode = manualInput.trim();
     if (!barcode) return;
     onDetect(barcode);
-    handleClose();
+    if (!continuous) handleClose();
   };
 
   const handleClose = () => {
