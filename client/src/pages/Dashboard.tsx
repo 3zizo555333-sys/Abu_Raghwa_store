@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { ArrowLeft, TrendingUp, Package, DollarSign, ShoppingCart, Users, CheckSquare, Gift, Mic, Beaker, Calculator, Settings, Facebook, MessageCircle, Instagram, TrendingDown, CreditCard, Camera, Banknote, Bell, Trophy, Lock, AlertTriangle, WalletCards } from "lucide-react";
-import { calculateTradeMarginSummary } from "@/lib/profit";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { getSavedSocialLinks, openSocialApp } from "@/lib/socialAppLinks";
 import { trpc } from "@/lib/trpc";
+import { loadCloudDashboardStats } from "@/lib/supabase/dashboard";
+import { toast } from "sonner";
 
 interface DashboardStats {
   totalSales: number;
@@ -46,53 +47,15 @@ export default function Dashboard() {
   const [notifications, setNotifications] = useState<any[]>([]);
 
   useEffect(() => {
-    loadData();
+    loadData().catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل لوحة التحكم السحابية."));
   }, []);
 
   useEffect(() => {
     if (!pendingStaff.data?.length) return;
-    const current = JSON.parse(localStorage.getItem("abu_raghwa_notifications") || "[]");
-    const known = new Set(current.map((item: any) => item.id));
-    const additions = pendingStaff.data.filter(item => !known.has(`staff_pending_${item.email}`)).map(item => ({ id: `staff_pending_${item.email}`, type: "warning", message: `طلب تسجيل موظف جديد: ${item.email}. افتح إدارة المستخدمين للموافقة.`, timestamp: item.createdDate, read: false, userId: item.id }));
-    if (additions.length) {
-      const next = [...additions, ...current];
-      localStorage.setItem("abu_raghwa_notifications", JSON.stringify(next));
-      setNotifications(next);
-    }
+    setNotifications(pendingStaff.data.map(item => ({ id: `staff_pending_${item.email}`, type: "warning", message: `طلب تسجيل موظف جديد: ${item.email}. افتح إدارة المستخدمين للموافقة.`, timestamp: item.createdDate, read: false, userId: item.id })));
   }, [pendingStaff.data]);
 
-  const loadData = () => {
-    const products = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
-    const sales = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
-    const employees = JSON.parse(localStorage.getItem("abu_raghwa_employees") || "[]");
-    const tasks = JSON.parse(localStorage.getItem("abu_raghwa_tasks") || "[]");
-    const offers = JSON.parse(localStorage.getItem("abu_raghwa_offers") || "[]");
-    const recipes = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
-    const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
-    const notifs = JSON.parse(localStorage.getItem("abu_raghwa_notifications") || "[]");
-    setNotifications(notifs);
-
-    const totalRevenue = sales.reduce((sum: number, sale: any) => sum + (sale.total || 0), 0);
-    const lowStock = products.filter((p: any) => (p.quantity || 0) < 5).length;
-    const activeTasks = tasks.filter((t: any) => t.status !== "completed").length;
-    const activeOffers = offers.filter((o: any) => o.status === "active").length;
-    const tradeMarginSummary = calculateTradeMarginSummary(products, recipes);
-
-    setStats({
-      totalSales: sales.length,
-      totalRevenue,
-      totalProducts: products.length,
-      lowStockItems: lowStock,
-      totalEmployees: employees.length,
-      activeTasks,
-      activeOffers,
-      totalRecipes: recipes.length,
-      totalMaterials: materials.length,
-      shopProfitPercent: tradeMarginSummary.marginPercent,
-      shopProfit: tradeMarginSummary.unitProfit,
-      shopCost: tradeMarginSummary.unitCost
-    });
-  };
+  const loadData = async () => setStats(await loadCloudDashboardStats());
 
   const statCards = [
     {
