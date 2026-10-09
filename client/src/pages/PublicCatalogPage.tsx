@@ -1,5 +1,5 @@
 import { browserState } from "@/lib/browserState";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Building2, Check, ChevronLeft, CircleHelp, ClipboardList, Clock3, Minus, Package, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Trash2, Truck, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,8 +7,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { CATALOG_PHONE, CATALOG_WHATSAPP, catalogProductMatchesSearch, getCatalogDiscountPercent, getCatalogOldPrice, getCatalogPrice, getCatalogOrderLoyaltyPoints, getProductLoyaltyPoints, getSafeCatalogDetailsUrl, recipeToCatalogProduct, type CatalogCartItem, type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe } from "@/lib/catalog";
 import { getCatalogFulfillmentMode, getFulfillmentPrice, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { useCloudState } from "@/lib/cloudSync";
 import { trpc } from "@/lib/trpc";
+import { listCatalogDisplayData, listCatalogRewards } from "@/lib/supabase/operations";
 
 type SavedOrderReference = { id: string; phone: string; customerCode?: string };
 type LoyaltyRewardLevel = { points: number; giftName: string; confirmed?: boolean };
@@ -38,13 +38,13 @@ function loadSavedOrders(): SavedOrderReference[] {
 }
 
 export default function PublicCatalogPage() {
-  const [products] = useCloudState<CatalogProduct[]>("abu_raghwa_products", []);
-  const [manualProducts] = useCloudState<CatalogProduct[]>("abu_catalog_manual_products", []);
-  const [recipes] = useCloudState<CatalogRecipe[]>("abu_raghwa_recipes", []);
-  const [categories] = useCloudState<CatalogCategory[]>("abu_catalog_categories", []);
-  const [companies] = useCloudState<CatalogCompany[]>("abu_catalog_companies", []);
-  const [pricingConfig] = useCloudState<CatalogPricingConfig>("abu_catalog_pricing", { deliveryMarkupPercent: 0 });
-  const [rewardLevels] = useCloudState<LoyaltyRewardLevel[]>("abu_reward_levels", DEFAULT_LOYALTY_REWARDS, { skipInitialSeed: true });
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
+  const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
+  const [recipes, setRecipes] = useState<CatalogRecipe[]>([]);
+  const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [companies, setCompanies] = useState<CatalogCompany[]>([]);
+  const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
+  const [rewardLevels, setRewardLevels] = useState<LoyaltyRewardLevel[]>(DEFAULT_LOYALTY_REWARDS);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("الكل");
   const [companyFilter, setCompanyFilter] = useState("الكل");
@@ -57,6 +57,17 @@ export default function PublicCatalogPage() {
   const [loyaltyPhone, setLoyaltyPhone] = useState(() => loadSavedOrders()[0]?.phone || "");
   const [loyaltyCode, setLoyaltyCode] = useState(() => typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "");
   const [customer, setCustomer] = useState({ name: "", phone: "", customerCode: typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "", address: "", note: "" });
+  useEffect(() => {
+    listCatalogDisplayData().then(data => {
+      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
+      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
+      setRecipes((data.recipes as any[]).map(recipe => ({ id: String(recipe.id), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), category: String(recipe.category || "تركيبات"), catalogVisible: false, notes: String(recipe.description || "") })));
+      setCategories(data.categories.map(row => ({ id: row.id, name: row.name })));
+      setCompanies(data.companies.map(row => ({ id: row.id, name: row.name })));
+      setPricingConfig(data.pricing as CatalogPricingConfig);
+      return listCatalogRewards();
+    }).then(rows => { if (rows) setRewardLevels((rows as any[]).map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); }).catch(() => undefined);
+  }, []);
   const createOrder = trpc.catalog.createOrder.useMutation();
   const fulfillmentMode = typeof window === "undefined" ? "pickup" : getCatalogFulfillmentMode(window.location.search);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);

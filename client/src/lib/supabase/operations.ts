@@ -1,5 +1,6 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
+import { listProductsPage } from "./products";
 import type { Database } from "./database.types";
 
 type Tables = Database["public"]["Tables"];
@@ -87,4 +88,19 @@ export async function saveCatalogCompany(input: Omit<Insert<"catalog_companies">
 export async function saveCatalogManualProduct(input: Omit<Insert<"catalog_manual_products">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_manual_products">;
   return requireCloudResult(input.id ? await client.from("catalog_manual_products").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_manual_products").insert(payload).select().single()) as Row<"catalog_manual_products">;
+}
+
+export async function listCatalogDisplayData() {
+  const [productsPage, taxonomy, pricing, recipes] = await Promise.all([
+    listProductsPage({ limit: 100 }),
+    listCatalogTaxonomy(),
+    getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
+    (async () => { const id = await shopId(); return requireCloudResult(await getSupabaseClient().from("recipes").select("*").eq("shop_id", id).is("deleted_at", null).limit(1000)); })(),
+  ]);
+  return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes };
+}
+
+export async function listCatalogRewards() {
+  const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().from("loyalty_rewards").select("gift_name, points_required, is_active").eq("shop_id", id).eq("is_active", true).order("points_required").limit(100));
 }

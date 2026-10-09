@@ -9,10 +9,9 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "@/lib/catalog";
-import { useCloudState } from "@/lib/cloudSync";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { listCatalogTaxonomy, getCatalogSetting, saveCatalogCategory, saveCatalogCompany, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 
 type CatalogOrder = {
   id: string;
@@ -40,10 +39,10 @@ const STATUS_LABELS = {
 
 export default function CatalogManager() {
   const [, navigate] = useLocation();
-  const [products, setProducts] = useCloudState<CatalogProduct[]>("abu_raghwa_products", []);
+  const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
-  const [recipes, setRecipes] = useCloudState<CatalogRecipe[]>("abu_raghwa_recipes", []);
+  const [recipes, setRecipes] = useState<CatalogRecipe[]>([]);
   const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
   const [newCategory, setNewCategory] = useState("");
@@ -70,10 +69,14 @@ export default function CatalogManager() {
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([listCatalogTaxonomy(), getCatalogSetting<CatalogPricingConfig>("pricing", { deliveryMarkupPercent: 0 })]).then(([taxonomy, pricing]) => {
+    listCatalogDisplayData().then(data => {
+      const taxonomy = data;
+      const pricing = data.pricing as CatalogPricingConfig;
+      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
+      setRecipes((data.recipes as any[]).map(recipe => ({ id: String(recipe.id), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), category: String(recipe.category || "تركيبات"), catalogVisible: false, notes: String(recipe.description || "") })));
       setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name })));
       setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name })));
-      setManualProducts(taxonomy.products.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
+      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
       setPricingConfig(pricing);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
   }, []);

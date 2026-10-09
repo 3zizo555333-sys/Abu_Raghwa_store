@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRight, Clock3, Gift, Sparkles, Tag } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useCloudState } from "@/lib/cloudSync";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 import { trpc } from "@/lib/trpc";
 
@@ -23,10 +22,9 @@ type CatalogOffer = {
 };
 
 export default function CatalogOffersPage() {
-  const [legacyOffers] = useCloudState<CatalogOffer[]>("abu_raghwa_saved_offers", []);
   const publishedOffersQuery = trpc.offers.list.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", retry: false });
   const publishedOffers = publishedOffersQuery.data as CatalogOffer[] | undefined;
-  const offers: CatalogOffer[] = publishedOffers ?? legacyOffers;
+  const offers: CatalogOffer[] = publishedOffers ?? [];
   const [now, setNow] = useState(() => Date.now());
   const catalogBackUrl = typeof window === "undefined" ? "/catalog" : `/catalog${window.location.search}`;
   const activeOffers = useMemo(() => (Array.isArray(offers) ? offers : []).filter(offer => offer.isActivated !== false && getOfferExpiryInfo(offer, now).status === "active"), [offers, now]);
