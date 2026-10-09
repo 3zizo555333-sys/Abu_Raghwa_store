@@ -63,11 +63,18 @@ export type Database = {
       shop_change_events: Table<{ id: number; shop_id: string; entity_type: string; entity_id: string; operation: "INSERT" | "UPDATE" | "DELETE"; version: number | null; created_at: string }>;
       shortage_items: Table<{ id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; current_quantity: number; min_quantity: number; shortage: number; unit: string; reported_at: string; status: "pending" | "ordered" | "received"; notes: string; category: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
       shortage_categories: Table<{ id: string; shop_id: string; name: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
-      shortage_manual_products: Table<{ id: string; shop_id: string; category_name: string; name: string; unit: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      shortage_manual_products: Table<{ id: string; shop_id: string; category_name: string; name: string; unit: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      recipes: Table<{ id: string; shop_id: string; name: string; description: string; cost_price: number; retail_price: number; category: string; version: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      recipe_ingredients: Table<{ id: string; recipe_id: string; shop_id: string; product_id: string | null; unit: string; quantity: number; cost: number; created_at: string; updated_at: string }>;
+	      loyalty_customers: Table<{ id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number; total_points_earned: number; total_spent: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      loyalty_rewards: Table<{ id: string; shop_id: string; gift_name: string; points_required: number; gift_cost: number; description: string; is_active: boolean; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      loyalty_redemptions: Table<{ id: string; shop_id: string; customer_id: string; reward_id: string; points_deducted: number; gift_cost: number; delivered_at: string; delivered_by: string | null; notes: string; created_at: string }>;
+	      catalog_orders: Table<{ id: string; shop_id: string; customer_name: string; customer_phone: string; items: Json; total_amount: number; status: "pending" | "confirmed" | "delivered" | "cancelled"; created_at: string; updated_at: string }>;
     };
     Views: {
       seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
-      manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
+	      manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
+	      loyalty_customer_balances: { Row: { id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number }; Relationships: [] };
     };
     Functions: {
       search_products_by_barcode: { Args: { p_shop_id: string; p_barcode: string }; Returns: Json };
