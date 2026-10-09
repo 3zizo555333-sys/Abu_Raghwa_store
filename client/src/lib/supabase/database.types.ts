@@ -72,6 +72,15 @@ export type Database = {
 	      loyalty_rewards: Table<{ id: string; shop_id: string; gift_name: string; points_required: number; gift_cost: number; description: string; is_active: boolean; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      loyalty_redemptions: Table<{ id: string; shop_id: string; customer_id: string; reward_id: string; points_deducted: number; gift_cost: number; delivered_at: string; delivered_by: string | null; notes: string; created_at: string }>;
 	      catalog_orders: Table<{ id: string; shop_id: string; customer_name: string; customer_phone: string; items: Json; total_amount: number; status: "pending" | "confirmed" | "delivered" | "cancelled"; created_at: string; updated_at: string }>;
+	      staff_employees: Table<{ id: string; shop_id: string; name: string; phone: string; position: string; salary: number; join_date: string; is_active: boolean; metadata: Json; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      staff_attendance: Table<{ id: string; shop_id: string; employee_id: string; attendance_date: string; check_in: string | null; check_out: string | null; status: "present" | "absent" | "late" | "leave"; notes: string; created_at: string; updated_at: string }>;
+	      staff_withdrawals: Table<{ id: string; shop_id: string; employee_id: string; amount: number; description: string; status: "pending" | "approved" | "rejected"; requested_at: string; reviewed_at: string | null; reviewed_by: string | null; created_at: string; updated_at: string }>;
+	      raw_materials: Table<{ id: string; shop_id: string; name: string; supplier: string; unit: string; total_weight: number; quantity: number; total_price: number; wholesale_price: number; price_per_kilo: number; description: string; usage: string; ratio: string; version: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      production_runs: Table<{ id: string; shop_id: string; recipe_id: string | null; recipe_name: string; quantity: number; status: "pending" | "completed" | "cancelled"; produced_at: string; notes: string; created_by: string | null; created_at: string; updated_at: string }>;
+	      catalog_settings: Table<{ id: string; shop_id: string; setting_key: string; value: Json; created_at: string; updated_at: string }>;
+	      catalog_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      catalog_companies: Table<{ id: string; shop_id: string; name: string; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      catalog_manual_products: Table<{ id: string; shop_id: string; category_id: string | null; company_id: string | null; name: string; unit: string; price: number; description: string; details_url: string; loyalty_points: number; is_visible: boolean; created_at: string; updated_at: string; deleted_at: string | null }>;
     };
     Views: {
       seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
