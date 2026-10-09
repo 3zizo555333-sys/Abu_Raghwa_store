@@ -5,6 +5,19 @@ import { useLocation } from "wouter";
 import { ArrowLeft, AlertTriangle, TrendingDown, Package, Plus, Trash2, Edit2, ChevronDown, ChevronUp } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { getActiveShopContext, subscribeToShopChanges } from "@/lib/supabase/products";
+import {
+  createCloudShortageCategory,
+  deleteCloudShortage,
+  listCloudManualProducts,
+  listCloudShortageCategories,
+  listCloudShortages,
+  listShortageProducts,
+  replaceCloudManualProducts,
+  saveCloudShortage,
+  type CloudManualProduct,
+  type CloudShortage,
+} from "@/lib/supabase/shortages";
 
 interface Product {
   id: string;
@@ -17,26 +30,8 @@ interface Product {
   category: string;
 }
 
-interface ManualProduct {
-  id: string;
-  name: string;
-  category: string;
-  unit: string;
-}
-
-interface Shortage {
-  id: string;
-  productId: string;
-  productName: string;
-  currentQuantity: number;
-  minQuantity: number;
-  unit: string;
-  shortage: number;
-  reportedDate: string;
-  status: "pending" | "ordered" | "received";
-  notes: string;
-  category: string;
-}
+type ManualProduct = CloudManualProduct;
+type Shortage = CloudShortage;
 
 const DEFAULT_CATEGORIES = [
   "مستحضرات التجميل",
@@ -48,8 +43,6 @@ const DEFAULT_CATEGORIES = [
   "ورقيات"
 ];
 
-const SHORTAGE_CATEGORIES_STORAGE_KEY = "abu_raghwa_shortage_categories";
-
 export default function Shortages() {
   const [, navigate] = useLocation();
   const [products, setProducts] = useState<Product[]>([]);
@@ -57,6 +50,8 @@ export default function Shortages() {
   const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [manualProductsText, setManualProductsText] = useState("");
   const [shortages, setShortages] = useState<Shortage[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("مستحضرات التجميل");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["مستحضرات التجميل"]));
   const [minThreshold, setMinThreshold] = useState("5");
@@ -73,121 +68,86 @@ export default function Shortages() {
   });
   const categories = Array.from(new Set([...DEFAULT_CATEGORIES, ...customCategories]));
 
-  const refreshProducts = () => {
-    const saved = localStorage.getItem("abu_raghwa_products");
-    if (!saved) {
-      setProducts([]);
-      return;
-    }
+  const refreshCloudData = async () => {
     try {
-      const parsed = JSON.parse(saved);
-      const normalized = Array.isArray(parsed)
-        ? parsed.filter((product) => product && typeof product === "object")
-        : [];
-      setProducts(normalized.sort((a: Product, b: Product) => (a.name || "").localeCompare(b.name || "", "ar")));
-    } catch {
-      setProducts([]);
-      toast.error("تعذر قراءة قائمة المنتجات؛ تحقق من بيانات صفحة المنتجات");
+      const [cloudProducts, cloudManual, cloudCategories, cloudShortageRows] = await Promise.all([
+        listShortageProducts(),
+        listCloudManualProducts(),
+        listCloudShortageCategories(),
+        listCloudShortages(),
+      ]);
+      const normalizedProducts: Product[] = cloudProducts.map(product => ({
+        id: product.id,
+        name: product.name,
+        quantity: product.quantity,
+        availableQuantity: product.quantity,
+        minQuantity: product.minQuantity,
+        unit: product.unit,
+        wholesalePricePerUnit: product.wholesalePricePerUnit ?? 0,
+        category: product.category,
+      }));
+      setProducts(normalizedProducts.sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      setManualProducts(cloudManual);
+      setCustomCategories(cloudCategories.map(category => category.name));
+      setShortages(cloudShortageRows);
+      setLoadError(null);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر تحميل بيانات النواقص من السحابة.";
+      setLoadError(message);
+      toast.error(message);
+    } finally {
+      setIsLoading(false);
     }
   };
 
   useEffect(() => {
-    refreshProducts();
-    loadManualProducts();
-    loadCustomCategories();
-    loadShortages();
-
-    const refreshOnReturn = () => refreshProducts();
+    let mounted = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    const refreshOnReturn = () => { if (mounted) void refreshCloudData(); };
     window.addEventListener("focus", refreshOnReturn);
-    window.addEventListener("storage", refreshOnReturn);
+    void refreshCloudData();
+    void getActiveShopContext()
+      .then(({ shopId }) => subscribeToShopChanges(shopId, () => { if (mounted) void refreshCloudData(); }))
+      .then(stop => { if (mounted) unsubscribe = stop; else void stop(); })
+      .catch(error => { if (mounted) toast.error(error instanceof Error ? error.message : "تعذر الاتصال بمزامنة النواقص."); });
     return () => {
+      mounted = false;
       window.removeEventListener("focus", refreshOnReturn);
-      window.removeEventListener("storage", refreshOnReturn);
+      if (unsubscribe) void unsubscribe();
     };
   }, []);
 
-  const loadManualProducts = () => {
-    const saved = localStorage.getItem("abu_raghwa_manual_products");
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      setManualProducts(Array.isArray(parsed) ? parsed : []);
-    } catch {
-      setManualProducts([]);
-      toast.error("تعذر قراءة قائمة المنتجات اليدية");
-    }
-  };
-
-  const saveManualProducts = (updated: ManualProduct[]) => {
-    localStorage.setItem("abu_raghwa_manual_products", JSON.stringify(updated));
-    setManualProducts(updated);
-  };
-
-  const loadCustomCategories = () => {
-    const saved = localStorage.getItem(SHORTAGE_CATEGORIES_STORAGE_KEY);
-    if (!saved) return;
-    try {
-      const parsed = JSON.parse(saved);
-      const normalized = Array.isArray(parsed)
-        ? parsed.map(category => typeof category === "string" ? category.trim() : "").filter(Boolean)
-        : [];
-      setCustomCategories(Array.from(new Set(normalized)));
-    } catch {
-      setCustomCategories([]);
-      toast.error("تعذر قراءة الفئات المخصصة للنواقص");
-    }
-  };
-
-  const saveCustomCategories = (updated: string[]) => {
-    localStorage.setItem(SHORTAGE_CATEGORIES_STORAGE_KEY, JSON.stringify(updated));
-    setCustomCategories(updated);
-  };
-
-  const loadShortages = () => {
-    const saved = localStorage.getItem("abu_raghwa_shortages");
-    if (saved) setShortages(JSON.parse(saved));
-  };
-
-  const saveShortages = (updated: Shortage[]) => {
-    localStorage.setItem("abu_raghwa_shortages", JSON.stringify(updated));
-    setShortages(updated);
-  };
-
-  const checkShortages = () => {
+  const checkShortages = async () => {
     const threshold = parseFloat(minThreshold) || 5;
-    const newShortages: Shortage[] = [];
-
-    products.forEach(product => {
-      const currentQty = product.availableQuantity || product.quantity || 0;
+    const candidates = products.filter(product => {
+      const currentQty = product.availableQuantity ?? product.quantity ?? 0;
       const minQty = product.minQuantity || threshold;
-
-      if (currentQty < minQty) {
-        const existing = shortages.find(s => s.productId === product.id);
-        if (!existing) {
-          newShortages.push({
-            id: Date.now().toString() + Math.random(),
-            productId: product.id,
-            productName: product.name,
-            currentQuantity: currentQty,
-            minQuantity: minQty,
-            unit: product.unit,
-            shortage: minQty - currentQty,
-            reportedDate: new Date().toLocaleDateString("ar-EG"),
-            status: "pending",
-            notes: "",
-            category: product.category || "أخرى"
-          });
-        }
-      }
+      return currentQty < minQty && !shortages.some(item => item.productId === product.id && item.status !== "received");
     });
-
-    if (newShortages.length > 0) {
-      saveShortages([...shortages, ...newShortages]);
-      toast.warning(`⚠️ تم اكتشاف ${newShortages.length} منتج ناقص`);
+    try {
+      const created: Shortage[] = [];
+      for (const product of candidates) {
+        created.push(await saveCloudShortage({
+          productId: product.id,
+          productName: product.name,
+          currentQuantity: product.availableQuantity ?? product.quantity ?? 0,
+          minQuantity: product.minQuantity || threshold,
+          unit: product.unit,
+          status: "pending",
+          notes: "",
+          category: product.category || "أخرى",
+        }));
+      }
+      if (created.length) {
+        setShortages(current => [...created, ...current]);
+        toast.warning(`تم اكتشاف ${created.length} منتج ناقص`);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ النواقص المكتشفة.");
     }
   };
 
-  const handleSaveManualProductList = () => {
+  const handleSaveManualProductList = async () => {
     const names = manualProductsText
       .split(/[\n,،]+/)
       .map(name => name.trim())
@@ -198,19 +158,17 @@ export default function Shortages() {
       return;
     }
 
-    const categoryProducts = names.map((name, index) => ({
-      id: `manual-list-${formData.category}-${Date.now()}-${index}`,
-      name,
-      category: formData.category,
-      unit: ""
-    }));
-    const otherCategories = manualProducts.filter(product => product.category !== formData.category);
-    saveManualProducts([...otherCategories, ...categoryProducts]);
-    setManualProductsText("");
-    toast.success(`✅ تم حفظ ${categoryProducts.length} منتج في فئة ${formData.category}`);
+    try {
+      const categoryProducts = await replaceCloudManualProducts(formData.category, names);
+      setManualProducts(current => [...current.filter(product => product.category !== formData.category), ...categoryProducts]);
+      setManualProductsText("");
+      toast.success(`تم حفظ ${categoryProducts.length} منتج في فئة ${formData.category}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ القائمة اليدوية في السحابة.");
+    }
   };
 
-  const handleAddCustomCategory = () => {
+  const handleAddCustomCategory = async () => {
     const name = newCategoryName.trim();
     if (!name) {
       toast.error("اكتب اسم الفئة أولاً");
@@ -231,7 +189,13 @@ export default function Shortages() {
       return;
     }
 
-    saveCustomCategories([...customCategories, name]);
+    try {
+      const created = await createCloudShortageCategory(name);
+      setCustomCategories(current => Array.from(new Set([...current, created.name])));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ الفئة في السحابة.");
+      return;
+    }
     setFormData(current => ({ ...current, category: name, productId: "" }));
     setSelectedCategory(name);
     setExpandedCategories(current => {
@@ -244,7 +208,7 @@ export default function Shortages() {
     toast.success(`✅ تمت إضافة فئة «${name}»`);
   };
 
-  const handleAddShortage = () => {
+  const handleAddShortage = async () => {
     const product = products.find(p => p.id === formData.productId);
     const manualListProduct = manualProducts.find(p => p.id === formData.productId);
     const manualName = manualProductName.trim();
@@ -255,63 +219,63 @@ export default function Shortages() {
     }
 
     const productName = product?.name || manualListProduct?.name || manualName;
-    const currentQty = product ? (product.availableQuantity || product.quantity || 0) : 0;
-    const minQty = parseFloat(formData.minQuantity) || product?.minQuantity || 5;
-    const productId = product?.id || manualListProduct?.id || `manual-${Date.now()}`;
+    const currentQty = product ? (product.availableQuantity ?? product.quantity ?? 0) : 0;
+    const parsedMinimum = Number(formData.minQuantity);
+    const minQty = formData.minQuantity.trim() && Number.isFinite(parsedMinimum)
+      ? Math.max(0, parsedMinimum)
+      : product?.minQuantity ?? 5;
     const unit = product?.unit || manualListProduct?.unit || "";
-
-    if (editingId) {
-      const updated = shortages.map(s =>
-        s.id === editingId
-          ? {
-              ...s,
-              productId,
-              productName,
-              currentQuantity: currentQty,
-              unit,
-              minQuantity: minQty,
-              shortage: Math.max(0, minQty - currentQty),
-              notes: formData.notes,
-              category: formData.category
-            }
-          : s
-      );
-      saveShortages(updated);
-      toast.success("✅ تم تحديث النقص");
-    } else {
-      const newShortage: Shortage = {
-        id: Date.now().toString(),
-        productId,
+    const current = editingId ? shortages.find(item => item.id === editingId) : undefined;
+    try {
+      const saved = await saveCloudShortage({
+        productId: product?.id || "",
         productName,
         currentQuantity: currentQty,
         minQuantity: minQty,
         unit,
-        shortage: Math.max(0, minQty - currentQty),
-        reportedDate: new Date().toLocaleDateString("ar-EG"),
-        status: "pending",
+        status: current?.status ?? "pending",
         notes: formData.notes,
-        category: formData.category
-      };
-      saveShortages([...shortages, newShortage]);
-      toast.success("✅ تم إضافة نقص جديد");
-    }
-
-    resetForm();
-  };
-
-  const handleDeleteShortage = (id: string) => {
-    if (confirm("هل تريد حذف هذا النقص؟")) {
-      saveShortages(shortages.filter(s => s.id !== id));
-      toast.success("✅ تم الحذف");
+        category: formData.category,
+      }, current);
+      setShortages(items => current ? items.map(item => item.id === saved.id ? saved : item) : [saved, ...items]);
+      toast.success(current ? "تم تحديث النقص في السحابة" : "تم حفظ النقص في السحابة");
+      resetForm();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ النقص في السحابة.");
     }
   };
 
-  const handleStatusChange = (id: string, status: "pending" | "ordered" | "received") => {
-    const updated = shortages.map(s =>
-      s.id === id ? { ...s, status } : s
-    );
-    saveShortages(updated);
-    toast.success(`✅ تم تغيير الحالة إلى ${status}`);
+  const handleDeleteShortage = async (id: string) => {
+    const item = shortages.find(shortage => shortage.id === id);
+    if (!item || !confirm("هل تريد حذف هذا النقص؟")) return;
+    try {
+      await deleteCloudShortage(item);
+      setShortages(current => current.filter(shortage => shortage.id !== id));
+      toast.success("تم الحذف من السحابة");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حذف النقص.");
+    }
+  };
+
+  const handleStatusChange = async (id: string, status: "pending" | "ordered" | "received") => {
+    const current = shortages.find(item => item.id === id);
+    if (!current) return;
+    try {
+      const saved = await saveCloudShortage({
+        productId: current.productId,
+        productName: current.productName,
+        currentQuantity: current.currentQuantity,
+        minQuantity: current.minQuantity,
+        unit: current.unit,
+        status,
+        notes: current.notes,
+        category: current.category,
+      }, current);
+      setShortages(items => items.map(item => item.id === id ? saved : item));
+      toast.success(`تم تحديث الحالة إلى ${status}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تغيير حالة النقص.");
+    }
   };
 
   const toggleCategory = (category: string) => {
@@ -437,6 +401,8 @@ export default function Shortages() {
           <div>
             <h1 className="text-4xl font-bold text-gray-800">⚠️ نواقص أبو رغوة</h1>
             <p className="text-gray-600 mt-1">تتبع المنتجات الناقصة والمخزون المنخفض حسب الفئات</p>
+            {isLoading && <p className="mt-1 text-sm text-blue-700">جارٍ تحميل بيانات المحل من السحابة…</p>}
+            {loadError && <p role="alert" className="mt-2 text-sm font-medium text-red-700">تعذر تحميل بيانات السحابة: {loadError}</p>}
           </div>
           <Button 
             onClick={() => navigate('/dashboard')}
@@ -611,7 +577,7 @@ export default function Shortages() {
         {!showForm && (
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button 
-              onClick={() => { refreshProducts(); setShowForm(true); }}
+              onClick={() => { void refreshCloudData(); setShowForm(true); }}
               className="bg-blue-600 hover:bg-blue-700 text-white py-6 text-lg font-bold"
             >
               <Plus size={24} className="mr-2" />
@@ -713,7 +679,7 @@ export default function Shortages() {
           })}
         </div>
 
-        {shortages.length === 0 && (
+        {!isLoading && !loadError && shortages.length === 0 && (
           <Card className="border-2 border-dashed border-gray-300 mt-8">
             <CardContent className="py-12 text-center">
               <Package size={48} className="mx-auto text-gray-400 mb-4" />

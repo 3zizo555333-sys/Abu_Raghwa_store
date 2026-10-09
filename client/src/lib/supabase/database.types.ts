@@ -61,6 +61,9 @@ export type Database = {
       stock_movements: Table<{ id: string; shop_id: string; product_id: string; invoice_id: string | null; kind: string; quantity_delta: number; reason: string; created_by: string | null; created_at: string }>;
       audit_events: Table<{ id: number; shop_id: string; actor_id: string | null; action: string; entity_type: string; entity_id: string | null; changed_fields: string[]; details: Json; created_at: string }>;
       shop_change_events: Table<{ id: number; shop_id: string; entity_type: string; entity_id: string; operation: "INSERT" | "UPDATE" | "DELETE"; version: number | null; created_at: string }>;
+      shortage_items: Table<{ id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; current_quantity: number; min_quantity: number; shortage: number; unit: string; reported_at: string; status: "pending" | "ordered" | "received"; notes: string; category: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      shortage_categories: Table<{ id: string; shop_id: string; name: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      shortage_manual_products: Table<{ id: string; shop_id: string; category_name: string; name: string; unit: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
     };
     Views: {
       seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
@@ -89,6 +92,7 @@ export type Database = {
       delete_deferred_check_record: { Args: { p_shop_id: string; p_record_id: string }; Returns: boolean };
       list_shop_members: { Args: { p_shop_id: string }; Returns: Array<{ user_id: string; email: string; display_name: string | null; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; created_at: string; updated_at: string; last_sign_in_at: string | null }> };
       set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
+      replace_shortage_manual_products: { Args: { p_shop_id: string; p_category: string; p_names: string[] }; Returns: Database["public"]["Tables"]["shortage_manual_products"]["Row"][] };
     };
     Enums: {
       shop_role: "manager" | "admin" | "supervisor" | "seller";
