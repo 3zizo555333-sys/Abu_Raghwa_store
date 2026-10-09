@@ -42,21 +42,9 @@ const convertToJpeg = (file: File) => new Promise<string>((resolve, reject) => {
 
 export async function prepareItemImageForUpload(file: File) {
   if (!file) throw new Error("missing image");
-  if (file.size > 16 * 1024 * 1024) throw new Error("image too large");
-
-  const dataUrl = await readAsDataUrl(file);
-  const detectedMime = /^data:([^;]+);base64,/i.exec(dataUrl)?.[1]?.toLowerCase() || "";
-  const needsConversion = !SUPPORTED_MIME_TYPES.includes(detectedMime) || file.size > DIRECT_UPLOAD_BYTES;
-  const normalizedDataUrl = needsConversion ? await convertToJpeg(file) : dataUrl;
-  const mimeType = /^data:([^;]+);base64,/i.exec(normalizedDataUrl)?.[1]?.toLowerCase() || "";
-
-  if (!SUPPORTED_MIME_TYPES.includes(mimeType)) throw new Error("unsupported image type");
-  const base64Length = normalizedDataUrl.length - normalizedDataUrl.indexOf(",") - 1;
-  const bytes = Math.floor((base64Length * 3) / 4);
-  if (bytes > MAX_UPLOAD_BYTES) throw new Error("image too large after conversion");
-
-  const safeName = `${file.name?.replace(/\.[^.]+$/, "") || "camera-image"}.${mimeType === "image/png" ? "png" : mimeType === "image/webp" ? "webp" : "jpg"}`;
-  return { dataUrl: normalizedDataUrl, fileName: safeName };
+  const blob = await prepareCloudProductImage(file);
+  const dataUrl = await readAsDataUrl(blob);
+  return { dataUrl, fileName: `${file.name?.replace(/\.[^.]+$/, "") || "camera-image"}.webp` };
 }
 
 /** Product photos are always converted to WebP before leaving the browser. */
