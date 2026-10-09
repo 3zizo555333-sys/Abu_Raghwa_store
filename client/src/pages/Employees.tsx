@@ -6,9 +6,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useCloudState } from "@/lib/cloudSync";
 import { normalizeAttendance, normalizeEmployees, type AttendanceRecord, type EmployeeRecord } from "@/lib/employeeData";
 import { trpc } from "@/lib/trpc";
+import { listStaffAttendance, listStaffEmployees, saveStaffAttendance, saveStaffEmployee, softDeleteStaffEmployee } from "@/lib/supabase/operations";
 
 type CurrentUser = { email?: string; password?: string; role?: "manager" | "admin" | "seller" };
 type FinanceSummary = { workedDays: number; dailyRate: number; earnedAmount: number; approvedWithdrawals: number; pendingWithdrawals: number; remainingAmount: number };
@@ -31,8 +31,8 @@ function WithdrawalList({ withdrawals, onReview }: { withdrawals: FinanceWithdra
 export default function Employees() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
-  const [storedEmployees, setStoredEmployees] = useCloudState<EmployeeRecord[]>("abu_raghwa_employees", []);
-  const [storedAttendance, setStoredAttendance] = useCloudState<AttendanceRecord[]>("abu_raghwa_attendance", []);
+  const [storedEmployees, setStoredEmployees] = useState<EmployeeRecord[]>([]);
+  const [storedAttendance, setStoredAttendance] = useState<AttendanceRecord[]>([]);
   const employees = normalizeEmployees(storedEmployees);
   const attendance = normalizeAttendance(storedAttendance);
   const currentUser = useMemo<CurrentUser | null>(() => { try { return JSON.parse(browserState.get("abu_raghwa_current_user") || "null"); } catch { return null; } }, []);
@@ -44,6 +44,13 @@ export default function Employees() {
   const [formData, setFormData] = useState({ name: "", phone: "", position: "", salary: "", joinDate: todayIso() });
   const [cardPasswords, setCardPasswords] = useState<Record<string, string>>({});
   const [withdrawalDrafts, setWithdrawalDrafts] = useState<Record<string, { amount: string; description: string }>>({});
+
+  useEffect(() => {
+    Promise.all([listStaffEmployees(), listStaffAttendance()]).then(([employeeRows, attendanceRows]) => {
+      setStoredEmployees(employeeRows.map(row => ({ id: row.id, name: row.name, phone: row.phone, position: row.position, salary: row.salary, joinDate: row.join_date })));
+      setStoredAttendance(attendanceRows.map(row => ({ id: row.id, employeeId: row.employee_id, date: row.attendance_date, checkIn: row.check_in || "", checkOut: row.check_out || "", status: row.status === "leave" ? "absent" : row.status })));
+    }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل بيانات الموظفين السحابية"));
+  }, []);
 
   const login = trpc.employeeFinance.login.useMutation({ onSuccess: result => { browserState.set("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
   const managerLogin = trpc.employeeFinance.loginWithStaffSession.useMutation({ onSuccess: result => { browserState.set("abu_employee_finance_token", result.token); setFinanceAccess(result.access); }, onError: error => toast.error(error.message) });
@@ -59,16 +66,18 @@ export default function Employees() {
   useEffect(() => { if (isManager && financeAccess !== "manager" && !managerLogin.isPending) managerLogin.mutate(); }, [financeAccess, isManager, managerLogin]);
   useEffect(() => { if (!isManager) { browserState.remove("abu_employee_finance_token"); setFinanceAccess(null); } }, [isManager]);
 
-  const saveEmployee = () => {
+  const saveEmployee = async () => {
     if (!formData.name.trim()) return toast.error("اكتب اسم الموظف");
     const record = { name: formData.name.trim(), phone: formData.phone.trim(), position: formData.position.trim(), salary: Math.max(0, Number(formData.salary) || 0), joinDate: formData.joinDate || todayIso() };
-    setStoredEmployees(current => editingId ? normalizeEmployees(current).map(item => item.id === editingId ? { ...item, ...record } : item) : [...normalizeEmployees(current), { id: `employee_${Date.now()}`, ...record }]);
+    const saved = await saveStaffEmployee({ ...(editingId ? { id: editingId } : {}), name: record.name, phone: record.phone, position: record.position, salary: record.salary, join_date: record.joinDate, is_active: true, metadata: {} });
+    const employee = { id: saved.id, name: saved.name, phone: saved.phone, position: saved.position, salary: saved.salary, joinDate: saved.join_date };
+    setStoredEmployees(current => editingId ? normalizeEmployees(current).map(item => item.id === editingId ? employee : item) : [...normalizeEmployees(current), employee]);
     setFormData({ name: "", phone: "", position: "", salary: "", joinDate: todayIso() }); setEditingId(null); setShowForm(false); toast.success("تم حفظ بيانات العامل");
   };
   const records = (managerOverview.data || []) as FinanceRecord[];
   const recordsById = new Map(records.map(record => [record.employee.id, record]));
   const displayedEmployees = [...employees]; records.forEach(record => { if (!displayedEmployees.some(item => item.id === record.employee.id)) displayedEmployees.push(record.employee); });
-  const checkIn = (employeeId: string) => { const today = new Date().toLocaleDateString("ar-EG"); if (attendance.some(item => item.employeeId === employeeId && item.date === today)) return toast.error("تم تسجيل الحضور بالفعل"); setStoredAttendance([...attendance, { id: `attendance_${Date.now()}`, employeeId, date: today, checkIn: new Date().toLocaleTimeString("ar-EG"), checkOut: "", status: "present" }]); };
+  const checkIn = async (employeeId: string) => { const today = new Date().toISOString().slice(0, 10); if (attendance.some(item => item.employeeId === employeeId && item.date === today)) return toast.error("تم تسجيل الحضور بالفعل"); const saved = await saveStaffAttendance({ id: crypto.randomUUID(), employee_id: employeeId, attendance_date: today, check_in: new Date().toISOString(), check_out: null, status: "present", notes: "" }); setStoredAttendance(current => [...current, { id: saved.id, employeeId: saved.employee_id, date: saved.attendance_date, checkIn: saved.check_in || "", checkOut: saved.check_out || "", status: saved.status === "leave" ? "absent" : saved.status }]); };
 
   if (!isManager && financeAccess !== "employee") return <main className="grid min-h-screen place-items-center bg-slate-50 p-5" dir="rtl"><Card className="w-full max-w-md text-center shadow-lg"><CardHeader><KeyRound className="mx-auto h-8 w-8 text-violet-700" /><CardTitle>بطاقة العامل الخاصة</CardTitle><CardDescription>اكتب كلمة المرور التي أعطاها لك المدير. لا تحتاج إلى بريد إلكتروني.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="password" value={cardPassword} onChange={event => setCardPassword(event.target.value)} onKeyDown={event => event.key === "Enter" && login.mutate({ cardPassword })} placeholder="كلمة مرور البطاقة" /><Button className="w-full bg-violet-700" disabled={!cardPassword || login.isPending} onClick={() => login.mutate({ cardPassword })}>فتح بطاقتي</Button><Button className="w-full" variant="ghost" onClick={() => navigate("/dashboard")}>عودة</Button></CardContent></Card></main>;
   if (!isManager && financeAccess === "employee") return <main className="min-h-screen bg-slate-50 p-4" dir="rtl"><div className="mx-auto max-w-3xl space-y-4">{myAccount.isLoading || !myAccount.data ? <p className="rounded-xl bg-white p-5 text-center">جاري فتح بطاقتك...</p> : <><header className="flex justify-between"><div><p className="font-bold text-violet-700">بطاقتي فقط</p><h1 className="text-2xl font-black">{myAccount.data.employee.name}</h1></div><Button variant="outline" onClick={() => navigate("/dashboard")}>عودة</Button></header><Card><CardContent className="pt-6"><FinanceCounter summary={myAccount.data.summary} /></CardContent></Card><Card><CardHeader><CardTitle>تسجيل سحبة</CardTitle></CardHeader><CardContent><div className="grid gap-2 md:grid-cols-[160px_1fr_auto]"><Input id="worker-withdrawal-amount" type="number" placeholder="المبلغ" /><Input id="worker-withdrawal-description" placeholder="سبب السحبة" /><Button onClick={() => { const amount = Number((document.getElementById("worker-withdrawal-amount") as HTMLInputElement)?.value); const description = (document.getElementById("worker-withdrawal-description") as HTMLInputElement)?.value.trim(); if (amount && description) requestWithdrawal.mutate({ amount, description }); }}>تسجيل</Button></div></CardContent></Card><Card><CardHeader><CardTitle>سحوباتي</CardTitle></CardHeader><CardContent><WithdrawalList withdrawals={myAccount.data.withdrawals} /></CardContent></Card></>}</div></main>;

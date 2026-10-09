@@ -18,11 +18,19 @@ export async function saveStaffEmployee(input: Omit<Insert<"staff_employees">, "
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient();
   const payload = { ...input, shop_id: id } as Insert<"staff_employees">;
   const result = input.id ? await client.from("staff_employees").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("staff_employees").insert(payload).select().single();
-  return requireCloudResult(result);
+  return requireCloudResult(result) as Row<"staff_employees">;
 }
 export async function softDeleteStaffEmployee(employeeId: string) {
   assertCloudOnline(); const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("staff_employees").update({ deleted_at: new Date().toISOString(), is_active: false }).eq("id", employeeId).eq("shop_id", id).select().single());
+}
+export async function listStaffAttendance() {
+  const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().from("staff_attendance").select("*").eq("shop_id", id).order("attendance_date", { ascending: false }).limit(5000)) as Row<"staff_attendance">[];
+}
+export async function saveStaffAttendance(input: Omit<Insert<"staff_attendance">, "shop_id">) {
+  assertCloudOnline(); const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().from("staff_attendance").upsert({ ...input, shop_id: id }, { onConflict: "shop_id,employee_id,attendance_date" }).select().single()) as Row<"staff_attendance">;
 }
 
 export async function listRawMaterials() {
@@ -33,7 +41,7 @@ export async function saveRawMaterial(input: Omit<Insert<"raw_materials">, "shop
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient();
   const payload = { ...input, shop_id: id } as Insert<"raw_materials">;
   const result = input.id ? await client.from("raw_materials").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("raw_materials").insert(payload).select().single();
-  return requireCloudResult(result);
+  return requireCloudResult(result) as Row<"raw_materials">;
 }
 export async function deleteRawMaterial(materialId: string) {
   assertCloudOnline(); const id = await shopId();
@@ -46,7 +54,7 @@ export async function listProductionRuns() {
 }
 export async function createProductionRun(input: Omit<Insert<"production_runs">, "shop_id">) {
   assertCloudOnline(); const id = await shopId();
-  return requireCloudResult(await getSupabaseClient().from("production_runs").insert({ ...input, shop_id: id }).select().single());
+  return requireCloudResult(await getSupabaseClient().from("production_runs").insert({ ...input, shop_id: id }).select().single()) as Row<"production_runs">;
 }
 
 export async function getCatalogSetting<T = unknown>(key: string, fallback: T): Promise<T> {
@@ -57,7 +65,7 @@ export async function getCatalogSetting<T = unknown>(key: string, fallback: T): 
 }
 export async function saveCatalogSetting(key: string, value: unknown) {
   assertCloudOnline(); const id = await shopId();
-  return requireCloudResult(await getSupabaseClient().from("catalog_settings").upsert({ shop_id: id, setting_key: key, value: value as Database["public"]["Tables"]["catalog_settings"]["Insert"]["value"] }, { onConflict: "shop_id,setting_key" }).select().single());
+  return requireCloudResult(await getSupabaseClient().from("catalog_settings").upsert({ shop_id: id, setting_key: key, value: value as Database["public"]["Tables"]["catalog_settings"]["Insert"]["value"] }, { onConflict: "shop_id,setting_key" }).select().single()) as Row<"catalog_settings">;
 }
 export async function listCatalogTaxonomy() {
   const id = await shopId(); const client = getSupabaseClient();
@@ -70,13 +78,13 @@ export async function listCatalogTaxonomy() {
 }
 export async function saveCatalogCategory(input: Omit<Insert<"catalog_categories">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_categories">;
-  return requireCloudResult(input.id ? await client.from("catalog_categories").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_categories").insert(payload).select().single());
+  return requireCloudResult(input.id ? await client.from("catalog_categories").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_categories").insert(payload).select().single()) as Row<"catalog_categories">;
 }
 export async function saveCatalogCompany(input: Omit<Insert<"catalog_companies">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_companies">;
-  return requireCloudResult(input.id ? await client.from("catalog_companies").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_companies").insert(payload).select().single());
+  return requireCloudResult(input.id ? await client.from("catalog_companies").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_companies").insert(payload).select().single()) as Row<"catalog_companies">;
 }
 export async function saveCatalogManualProduct(input: Omit<Insert<"catalog_manual_products">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_manual_products">;
-  return requireCloudResult(input.id ? await client.from("catalog_manual_products").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_manual_products").insert(payload).select().single());
+  return requireCloudResult(input.id ? await client.from("catalog_manual_products").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_manual_products").insert(payload).select().single()) as Row<"catalog_manual_products">;
 }

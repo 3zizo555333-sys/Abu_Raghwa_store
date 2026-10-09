@@ -12,6 +12,7 @@ import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type Ca
 import { useCloudState } from "@/lib/cloudSync";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
+import { listCatalogTaxonomy, getCatalogSetting, saveCatalogCategory, saveCatalogCompany, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 
 type CatalogOrder = {
   id: string;
@@ -40,11 +41,11 @@ const STATUS_LABELS = {
 export default function CatalogManager() {
   const [, navigate] = useLocation();
   const [products, setProducts] = useCloudState<CatalogProduct[]>("abu_raghwa_products", []);
-  const [categories, setCategories] = useCloudState<CatalogCategory[]>("abu_catalog_categories", []);
-  const [companies, setCompanies] = useCloudState<CatalogCompany[]>("abu_catalog_companies", []);
+  const [categories, setCategories] = useState<CatalogCategory[]>([]);
+  const [companies, setCompanies] = useState<CatalogCompany[]>([]);
   const [recipes, setRecipes] = useCloudState<CatalogRecipe[]>("abu_raghwa_recipes", []);
-  const [manualProducts, setManualProducts] = useCloudState<CatalogProduct[]>("abu_catalog_manual_products", []);
-  const [pricingConfig, setPricingConfig] = useCloudState<CatalogPricingConfig>("abu_catalog_pricing", { deliveryMarkupPercent: 0 });
+  const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
+  const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
   const [newCategory, setNewCategory] = useState("");
   const [newCompany, setNewCompany] = useState("");
   const [search, setSearch] = useState("");
@@ -67,6 +68,15 @@ export default function CatalogManager() {
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => refetchOrders() });
   const uploadProductImage = trpc.catalog.uploadProductImage.useMutation();
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([listCatalogTaxonomy(), getCatalogSetting<CatalogPricingConfig>("pricing", { deliveryMarkupPercent: 0 })]).then(([taxonomy, pricing]) => {
+      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name })));
+      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name })));
+      setManualProducts(taxonomy.products.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
+      setPricingConfig(pricing);
+    }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
+  }, []);
 
   const enableOrderSound = () => {
     try {
@@ -160,27 +170,31 @@ export default function CatalogManager() {
   const visibleProducts = [...managedProducts, ...catalogRecipes].filter(product => product.catalogVisible === true).length;
   const newOrders = (orders as CatalogOrder[]).filter(order => order.status === "new").length;
 
-  const addCategory = () => {
+  const addCategory = async () => {
     const name = newCategory.trim();
     if (!name) return;
     if (safeCategories.some(category => category.name === name)) return toast.error("هذه الفئة موجودة بالفعل");
-    setCategories([...safeCategories, { id: `cat_${Date.now()}`, name }]);
+    const saved = await saveCatalogCategory({ name, sort_order: safeCategories.length });
+    setCategories([...safeCategories, { id: saved.id, name: saved.name }]);
     setNewCategory("");
     toast.success("تمت إضافة الفئة للكتالوج");
   };
 
-  const addCompany = () => {
+  const addCompany = async () => {
     const name = newCompany.trim();
     if (!name) return;
     if (safeCompanies.some(company => company.name === name)) return toast.error("هذه الشركة موجودة بالفعل");
-    setCompanies([...safeCompanies, { id: `company_${Date.now()}`, name }]);
+    const saved = await saveCatalogCompany({ name });
+    setCompanies([...safeCompanies, { id: saved.id, name: saved.name }]);
     setNewCompany("");
     toast.success("تمت إضافة الشركة للكتالوج");
   };
 
-  const updateProduct = (id: string, patch: Partial<CatalogProduct>) => {
+  const updateProduct = async (id: string, patch: Partial<CatalogProduct>) => {
     if (safeManualProducts.some(product => product.id === id)) {
       setManualProducts(current => (Array.isArray(current) ? current : []).map(product => product.id === id ? { ...product, ...patch } : product));
+      const product = safeManualProducts.find(item => item.id === id);
+      if (product) await saveCatalogManualProduct({ id, name: String(patch.name ?? product.name), unit: String(patch.unit ?? product.unit), price: Number(patch.catalogPrice ?? product.catalogPrice ?? product.wholesaleRetailPrice ?? 0), description: String(patch.catalogDescription ?? product.catalogDescription ?? ""), details_url: String(patch.catalogDetailsUrl ?? product.catalogDetailsUrl ?? ""), loyalty_points: Number(patch.loyaltyPoints ?? product.loyaltyPoints ?? 0), is_visible: Boolean(patch.catalogVisible ?? product.catalogVisible), category_id: null, company_id: null });
       return;
     }
     setProducts(current => (Array.isArray(current) ? current : []).map(product => product.id === id ? { ...product, ...patch } : product));
@@ -199,7 +213,7 @@ export default function CatalogManager() {
     toast.success(`تمت إضافة ${product.name} إلى الكتالوج`);
   };
 
-  const addManualProduct = () => {
+  const addManualProduct = async () => {
     const name = manualDraft.name.trim();
     const price = Number(manualDraft.price);
     if (!name || !Number.isFinite(price) || price <= 0) return toast.error("اكتب اسم المنتج اليدوي وسعره الصحيح");
@@ -208,7 +222,8 @@ export default function CatalogManager() {
     const normalizedName = name.toLocaleLowerCase("ar-EG");
     const existingNames = [...safeProducts, ...safeManualProducts, ...safeRecipes].map(item => String(item.name ?? "").trim().toLocaleLowerCase("ar-EG"));
     if (existingNames.includes(normalizedName)) return toast.error("هذا الاسم موجود بالفعل كمنتج أو تركيبة في الكتالوج");
-    setManualProducts(current => [...(Array.isArray(current) ? current : []), { id: `manual_catalog_${Date.now()}`, catalogSource: "manual", name, unit: manualDraft.unit.trim() || "قطعة", wholesaleRetailPrice: price, catalogPrice: price, category: manualDraft.category.trim(), company: manualDraft.company.trim(), catalogDescription: manualDraft.description.trim(), catalogDetailsUrl, catalogVisible: true, loyaltyPoints: Math.max(0, Math.floor(Number(manualDraft.loyaltyPoints) || 0)) }]);
+    const saved = await saveCatalogManualProduct({ name, unit: manualDraft.unit.trim() || "قطعة", price, description: manualDraft.description.trim(), details_url: catalogDetailsUrl, is_visible: true, loyalty_points: Math.max(0, Math.floor(Number(manualDraft.loyaltyPoints) || 0)), category_id: null, company_id: null });
+    setManualProducts(current => [...(Array.isArray(current) ? current : []), { id: saved.id, catalogSource: "manual", name, unit: saved.unit, wholesaleRetailPrice: saved.price, catalogPrice: saved.price, category: manualDraft.category.trim(), company: manualDraft.company.trim(), catalogDescription: saved.description, catalogDetailsUrl: saved.details_url, catalogVisible: saved.is_visible, loyaltyPoints: saved.loyalty_points }]);
     setManualDraft({ name: "", price: "", unit: "قطعة", category: "", company: "", description: "", detailsUrl: "", loyaltyPoints: "" });
     toast.success("تمت إضافة المنتج اليدوي إلى الكتالوج");
   };
@@ -371,7 +386,7 @@ export default function CatalogManager() {
         <Card className="border-0 shadow-sm">
           <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="text-emerald-600" />سعر ورابط الاستلام والتوصيل</CardTitle><CardDescription>الاستلام من المحل يستخدم سعر الكتالوج المعتاد. رابط التوصيل يزيد سعر كل صنف بالنسبة التي تكتبها هنا، دون تغيير سعر المحل.</CardDescription></CardHeader>
           <CardContent className="grid gap-4 lg:grid-cols-[0.7fr_1.3fr]">
-            <div className="rounded-2xl bg-emerald-50 p-4"><label className="text-sm font-black text-emerald-950">زيادة سعر التوصيل لكل صنف (%)</label><Input type="number" min="0" max="500" step="0.5" value={deliveryMarkup || ""} onChange={event => setPricingConfig({ deliveryMarkupPercent: normalizeDeliveryMarkupPercent(event.target.value) })} placeholder="مثال: 10" className="mt-3 bg-white" /><p className="mt-2 text-xs leading-5 text-emerald-800">مثال: إذا كان سعر المحل 100 ج.م والنسبة 10%، يظهر في رابط التوصيل بسعر 110 ج.م.</p></div>
+            <div className="rounded-2xl bg-emerald-50 p-4"><label className="text-sm font-black text-emerald-950">زيادة سعر التوصيل لكل صنف (%)</label><Input type="number" min="0" max="500" step="0.5" value={deliveryMarkup || ""} onChange={event => { const next = { deliveryMarkupPercent: normalizeDeliveryMarkupPercent(event.target.value) }; setPricingConfig(next); void saveCatalogSetting("pricing", next); }} placeholder="مثال: 10" className="mt-3 bg-white" /><p className="mt-2 text-xs leading-5 text-emerald-800">مثال: إذا كان سعر المحل 100 ج.م والنسبة 10%، يظهر في رابط التوصيل بسعر 110 ج.م.</p></div>
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
                 <p className="font-black text-blue-950">رابط وQR الاستلام من المحل</p>
