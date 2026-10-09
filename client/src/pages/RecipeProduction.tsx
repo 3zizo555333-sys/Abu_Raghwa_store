@@ -5,6 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Check, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { createProductionRun, listProductionRuns } from "@/lib/supabase/operations";
 
 interface Recipe {
   id: string;
@@ -39,7 +40,7 @@ export default function RecipeProduction() {
 
   useEffect(() => {
     loadRecipes();
-    loadProductions();
+    loadProductions().catch(() => setProductions([]));
   }, []);
 
   const loadRecipes = () => {
@@ -47,12 +48,12 @@ export default function RecipeProduction() {
     setRecipes(recipesData);
   };
 
-  const loadProductions = () => {
-    const productionsData = JSON.parse(browserState.get("abu_raghwa_productions") || "[]");
-    setProductions(productionsData);
+  const loadProductions = async () => {
+    const rows = await listProductionRuns();
+    setProductions(rows.map(row => ({ id: row.id, recipeId: row.recipe_id || "", recipeName: row.recipe_name, quantity: row.quantity, date: row.produced_at, status: row.status === "completed" ? "completed" : "pending" })));
   };
 
-  const handleProduction = () => {
+  const handleProduction = async () => {
     if (!selectedRecipe || productionQty <= 0) {
       alert("يرجى اختيار تركيبة وإدخال كمية صحيحة");
       return;
@@ -101,8 +102,8 @@ export default function RecipeProduction() {
     };
 
     const updatedProductions = [...productions, newProduction];
-    browserState.set("abu_raghwa_productions", JSON.stringify(updatedProductions));
-    setProductions(updatedProductions);
+    const saved = await createProductionRun({ recipe_id: selectedRecipe.id, recipe_name: selectedRecipe.name, quantity: productionQty, status: "completed", produced_at: new Date().toISOString(), notes: "" });
+    setProductions(current => [...current, { id: saved.id, recipeId: saved.recipe_id || "", recipeName: saved.recipe_name, quantity: saved.quantity, date: saved.produced_at, status: "completed" }]);
 
     alert("تم الإنتاج بنجاح! تم تحديث المخزون تلقائياً");
     setSelectedRecipe(null);
