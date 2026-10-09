@@ -1,0 +1,2 @@
+ALTER TABLE `catalog_orders` ADD `fulfillmentMethod` enum('pickup','delivery') DEFAULT 'pickup' NOT NULL;--> statement-breakpoint
+ALTER TABLE `catalog_orders` ADD `priceAdjustmentPercent` double DEFAULT 0 NOT NULL;

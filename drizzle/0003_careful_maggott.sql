@@ -1,0 +1,1 @@
+ALTER TABLE `catalog_orders` MODIFY COLUMN `status` enum('new','contacted','confirmed','preparing','delivered','cancelled') NOT NULL DEFAULT 'new';

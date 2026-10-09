@@ -1,0 +1,76 @@
+{
+  "version": "7",
+  "dialect": "mysql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "5",
+      "when": 1786609022593,
+      "tag": "0000_cute_cerebro",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "5",
+      "when": 1786610919277,
+      "tag": "0001_minor_baron_strucker",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "5",
+      "when": 1787397761070,
+      "tag": "0002_lethal_romulus",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "5",
+      "when": 1787408779617,
+      "tag": "0003_careful_maggott",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "5",
+      "when": 1787484217935,
+      "tag": "0004_numerous_lyja",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1787752653805,
+      "tag": "0005_brown_caretaker",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "5",
+      "when": 1787757068018,
+      "tag": "0006_chemical_toxin",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1787758036271,
+      "tag": "0007_cynical_smiling_tiger",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "5",
+      "when": 1789945663043,
+      "tag": "0008_spicy_randall_flagg",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "5",
+      "when": 1790288298241,
+      "tag": "0009_exotic_sway",
+      "breakpoints": true
+    }
+  ]
+}

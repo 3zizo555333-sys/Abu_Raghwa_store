@@ -1,0 +1,32 @@
+name: Cloud migration checks
+
+on:
+  pull_request:
+  push:
+    branches: [main, feat/supabase-cloud-migration]
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - id: supabase_cli
+        uses: supabase/setup-cli@v3
+        with:
+          version: 2.84.2
+      - run: pnpm install --frozen-lockfile
+      - run: supabase start
+      - run: supabase test db
+      - run: pnpm check
+      - run: pnpm test:cloud
+      - run: pnpm build:web
+      - run: python3 -m pip install --quiet pglast
+      - run: pnpm supabase:check-sql
+      - run: pnpm storage:check
+      - if: always() && steps.supabase_cli.outcome == 'success'
+        run: supabase stop --no-backup

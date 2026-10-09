@@ -1,0 +1,113 @@
+export type Json = string | number | boolean | null | { [key: string]: Json | undefined } | Json[];
+
+export type ProductRow = {
+  id: string;
+  shop_id: string;
+  name: string;
+  code: string | null;
+  barcode: string | null;
+  barcodes: string[];
+  plu: string | null;
+  sale_mode: "unit" | "weight";
+  unit_name: string;
+  content_unit: string;
+  units_per_package: number;
+  wholesale_price_per_unit: number;
+  wholesale_price_per_piece: number;
+  retail_price: number;
+  wholesale_retail_price: number;
+  bulk_price: number;
+  cost_per_unit: number;
+  cost_per_piece: number;
+  bulk_profit_percent: number;
+  retail_profit_percent: number;
+  category_id: string | null;
+  category_name: string;
+  quantity: number;
+  min_quantity: number;
+  image_id: string | null;
+  catalog_image_path: string | null;
+  loyalty_points: number;
+  version: number;
+  created_by: string | null;
+  updated_by: string | null;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+};
+
+type Table<Row, Insert = Partial<Row>, Update = Partial<Row>> = {
+  Row: Row;
+  Insert: Insert;
+  Update: Update;
+  Relationships: [];
+};
+
+export type Database = {
+  __InternalSupabase: { PostgrestVersion: "14.0.0" };
+  public: {
+    Tables: {
+      shops: Table<{ id: string; name: string; timezone: string; currency: string; created_at: string; updated_at: string }>;
+      profiles: Table<{ user_id: string; display_name: string | null; phone: string | null; created_at: string; updated_at: string }>;
+      shop_memberships: Table<{ user_id: string; shop_id: string; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; approved_by: string | null; created_at: string; updated_at: string }>;
+      expenses: Table<{ id: string; shop_id: string; description: string; category: string; amount: number; occurred_at: string; expense_type: "daily" | "monthly"; notes: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      bank_checks: Table<{ id: string; shop_id: string; check_number: string; amount: number; issue_date: string; due_date: string; bank_name: string; account_holder: string; status: "pending" | "cleared" | "cancelled" | "returned"; direction: "outgoing" | "incoming"; notes: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      deferred_check_records: Table<{ id: string; shop_id: string; customer_name: string; employee_name: string; products_list: string; invoice_number: string; total_amount: number; paid_amount: number; remaining_amount: number; created_by: string | null; created_at: string; deleted_at: string | null }>;
+      product_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string }>;
+      products: Table<ProductRow>;
+      product_images: Table<{ id: string; shop_id: string; product_id: string; storage_path: string; content_type: string; size_bytes: number; created_by: string | null; created_at: string }>;
+      invoices: Table<{ id: string; shop_id: string; invoice_number: string; idempotency_key: string; status: string; sale_type: string; payment_method: string; customer_name: string; customer_phone: string; subtotal: number; discount_type: string; discount_value: number; discount_amount: number; total: number; loyalty_points_awarded: number; created_by: string | null; created_at: string }>;
+      invoice_items: Table<{ id: string; invoice_id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; product_code_snapshot: string | null; selected_unit_snapshot: string; sale_mode_snapshot: "unit" | "weight"; quantity: number; stock_quantity_delta: number; unit_price_snapshot: number; unit_cost_snapshot: number; line_total: number; created_at: string }>;
+      stock_movements: Table<{ id: string; shop_id: string; product_id: string; invoice_id: string | null; kind: string; quantity_delta: number; reason: string; created_by: string | null; created_at: string }>;
+      audit_events: Table<{ id: number; shop_id: string; actor_id: string | null; action: string; entity_type: string; entity_id: string | null; changed_fields: string[]; details: Json; created_at: string }>;
+      shop_change_events: Table<{ id: number; shop_id: string; entity_type: string; entity_id: string; operation: "INSERT" | "UPDATE" | "DELETE"; version: number | null; created_at: string }>;
+      shortage_items: Table<{ id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; current_quantity: number; min_quantity: number; shortage: number; unit: string; reported_at: string; status: "pending" | "ordered" | "received"; notes: string; category: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      shortage_categories: Table<{ id: string; shop_id: string; name: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      shortage_manual_products: Table<{ id: string; shop_id: string; category_name: string; name: string; unit: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      recipes: Table<{ id: string; shop_id: string; name: string; description: string; cost_price: number; retail_price: number; category: string; version: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      recipe_ingredients: Table<{ id: string; recipe_id: string; shop_id: string; product_id: string | null; unit: string; quantity: number; cost: number; created_at: string; updated_at: string }>;
+	      loyalty_customers: Table<{ id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number; total_points_earned: number; total_spent: number; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      loyalty_rewards: Table<{ id: string; shop_id: string; gift_name: string; points_required: number; gift_cost: number; description: string; is_active: boolean; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      loyalty_redemptions: Table<{ id: string; shop_id: string; customer_id: string; reward_id: string; points_deducted: number; gift_cost: number; delivered_at: string; delivered_by: string | null; notes: string; created_at: string }>;
+	      catalog_orders: Table<{ id: string; shop_id: string; customer_name: string; customer_phone: string; items: Json; total_amount: number; status: "pending" | "confirmed" | "delivered" | "cancelled"; created_at: string; updated_at: string }>;
+    };
+    Views: {
+      seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
+	      manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
+	      loyalty_customer_balances: { Row: { id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number }; Relationships: [] };
+    };
+    Functions: {
+      search_products_by_barcode: { Args: { p_shop_id: string; p_barcode: string }; Returns: Json };
+      list_products_page: { Args: { p_shop_id: string; p_after_created_at?: string | null; p_after_id?: string | null; p_search?: string | null; p_category_id?: string | null; p_limit?: number }; Returns: Json };
+      create_product: { Args: { p_shop_id: string; p_payload: Json }; Returns: ProductRow };
+      update_product: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_payload: Json }; Returns: ProductRow };
+      soft_delete_products: { Args: { p_shop_id: string; p_product_ids: string[] }; Returns: number };
+      register_product_image: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
+      create_invoice_with_stock: { Args: { p_shop_id: string; p_idempotency_key: string; p_items: Json; p_sale_type?: string; p_payment_method?: string; p_customer_name?: string; p_customer_phone?: string; p_discount_type?: string; p_discount_value?: number }; Returns: Json };
+      create_invoice_intent: { Args: { p_shop_id: string; p_idempotency_key: string; p_payload: Json }; Returns: Json };
+      get_recoverable_invoice_intent: { Args: { p_shop_id: string }; Returns: Json };
+      complete_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      acknowledge_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      cancel_pending_invoice_intent: { Args: { p_shop_id: string; p_intent_id: string }; Returns: Json };
+      void_invoice: { Args: { p_shop_id: string; p_invoice_id: string }; Returns: Json };
+      save_expense: { Args: { p_shop_id: string; p_expense_id?: string | null; p_expected_version?: number | null; p_payload: Json }; Returns: Database["public"]["Tables"]["expenses"]["Row"] };
+      delete_expense: { Args: { p_shop_id: string; p_expense_id: string; p_expected_version: number }; Returns: number };
+      get_expense_summary: { Args: { p_shop_id: string }; Returns: Json };
+      save_bank_check: { Args: { p_shop_id: string; p_check_id?: string | null; p_expected_version?: number | null; p_payload: Json }; Returns: Database["public"]["Tables"]["bank_checks"]["Row"] };
+      delete_bank_check: { Args: { p_shop_id: string; p_check_id: string; p_expected_version: number }; Returns: number };
+      create_deferred_check_record: { Args: { p_shop_id: string; p_payload: Json }; Returns: Database["public"]["Tables"]["deferred_check_records"]["Row"] };
+      delete_deferred_check_record: { Args: { p_shop_id: string; p_record_id: string }; Returns: boolean };
+      list_shop_members: { Args: { p_shop_id: string }; Returns: Array<{ user_id: string; email: string; display_name: string | null; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; created_at: string; updated_at: string; last_sign_in_at: string | null }> };
+      set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
+      replace_shortage_manual_products: { Args: { p_shop_id: string; p_category: string; p_names: string[] }; Returns: Database["public"]["Tables"]["shortage_manual_products"]["Row"][] };
+    };
+    Enums: {
+      shop_role: "manager" | "admin" | "supervisor" | "seller";
+      membership_status: "pending" | "active" | "suspended";
+      product_sale_mode: "unit" | "weight";
+      invoice_status: "completed" | "voided" | "partially_returned" | "returned";
+      stock_movement_kind: "sale" | "return" | "adjustment" | "receive" | "waste" | "transfer";
+    };
+    CompositeTypes: Record<string, never>;
+  };
+};

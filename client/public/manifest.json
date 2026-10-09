@@ -1,0 +1,28 @@
+{
+  "name": "أبو رغوة - إدارة المحل",
+  "short_name": "أبو رغوة",
+  "description": "إدارة المحل والمخزن والمبيعات",
+  "lang": "ar",
+  "dir": "rtl",
+  "id": "/abu-raghwa",
+  "start_url": "/auth",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "theme_color": "#ea580c",
+  "background_color": "#fff7ed",
+  "icons": [
+    {
+      "src": "/abu-raghwa-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/abu-raghwa-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
