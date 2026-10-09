@@ -20,6 +20,7 @@ export type SalesInventoryItem = {
 export type SalesInventorySale = {
   id: string;
   date: string;
+  paymentMethod?: string;
   items?: SalesInventoryItem[];
   total?: number;
   customerName?: string;

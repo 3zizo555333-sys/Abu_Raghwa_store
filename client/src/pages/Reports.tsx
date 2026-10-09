@@ -2,7 +2,6 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { trpc } from "@/lib/trpc";
 import { ArrowLeft, Download, Trash2 } from "lucide-react";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
 import { toast } from "sonner";
@@ -11,21 +10,7 @@ import html2canvas from "html2canvas";
 import jsPDF from "jspdf";
 import { buildLoyaltyRanking } from "@/lib/loyaltyReport";
 import { buildCustomerProfitabilityReport, type CustomerProfitabilityRow } from "@/lib/customerProfitability";
-
-interface Sale {
-  id: string;
-  date: string;
-  items: any[];
-  total: number;
-  paymentMethod: string;
-}
-
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  quantity: number;
-}
+import { loadCloudReportData, type CloudReportData } from "@/lib/supabase/reports";
 
 interface ReportData {
   totalSales: number;
@@ -58,11 +43,8 @@ function RemoveReportItemButton({ label, onRemove }: { label: string; onRemove: 
 function ReportsContent() {
   const [, navigate] = useLocation();
   const [hiddenReportItems, setHiddenReportItems] = useState<HiddenReportItem[]>(loadHiddenReportItems);
-  const [catalogSessionReady, setCatalogSessionReady] = useState(false);
   const [selectedCustomerCode, setSelectedCustomerCode] = useState("");
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { sessionStorage.setItem("abu_catalog_admin_token", result.token); setCatalogSessionReady(true); } });
-  const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
-  const catalogOrdersQuery = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
+  const [reportLoading, setReportLoading] = useState(true);
 
   const [reportData, setReportData] = useState<ReportData>({
     totalSales: 0,
@@ -85,23 +67,22 @@ function ReportsContent() {
   }, [hiddenReportItems]);
 
   useEffect(() => {
-    if (!sessionStorage.getItem("abu_catalog_admin_token") && !catalogLogin.isPending) {
-      catalogLogin.mutate();
-    } else if (sessionStorage.getItem("abu_catalog_admin_token")) {
-      setCatalogSessionReady(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [catalogLogin.isPending]);
+    let cancelled = false;
+    setReportLoading(true);
+    loadCloudReportData().then(data => {
+      if (!cancelled) generateReport(data);
+    }).catch(error => {
+      if (!cancelled) toast.error(error instanceof Error ? error.message : "تعذر تحميل بيانات التقارير السحابية.");
+    }).finally(() => {
+      if (!cancelled) setReportLoading(false);
+    });
+    return () => { cancelled = true; };
+  }, []);
 
-  useEffect(() => {
-    generateReport(loyaltyCustomersQuery.data || [], catalogOrdersQuery.data || []);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loyaltyCustomersQuery.data, catalogOrdersQuery.data]);
-
-  const generateReport = (loyaltyCustomers: any[] = [], catalogOrders: any[] = []) => {
-    const sales: Sale[] = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
-    const products: Product[] = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
-    const recipes: Product[] = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
+  const generateReport = (cloudData: CloudReportData) => {
+    const sales = cloudData.sales as any[];
+    const products = cloudData.products as any[];
+    const recipes = cloudData.recipes as any[];
 
     // Calculate basic stats
     const totalRevenue = sales.reduce((sum, sale) => sum + sale.total, 0);
@@ -110,7 +91,7 @@ function ReportsContent() {
     // Calculate top products
     const productSales: Record<string, { sold: number; revenue: number }> = {};
     sales.forEach(sale => {
-      sale.items.forEach(item => {
+      sale.items.forEach((item: any) => {
         if (!productSales[item.productName]) {
           productSales[item.productName] = { sold: 0, revenue: 0 };
         }
@@ -125,9 +106,7 @@ function ReportsContent() {
       .slice(0, 5);
 
     const loyaltyProducts = buildLoyaltyRanking(sales, products as any, recipes as any);
-    const rewards = JSON.parse(localStorage.getItem("abu_reward_levels") || "[]");
-    const giftDeliveries = JSON.parse(localStorage.getItem("abu_gift_delivery_logs") || "[]");
-    const customerProfitability = buildCustomerProfitabilityReport({ sales: sales as any, catalogOrders: catalogOrders as any, products: products as any, recipes: recipes as any, customers: loyaltyCustomers as any, rewards: rewards as any, giftDeliveries: giftDeliveries as any });
+    const customerProfitability = buildCustomerProfitabilityReport({ sales: sales as any, catalogOrders: cloudData.catalogOrders as any, products: products as any, recipes: recipes as any, customers: cloudData.customers as any, rewards: cloudData.rewards as any, giftDeliveries: cloudData.giftDeliveries as any });
     if (!selectedCustomerCode && customerProfitability[0]?.customerCode) setSelectedCustomerCode(customerProfitability[0].customerCode);
 
     // Calculate payment methods
@@ -256,6 +235,7 @@ function ReportsContent() {
 
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-4">
+        {reportLoading && <Card className="mb-4 border-0 shadow-sm"><CardContent className="py-4 text-center text-sm text-gray-600">جارٍ تحميل بيانات التقارير من Supabase...</CardContent></Card>}
         {hiddenReportItems.length > 0 && <Card className="mb-4 border-0 border-r-4 border-r-amber-500 shadow-sm">
           <CardHeader className="flex flex-row items-center justify-between gap-3 py-3">
             <div><CardTitle className="text-base">عناصر مخفية من العرض ({hiddenReportItems.length})</CardTitle><CardDescription>الإخفاء لا يحذف أي فاتورة أو مبيعات؛ يمكنك استعادة العناصر متى أردت.</CardDescription></div>

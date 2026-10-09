@@ -10,3 +10,9 @@
 
 
 تم إنجاز دفعتين بنجاح. توقفنا قبل الدفعة الثالثة (صفحة التقارير Reports). المهمة القادمة المطلوبة فوراً هي: الحفاظ على جميع أقسام التقارير والولاء عن طريق تصميم جداول Supabase مقابلة لها وعمل خطة استيراد قبل تحويل الواجهات.
+
+**الدفعة 3:** أضيفت migration `20261009080000_reports_loyalty_catalog.sql` للجداول `recipes`, `recipe_ingredients`, `loyalty_customers`, `loyalty_rewards`, `loyalty_redemptions`, و`catalog_orders`، مع RLS وTriggers وRealtime وview محدود للبائعين `loyalty_customer_balances`. طُبقت migration على مشروع Supabase الحي بعد مراجعتها، وأضيفت الأنواع المطابقة إلى `client/src/lib/supabase/database.types.ts`.
+
+**الدفعة 4 (جزء التقارير):** أصبحت صفحة `Reports` تقرأ الفواتير وبنودها والمنتجات والعملاء والمكافآت والاستردادات وطلبات الكتالوج من Supabase عبر `client/src/lib/supabase/reports.ts` بدلاً من snapshots الأعمال المحلية. أضيفت خطة الاستيراد الآمن إلى `docs/reports-loyalty-import-plan.md`. تفضيل إخفاء عناصر العرض المحلي ليس مصدراً لبيانات الأعمال.
+
+آخر commit للدفعة 3: `f7d3569`. التعديلات الحالية الخاصة بربط التقارير وخطة الاستيراد تحتاج commit جديداً قبل الدمج.
