@@ -28,7 +28,7 @@ export async function loadCloudDashboardStats(): Promise<CloudDashboardStats> {
   const supabase = getSupabaseClient();
   const [salesResult, productsResult, tasksResult, offersResult, recipesResult] = await Promise.all([
     supabase.from("invoices").select("id, total").eq("shop_id", shopId).eq("status", "completed").limit(1000),
-    supabase.from("products").select("*").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
+    supabase.from("products").select("id, quantity, min_quantity, retail_price, wholesale_price_per_unit, cost_per_unit", { count: "exact" }).eq("shop_id", shopId).is("deleted_at", null).limit(50),
     supabase.from("tasks").select("id, status").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("offers").select("id, status").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("recipes").select("id, name, cost_price, retail_price").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
@@ -42,7 +42,7 @@ export async function loadCloudDashboardStats(): Promise<CloudDashboardStats> {
   return {
     totalSales: sales.length,
     totalRevenue: sales.reduce((sum, sale) => sum + numberValue(sale.total), 0),
-    totalProducts: products.length,
+    totalProducts: productsResult.count ?? products.length,
     lowStockItems: products.filter(product => numberValue(product.quantity) < numberValue(product.min_quantity)).length,
     totalEmployees: 0,
     activeTasks: tasks.filter(task => !["done", "cancelled", "completed"].includes(String(task.status))).length,

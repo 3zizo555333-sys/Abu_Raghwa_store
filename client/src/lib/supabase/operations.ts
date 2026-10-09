@@ -92,7 +92,7 @@ export async function saveCatalogManualProduct(input: Omit<Insert<"catalog_manua
 
 export async function listCatalogDisplayData() {
   const [productsPage, taxonomy, pricing, recipes] = await Promise.all([
-    listProductsPage({ limit: 100 }),
+    listProductsPage({ limit: 50 }),
     listCatalogTaxonomy(),
     getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
     (async () => { const id = await shopId(); return requireCloudResult(await getSupabaseClient().from("recipes").select("*").eq("shop_id", id).is("deleted_at", null).limit(1000)); })(),

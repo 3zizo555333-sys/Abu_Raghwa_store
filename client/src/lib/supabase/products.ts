@@ -63,6 +63,9 @@ export type ProductInput = {
   loyaltyPoints?: number;
 };
 
+export type BulkProgress = { completed: number; total: number; batch: number; batches: number };
+export const PRODUCT_BULK_CHUNK_SIZE = 500;
+
 export type ProductCategory = { id: string; name: string };
 
 export type ShopContext = { userId: string; shopId: string; role: "manager" | "admin" | "supervisor" | "seller" };
@@ -220,13 +223,46 @@ export async function updateProduct(input: ProductInput & { id: string; expected
   return mapProductRow(requireCloudResult(result) as unknown as ProductRow, shopId);
 }
 
-export async function deleteProducts(ids: string[]): Promise<number> {
+async function deleteProductsChunk(ids: string[]): Promise<number> {
   assertCloudOnline();
-  if (ids.length === 0 || ids.length > 1000) throw new Error("حدد من 1 إلى 1000 منتج للحذف.");
+  if (ids.length === 0 || ids.length > PRODUCT_BULK_CHUNK_SIZE) throw new Error(`حجم دفعة الحذف يجب ألا يتجاوز ${PRODUCT_BULK_CHUNK_SIZE} منتج.`);
   const supabase = getSupabaseClient();
   const { shopId } = await getActiveShopContext();
   const result = await supabase.rpc("soft_delete_products", { p_shop_id: shopId, p_product_ids: ids });
   return requireCloudResult(result);
+}
+
+export async function deleteProducts(ids: string[], onProgress?: (progress: BulkProgress) => void): Promise<number> {
+  assertCloudOnline();
+  if (!ids.length) return 0;
+  const batches = Math.ceil(ids.length / PRODUCT_BULK_CHUNK_SIZE);
+  let completed = 0;
+  let deleted = 0;
+  for (let index = 0; index < batches; index += 1) {
+    deleted += await deleteProductsChunk(ids.slice(index * PRODUCT_BULK_CHUNK_SIZE, (index + 1) * PRODUCT_BULK_CHUNK_SIZE));
+    completed = Math.min(ids.length, (index + 1) * PRODUCT_BULK_CHUNK_SIZE);
+    onProgress?.({ completed, total: ids.length, batch: index + 1, batches });
+  }
+  return deleted;
+}
+
+export async function createProductsInChunks(inputs: ProductInput[], onProgress?: (progress: BulkProgress) => void): Promise<{ created: CloudProduct[]; failed: number }> {
+  assertCloudOnline();
+  const created: CloudProduct[] = [];
+  let failed = 0;
+  const batches = Math.ceil(inputs.length / PRODUCT_BULK_CHUNK_SIZE);
+  let completed = 0;
+  for (let index = 0; index < batches; index += 1) {
+    const chunk = inputs.slice(index * PRODUCT_BULK_CHUNK_SIZE, (index + 1) * PRODUCT_BULK_CHUNK_SIZE);
+    // Keep the logical server batch at 500 while limiting in-flight RPCs for mobile browsers.
+    for (let offset = 0; offset < chunk.length; offset += 25) {
+      const results = await Promise.allSettled(chunk.slice(offset, offset + 25).map(createProduct));
+      for (const result of results) result.status === "fulfilled" ? created.push(result.value) : failed += 1;
+      completed += results.length;
+      onProgress?.({ completed, total: inputs.length, batch: index + 1, batches });
+    }
+  }
+  return { created, failed };
 }
 
 export async function uploadProductImage(input: { productId: string; expectedVersion: number; blob: Blob; mimeType: "image/jpeg" | "image/png" | "image/webp" }): Promise<{ imageId: string; storagePath: string }> {

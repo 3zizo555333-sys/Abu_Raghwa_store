@@ -20,7 +20,7 @@ import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
-import { createProduct, deleteProducts, listProductCategories, updateProduct, uploadProductImage, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
+import { createProduct, createProductsInChunks, deleteProducts, listProductCategories, updateProduct, uploadProductImage, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
 
 interface Product {
@@ -139,7 +139,7 @@ export default function Products() {
   const { isSeller, canViewSensitiveFinancials } = useStaffAccess();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
-  const productsQuery = useCloudProducts({ search: searchQuery, pageSize: 100 });
+  const productsQuery = useCloudProducts({ search: searchQuery, pageSize: 50 });
   const products = useMemo(() => productsQuery.products.map(mapCloudProduct), [productsQuery.products]);
   const [recipes] = useState<any[]>([]);
   const [customCategories, setCustomCategories] = useState<string[]>([]);
@@ -163,6 +163,7 @@ export default function Products() {
   const [showBulkPaste, setShowBulkPaste] = useState(true);
   const [selectedProductIds, setSelectedProductIds] = useState<string[]>([]);
   const [moveCategory, setMoveCategory] = useState("");
+  const [bulkProgress, setBulkProgress] = useState<BulkProgress | null>(null);
   const bulkPasteRef = useRef<HTMLTextAreaElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [formData, setFormData] = useState(createEmptyProductForm);
@@ -300,11 +301,14 @@ export default function Products() {
     if (!canViewSensitiveFinancials || !selectedProductIds.length) return toast.error("حدد منتجًا واحدًا على الأقل أولًا");
     if (!confirm(`هل أنت متأكد من حذف ${selectedProductIds.length} منتجًا محددًا؟`)) return;
     try {
-      const deleted = await deleteProducts(selectedProductIds);
+      setBulkProgress({ completed: 0, total: selectedProductIds.length, batch: 0, batches: Math.ceil(selectedProductIds.length / PRODUCT_BULK_CHUNK_SIZE) });
+      const deleted = await deleteProducts(selectedProductIds, setBulkProgress);
       await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
       setSelectedProductIds([]);
+      setBulkProgress(null);
       toast.success(`تم حذف ${deleted} منتجًا`);
     } catch (error) {
+      setBulkProgress(null);
       toast.error(`تعذر حذف المنتجات؛ لم يؤكد الخادم الحذف. ${error instanceof Error ? error.message : "تحقق من الاتصال وحاول مجددًا."}`);
     }
   };
@@ -324,25 +328,33 @@ export default function Products() {
     if (!imported.length) return toast.error("لم أجد أسماء منتجات صالحة في النص الملصوق");
     let savedCount = 0;
     try {
-      for (let index = 0; index < imported.length; index++) {
-        const item = imported[index];
+      const inputs: ProductInput[] = imported.map((item, index) => {
         const generatedCode = item.code || `PRD-${Date.now().toString().slice(-4)}-${index + 1}`;
-        await createProduct({
+        return {
           name: item.name, code: generatedCode, barcode: item.code || null, barcodes: item.code ? [item.code] : [],
           unit: "كرتونة", contentUnit: "قطعة", unitsPerPackage: 1, wholesalePricePerUnit: 0, wholesalePricePerPiece: 0,
           retailPrice: 0, wholesaleRetailPrice: 0, bulkPrice: 0, costPerUnit: 0, costPerPiece: 0, categoryId, category: existingCategory,
           quantity: 0, minQuantity: 0, loyaltyPoints: 0,
-        });
-        savedCount++;
-      }
+        };
+      });
+      setBulkProgress({ completed: 0, total: inputs.length, batch: 0, batches: Math.ceil(inputs.length / PRODUCT_BULK_CHUNK_SIZE) });
+      const result = await createProductsInChunks(inputs, progress => { savedCount = progress.completed; setBulkProgress(progress); });
+      savedCount = result.created.length;
       await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      if (result.failed > 0) {
+        setBulkProgress(null);
+        toast.error(`تم حفظ ${savedCount} من ${inputs.length} فقط؛ بقي نص الاستيراد للمراجعة ولم تُخفَ البيانات المدخلة. ${result.failed} صفوف فشلت.`);
+        return;
+      }
       setCustomCategories(current => current.includes(existingCategory) ? current : [...current, existingCategory]);
       setBulkImportText("");
       setBulkCategoryName("");
       setShowBulkPaste(true);
       setShowBulkImport(false);
+      setBulkProgress(null);
       toast.success(`تمت إضافة ${savedCount} منتجًا داخل فئة «${existingCategory}»؛ يمكنك إدخال الأسعار والوحدات يدويًا`);
     } catch (error) {
+      setBulkProgress(null);
       await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
       toast.error(`تم حفظ ${savedCount} من ${imported.length} منتج قبل تعذر متابعة الإضافة. ${error instanceof Error ? error.message : "تحقق من الاتصال ثم راجع القائمة."}`);
     }
@@ -517,7 +529,7 @@ export default function Products() {
     const query = searchQuery.toLowerCase();
     return p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query) || (p.barcode || "").toLowerCase().includes(query) || normalizeBarcodes(p.barcodes || p.code).some(code => code.toLowerCase().includes(query)) || (p.category && p.category.toLowerCase().includes(query));
   }), [categoryProducts, searchQuery]);
-  const visibleProducts = useMemo(() => filteredProducts.slice(0, 120), [filteredProducts]);
+  const visibleProducts = useMemo(() => filteredProducts.slice(0, 50), [filteredProducts]);
   const bulkImportCount = useMemo(() => bulkImportText.split(/\r?\n/).map(row => row.trim()).filter(Boolean).length, [bulkImportText]);
 
   const selectCategory = (category: string) => {
@@ -542,11 +554,21 @@ export default function Products() {
     link: `${window.location.origin}/catalog`,
     imageUrl: product.imageUrl || product.catalogImageUrl,
   });
+  const bulkProgressBanner = bulkProgress && (
+    <Card className="border-blue-200 bg-blue-50 shadow-sm">
+      <CardContent className="space-y-2 p-4">
+        <div className="flex items-center justify-between gap-3 text-sm font-bold text-blue-950"><span>جاري تنفيذ العملية المجمعة — الدفعة {bulkProgress.batch} من {bulkProgress.batches}</span><span>{Math.round((bulkProgress.completed / Math.max(1, bulkProgress.total)) * 100)}%</span></div>
+        <div className="h-3 overflow-hidden rounded-full bg-blue-100" role="progressbar" aria-valuemin={0} aria-valuemax={bulkProgress.total} aria-valuenow={bulkProgress.completed}><div className="h-full rounded-full bg-blue-600 transition-all duration-300" style={{ width: `${Math.round((bulkProgress.completed / Math.max(1, bulkProgress.total)) * 100)}%` }} /></div>
+        <p className="text-xs text-blue-800">تمت معالجة {bulkProgress.completed} من {bulkProgress.total}. لن تتغير القائمة المعروضة حتى يؤكد Supabase نجاح كل دفعة.</p>
+      </CardContent>
+    </Card>
+  );
 
   if (isSeller) {
     return (
       <div className="min-h-screen bg-slate-50 p-4 pb-24" dir="rtl">
         <main className="mx-auto max-w-5xl space-y-5">
+          {bulkProgressBanner}
           {productsQuery.isLoading && <Card><CardContent className="p-4 text-sm text-slate-600">جاري تحميل المنتجات من Supabase...</CardContent></Card>}
           {productsQuery.isError && <Card className="border-red-200"><CardContent className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm text-red-700"><span>تعذر تحميل المنتجات من Supabase: {productsQuery.error instanceof Error ? productsQuery.error.message : "تحقق من الاتصال والجلسة."}</span><Button type="button" variant="outline" onClick={() => void productsQuery.refetch()}>إعادة المحاولة</Button></CardContent></Card>}
           <header className="rounded-3xl bg-white p-5 shadow-sm">
@@ -595,6 +617,7 @@ export default function Products() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24" dir="rtl">
+      <div className="mx-auto max-w-7xl">{bulkProgressBanner}</div>
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm mb-6">
         <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
@@ -743,7 +766,7 @@ export default function Products() {
               <div className="flex flex-1 flex-wrap gap-2">
                 <select value={moveCategory} onChange={event => setMoveCategory(event.target.value)} className="h-10 min-w-48 flex-1 rounded-lg border border-indigo-200 bg-white px-3 text-sm"><option value="">اختر فئة النقل...</option>{availableCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
                 <Button type="button" onClick={moveSelectedProducts} className="bg-indigo-600 text-white hover:bg-indigo-700">نقل المحدد إلى الفئة</Button>
-                <Button type="button" variant="outline" onClick={deleteSelectedProducts} className="border-red-300 text-red-700 hover:bg-red-50">حذف المحدد</Button>
+                <Button type="button" variant="outline" onClick={deleteSelectedProducts} disabled={Boolean(bulkProgress)} className="border-red-300 text-red-700 hover:bg-red-50">حذف المحدد</Button>
                 <Button type="button" variant="ghost" onClick={() => setSelectedProductIds([])}>إلغاء التحديد</Button>
               </div>
             </div>}
@@ -1151,7 +1174,7 @@ export default function Products() {
               <div className="mb-2 text-center text-xs font-bold text-slate-600">سيتم إضافة {bulkImportCount} منتجًا إلى فئة «{bulkCategoryName.trim() || "غير محددة"}»</div>
               <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
                 <Button type="button" variant="outline" onClick={() => setShowBulkImport(false)}>إلغاء</Button>
-                <Button type="button" className="min-h-12 bg-emerald-600 text-base font-black text-white hover:bg-emerald-700" onClick={importProductsInBulk}>إضافة المنتجات الآن وحفظها</Button>
+                <Button type="button" className="min-h-12 bg-emerald-600 text-base font-black text-white hover:bg-emerald-700" disabled={Boolean(bulkProgress)} onClick={importProductsInBulk}>إضافة المنتجات الآن وحفظها</Button>
               </div>
             </div>
           </div>

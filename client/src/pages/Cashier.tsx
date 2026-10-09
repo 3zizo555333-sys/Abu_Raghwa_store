@@ -35,7 +35,7 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
   const scale = useScaleConnection("kg");
 
   const productsQuery = useCloudProducts({ search, pageSize: 50 });
-  const barcodeQuery = useCloudProducts({ barcode: barcodeLookup, pageSize: 100, enabled: Boolean(barcodeLookup) });
+  const barcodeQuery = useCloudProducts({ barcode: barcodeLookup, pageSize: 50, enabled: Boolean(barcodeLookup) });
   const products = productsQuery.products as Product[];
   const barcodeProducts = barcodeQuery.products as Product[];
   const total = cart.reduce((sum, item) => sum + item.total, 0);
