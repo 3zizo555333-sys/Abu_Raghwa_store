@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -108,7 +109,7 @@ function RecipesContent() {
   }, []);
 
   const loadMaterials = () => {
-    const saved = localStorage.getItem("abu_raghwa_raw_materials") || localStorage.getItem("abu_raghwa_materials");
+    const saved = browserState.get("abu_raghwa_raw_materials") || browserState.get("abu_raghwa_materials");
     const mats = saved ? JSON.parse(saved) : [];
     setMaterials(mats);
     return mats;

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,19 +15,19 @@ export default function DataExportImport() {
 
     switch (dataType) {
       case "products":
-        data = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
+        data = JSON.parse(browserState.get("abu_raghwa_products") || "[]");
         filename = `products_${new Date().toISOString().split("T")[0]}.${format}`;
         break;
       case "sales":
-        data = JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]");
+        data = JSON.parse(browserState.get("abu_raghwa_sales") || "[]");
         filename = `sales_${new Date().toISOString().split("T")[0]}.${format}`;
         break;
       case "materials":
-        data = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
+        data = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
         filename = `materials_${new Date().toISOString().split("T")[0]}.${format}`;
         break;
       case "recipes":
-        data = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
+        data = JSON.parse(browserState.get("abu_raghwa_recipes") || "[]");
         filename = `recipes_${new Date().toISOString().split("T")[0]}.${format}`;
         break;
       default:
@@ -98,7 +99,7 @@ export default function DataExportImport() {
         const data = JSON.parse(content);
 
         if (Array.isArray(data)) {
-          localStorage.setItem(`abu_raghwa_${dataType}`, JSON.stringify(data));
+          browserState.set(`abu_raghwa_${dataType}`, JSON.stringify(data));
           alert("تم استيراد البيانات بنجاح!");
           window.location.reload();
         } else {
@@ -113,13 +114,13 @@ export default function DataExportImport() {
 
   const exportAllData = () => {
     const allData = {
-      products: JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]"),
-      sales: JSON.parse(localStorage.getItem("abu_raghwa_sales") || "[]"),
-      materials: JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]"),
-      recipes: JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]"),
-      employees: JSON.parse(localStorage.getItem("abu_raghwa_employees") || "[]"),
-      tasks: JSON.parse(localStorage.getItem("abu_raghwa_tasks") || "[]"),
-      offers: JSON.parse(localStorage.getItem("abu_raghwa_offers") || "[]"),
+      products: JSON.parse(browserState.get("abu_raghwa_products") || "[]"),
+      sales: JSON.parse(browserState.get("abu_raghwa_sales") || "[]"),
+      materials: JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]"),
+      recipes: JSON.parse(browserState.get("abu_raghwa_recipes") || "[]"),
+      employees: JSON.parse(browserState.get("abu_raghwa_employees") || "[]"),
+      tasks: JSON.parse(browserState.get("abu_raghwa_tasks") || "[]"),
+      offers: JSON.parse(browserState.get("abu_raghwa_offers") || "[]"),
       exportDate: new Date().toISOString()
     };
 

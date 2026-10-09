@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import React, { useMemo, useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -186,8 +187,8 @@ export default function SmartOffers() {
   const [rewardPointDrafts, setRewardPointDrafts] = useState<Record<number, string>>({});
   const [newRewardGift, setNewRewardGift] = useState("");
   const [newRewardCost, setNewRewardCost] = useState("");
-  const [catalogSessionReady, setCatalogSessionReady] = useState(() => Boolean(sessionStorage.getItem("abu_catalog_admin_token")));
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { sessionStorage.setItem("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("تعذر مزامنة دفتر نقاط العملاء مع لوحة الإدارة") });
+  const [catalogSessionReady, setCatalogSessionReady] = useState(() => Boolean(browserState.get("abu_catalog_admin_token")));
+  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("تعذر مزامنة دفتر نقاط العملاء مع لوحة الإدارة") });
   const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const redeemLoyaltyReward = trpc.catalog.redeemLoyaltyReward.useMutation();
@@ -230,7 +231,7 @@ export default function SmartOffers() {
   }, [loyaltyCustomersQuery.data]);
 
   useEffect(() => {
-    const savedCustomStrategies = localStorage.getItem("abu_raghwa_custom_strategies");
+    const savedCustomStrategies = browserState.get("abu_raghwa_custom_strategies");
     if (savedCustomStrategies) {
       try {
         const parsed = JSON.parse(savedCustomStrategies);
@@ -238,14 +239,14 @@ export default function SmartOffers() {
       } catch (e) {}
     }
 
-    const savedCustomers = localStorage.getItem("abu_raghwa_customers");
+    const savedCustomers = browserState.get("abu_raghwa_customers");
     if (savedCustomers) {
       try {
         setCustomersList(JSON.parse(savedCustomers));
       } catch (e) {}
     }
 
-    const savedLogs = localStorage.getItem("abu_gift_delivery_logs");
+    const savedLogs = browserState.get("abu_gift_delivery_logs");
     if (savedLogs) {
       try {
         setDeliveryLogs(JSON.parse(savedLogs));
@@ -343,7 +344,7 @@ export default function SmartOffers() {
         ? customersList.map(customer => customer.phone === profile.phone ? profile as CustomerLoyalty : customer)
         : [profile as CustomerLoyalty, ...customersList];
       setCustomersList(updatedCustomers);
-      localStorage.setItem("abu_raghwa_customers", JSON.stringify(updatedCustomers));
+      browserState.set("abu_raghwa_customers", JSON.stringify(updatedCustomers));
       void loyaltyCustomersQuery.refetch();
       const newLog: GiftDeliveryLog = {
         customerCode: profile.customerCode,
@@ -356,7 +357,7 @@ export default function SmartOffers() {
       };
       const updatedLogs = [newLog, ...deliveryLogs];
       setDeliveryLogs(updatedLogs);
-      localStorage.setItem("abu_gift_delivery_logs", JSON.stringify(updatedLogs));
+      browserState.set("abu_gift_delivery_logs", JSON.stringify(updatedLogs));
       toast.success(`🎁 تم تأكيد تسليم الهدية "${rewardItem.giftName}" وتحديث الرصيد الموحد.`);
     } catch {
       toast.error("تعذر تحديث رصيد العميل. افتح إدارة الكتالوج أولًا أو حاول مرة أخرى.");
@@ -407,7 +408,7 @@ export default function SmartOffers() {
     const updatedStrategies = [...strategies, customObj];
     setStrategies(updatedStrategies);
     const customOnly = updatedStrategies.filter(s => s.id.startsWith("custom_"));
-    localStorage.setItem("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
+    browserState.set("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
 
     setNewStrategyName("");
     setNewStrategyDesc("");
@@ -423,7 +424,7 @@ export default function SmartOffers() {
     const updated = strategies.filter(s => s.id !== id);
     setStrategies(updated);
     const customOnly = updated.filter(s => s.id.startsWith("custom_"));
-    localStorage.setItem("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
+    browserState.set("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
     toast.success("🗑️ تم حذف الاستراتيجية بنجاح");
   };
 
@@ -562,9 +563,9 @@ export default function SmartOffers() {
     }
 
     // احتياطياً للتخزين المحلي أيضاً
-    const existingGlobalOffers = JSON.parse(localStorage.getItem("abu_raghwa_global_offers") || "{}");
+    const existingGlobalOffers = JSON.parse(browserState.get("abu_raghwa_global_offers") || "{}");
     existingGlobalOffers[activatedOffer.id] = activatedOffer;
-    localStorage.setItem("abu_raghwa_global_offers", JSON.stringify(existingGlobalOffers));
+    browserState.set("abu_raghwa_global_offers", JSON.stringify(existingGlobalOffers));
 
     // رابط قصير جداً يفتح الكوبون مباشرة
     const shortUrl = `${window.location.origin}/public-offer?id=${activatedOffer.id}`;

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
 import QRCode from "qrcode";
@@ -54,14 +55,14 @@ export default function CatalogManager() {
   const [pickupQrCodeDataUrl, setPickupQrCodeDataUrl] = useState("");
   const [deliveryQrCodeDataUrl, setDeliveryQrCodeDataUrl] = useState("");
   const [catalogSessionReady, setCatalogSessionReady] = useState(false);
-  const [soundEnabled, setSoundEnabled] = useState(() => { try { return localStorage.getItem("abu_catalog_order_sound") === "on"; } catch { return false; } });
+  const [soundEnabled, setSoundEnabled] = useState(() => { try { return browserState.get("abu_catalog_order_sound") === "on"; } catch { return false; } });
   const knownOrderIds = useRef<Set<string> | null>(null);
-  const hasCatalogAccess = Boolean(sessionStorage.getItem("abu_staff_sync_token"));
+  const hasCatalogAccess = Boolean(browserState.get("abu_staff_sync_token"));
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup");
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery");
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { sessionStorage.setItem("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("حسابك غير مخول لمتابعة طلبات الكتالوج") });
+  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("حسابك غير مخول لمتابعة طلبات الكتالوج") });
   const { data: orders = [], isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, refetchInterval: catalogSessionReady ? 10_000 : false, retry: false });
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => refetchOrders() });
   const uploadProductImage = trpc.catalog.uploadProductImage.useMutation();
@@ -79,7 +80,7 @@ export default function CatalogManager() {
       oscillator.start();
       oscillator.stop(context.currentTime + 0.12);
       oscillator.addEventListener("ended", () => void context.close());
-      localStorage.setItem("abu_catalog_order_sound", "on");
+      browserState.set("abu_catalog_order_sound", "on");
       setSoundEnabled(true);
       if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
       toast.success("تم تفعيل رنة طلبات الكتالوج على هذا الهاتف");

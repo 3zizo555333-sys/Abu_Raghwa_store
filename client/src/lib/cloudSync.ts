@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { trpc } from './trpc';
 import { toast } from 'sonner';
@@ -31,7 +32,7 @@ const getStableCloudItemId = (item: unknown) => {
 const saveCloudValue = (save: (input: { key: string; dataJson: string }) => void, key: string, dataJson: string) => {
   const now = Date.now();
   const previous = recentCloudSaves.get(key);
-  // Several mounted pages can observe the same localStorage update. Coalesce
+  // Several mounted pages can observe the same browserState update. Coalesce
   // identical writes for a short window instead of batching thousands of
   // duplicate sync.set calls into one browser request.
   if (previous?.dataJson === dataJson && now - previous.savedAt < 2_000) return;
@@ -40,7 +41,7 @@ const saveCloudValue = (save: (input: { key: string; dataJson: string }) => void
 };
 const readCachedLocalValue = <T,>(key: string, fallback: T): T => {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = browserState.get(key);
     if (!raw) return fallback;
     const cached = parsedStorageCache.get(key);
     if (cached?.raw === raw) return cached.value as T;
@@ -66,7 +67,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
   const isInitialMount = useRef(true);
   const hasSeededEmptyCloudValue = useRef(false);
   const pendingSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const syncEnabled = !isRowBackedKey && (PUBLIC_SYNC_KEYS.has(key) || Boolean(sessionStorage.getItem('abu_staff_sync_token')));
+  const syncEnabled = !isRowBackedKey && (PUBLIC_SYNC_KEYS.has(key) || Boolean(browserState.get('abu_staff_sync_token')));
   const isLargeCollection = key === LARGE_COLLECTION_KEY && !isRowBackedKey;
   const utils = trpc.useUtils();
 
@@ -229,7 +230,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
           const newStr = JSON.stringify(nextParsed);
           if (prevStr !== newStr) {
             parsedStorageCache.set(key, { raw: newStr, value: nextParsed });
-            window.setTimeout(() => localStorage.setItem(key, newStr), 0);
+            window.setTimeout(() => browserState.set(key, newStr), 0);
             if (typeof window !== "undefined") {
               window.dispatchEvent(new CustomEvent("abu-raghwa-cloud-update", { detail: { key } }));
             }
@@ -251,7 +252,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
       setData(prev => Array.isArray(prev) && Array.isArray(detail.data) && prev.length > 0 && detail.data.length === 0 ? prev : detail.data as T);
       const json = JSON.stringify(detail.data);
       parsedStorageCache.set(key, { raw: json, value: detail.data });
-      window.setTimeout(() => localStorage.setItem(key, json), 0);
+      window.setTimeout(() => browserState.set(key, json), 0);
     };
     window.addEventListener("abu-raghwa-cloud-update", handleLocalCloudUpdate);
     return () => window.removeEventListener("abu-raghwa-cloud-update", handleLocalCloudUpdate);
@@ -261,7 +262,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
   // أن يؤكد الخادم فعلاً عدم وجود بيانات لهذا المفتاح، حتى لا نطغى على بيانات جهاز آخر.
   useEffect(() => {
     if (isRowBackedKey || options?.skipInitialSeed || cloudError || serverData !== null || hasSeededEmptyCloudValue.current) return;
-    const localRaw = localStorage.getItem(key);
+    const localRaw = browserState.get(key);
     if (!localRaw || localRaw === "[]" || localRaw === "{}" || localRaw === "null") return;
 
     hasSeededEmptyCloudValue.current = true;
@@ -283,7 +284,7 @@ export function useCloudState<T>(key: string, initialValue: T, options?: { skipI
       pendingSaveTimer.current = setTimeout(() => {
         const jsonStr = JSON.stringify(nextValue);
         parsedStorageCache.set(key, { raw: jsonStr, value: nextValue });
-        localStorage.setItem(key, jsonStr);
+        browserState.set(key, jsonStr);
         // لا نرفع أي تعديل قبل أن يجيب الخادم؛ هذا يمنع جهازًا جديدًا أو تحديثًا
         // من استبدال سجل سحابي موجود بقيمة محلية فارغة أثناء الإقلاع.
         if (!cloudError && serverData !== undefined && (!isLargeCollection || serverData !== null)) {

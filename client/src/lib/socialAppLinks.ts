@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 export type SocialApp = "whatsapp" | "facebook" | "instagram";
 
 const waitForAppOrFallback = (appUrl: string, fallbackUrl: string) => {
@@ -38,7 +39,7 @@ export const openSocialApp = (app: SocialApp, value: string, message = "السل
 
 export const getSavedSocialLinks = () => {
   try {
-    const saved = JSON.parse(localStorage.getItem("abu_raghwa_settings") || "{}");
+    const saved = JSON.parse(browserState.get("abu_raghwa_settings") || "{}");
     return {
       whatsapp: saved.whatsappNumber || "201069035599",
       facebook: saved.facebookPage || "https://www.facebook.com/aburagwa",

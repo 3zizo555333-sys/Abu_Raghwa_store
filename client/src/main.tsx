@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { trpc } from "@/lib/trpc";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -23,8 +24,8 @@ try {
     "manus-runtime-user-info",
     "abu_raghwa_security_settings",
   ]) {
-    localStorage.removeItem(key);
-    sessionStorage.removeItem(key);
+    browserState.remove(key);
+    browserState.remove(key);
   }
 } catch {
   // Storage may be unavailable in a restricted browser; the app never reads

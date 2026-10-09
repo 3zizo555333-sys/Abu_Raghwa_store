@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -26,7 +27,7 @@ interface ReportData {
 const HIDDEN_REPORT_ITEMS_KEY = "abu_raghwa_hidden_report_items";
 const loadHiddenReportItems = () => {
   try {
-    return parseHiddenReportItems(localStorage.getItem(HIDDEN_REPORT_ITEMS_KEY));
+    return parseHiddenReportItems(browserState.get(HIDDEN_REPORT_ITEMS_KEY));
   } catch {
     return [];
   }
@@ -59,7 +60,7 @@ function ReportsContent() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(HIDDEN_REPORT_ITEMS_KEY, JSON.stringify(hiddenReportItems));
+      browserState.set(HIDDEN_REPORT_ITEMS_KEY, JSON.stringify(hiddenReportItems));
     } catch (error) {
       console.error("Failed to save hidden report display items locally:", error);
       toast.error("تعذر حفظ إعدادات عرض التقارير على هذا الجهاز.");

@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -49,14 +50,14 @@ function RawMaterialsContent() {
   }, []);
 
   const loadMaterials = () => {
-    const saved = localStorage.getItem("abu_raghwa_raw_materials");
+    const saved = browserState.get("abu_raghwa_raw_materials");
     if (saved) {
       setMaterials(JSON.parse(saved));
     }
   };
 
   const saveMaterials = (updated: RawMaterial[]) => {
-    localStorage.setItem("abu_raghwa_raw_materials", JSON.stringify(updated));
+    browserState.set("abu_raghwa_raw_materials", JSON.stringify(updated));
     setMaterials(updated);
   };
 

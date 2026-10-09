@@ -1,3 +1,4 @@
+import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -42,12 +43,12 @@ export default function RecipeProduction() {
   }, []);
 
   const loadRecipes = () => {
-    const recipesData = JSON.parse(localStorage.getItem("abu_raghwa_recipes") || "[]");
+    const recipesData = JSON.parse(browserState.get("abu_raghwa_recipes") || "[]");
     setRecipes(recipesData);
   };
 
   const loadProductions = () => {
-    const productionsData = JSON.parse(localStorage.getItem("abu_raghwa_productions") || "[]");
+    const productionsData = JSON.parse(browserState.get("abu_raghwa_productions") || "[]");
     setProductions(productionsData);
   };
 
@@ -58,7 +59,7 @@ export default function RecipeProduction() {
     }
 
     // تحديث المخزون
-    const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
+    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
     
     selectedRecipe.ingredients.forEach((ingredient) => {
       const material = materials.find((m: any) => m.id === ingredient.rawId);
@@ -67,10 +68,10 @@ export default function RecipeProduction() {
       }
     });
 
-    localStorage.setItem("abu_raghwa_raw_materials", JSON.stringify(materials));
+    browserState.set("abu_raghwa_raw_materials", JSON.stringify(materials));
 
     // إضافة منتج جديد أو تحديث الكمية
-    const products = JSON.parse(localStorage.getItem("abu_raghwa_products") || "[]");
+    const products = JSON.parse(browserState.get("abu_raghwa_products") || "[]");
     const existingProduct = products.find((p: any) => p.name === selectedRecipe.name);
 
     if (existingProduct) {
@@ -87,7 +88,7 @@ export default function RecipeProduction() {
       });
     }
 
-    localStorage.setItem("abu_raghwa_products", JSON.stringify(products));
+    browserState.set("abu_raghwa_products", JSON.stringify(products));
 
     // تسجيل الإنتاج
     const newProduction: Production = {
@@ -100,7 +101,7 @@ export default function RecipeProduction() {
     };
 
     const updatedProductions = [...productions, newProduction];
-    localStorage.setItem("abu_raghwa_productions", JSON.stringify(updatedProductions));
+    browserState.set("abu_raghwa_productions", JSON.stringify(updatedProductions));
     setProductions(updatedProductions);
 
     alert("تم الإنتاج بنجاح! تم تحديث المخزون تلقائياً");
@@ -110,7 +111,7 @@ export default function RecipeProduction() {
   };
 
   const canProduce = (recipe: Recipe): boolean => {
-    const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
+    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
     
     return recipe.ingredients.every((ingredient) => {
       const material = materials.find((m: any) => m.id === ingredient.rawId);
@@ -119,7 +120,7 @@ export default function RecipeProduction() {
   };
 
   const getMissingMaterials = (recipe: Recipe): Array<{name: string; needed: number; available: number; unit: string}> => {
-    const materials = JSON.parse(localStorage.getItem("abu_raghwa_raw_materials") || "[]");
+    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
     const missing: Array<{name: string; needed: number; available: number; unit: string}> = [];
 
     recipe.ingredients.forEach((ingredient) => {
