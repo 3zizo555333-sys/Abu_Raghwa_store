@@ -38,6 +38,9 @@ interface Product {
   retailPrice: number;
   wholesaleRetailPrice?: number;
   bulkPrice: number;
+  retailLoyaltyPoints: number;
+  subWholesaleLoyaltyPoints: number;
+  wholesaleLoyaltyPoints: number;
   bulkProfitPercent: number;
   retailProfitPercent?: number;
   wholesalePrice?: number;
@@ -74,6 +77,9 @@ const mapCloudProduct = (product: CloudProduct): Product => ({
   retailPrice: product.retailPrice,
   wholesaleRetailPrice: product.wholesaleRetailPrice,
   bulkPrice: product.bulkPrice,
+  retailLoyaltyPoints: product.retailLoyaltyPoints,
+  subWholesaleLoyaltyPoints: product.subWholesaleLoyaltyPoints,
+  wholesaleLoyaltyPoints: product.wholesaleLoyaltyPoints,
   bulkProfitPercent: product.bulkProfitPercent ?? 0,
   retailProfitPercent: product.retailProfitPercent ?? 0,
   wholesalePrice: product.wholesalePricePerUnit ?? 0,
@@ -114,6 +120,9 @@ const toProductInput = (product: Product, category = product.category, categoryI
   quantity: product.availableQuantity ?? product.quantity ?? 0,
   minQuantity: product.minQuantity || 0,
   loyaltyPoints: product.loyaltyPoints || 0,
+  retailLoyaltyPoints: product.retailLoyaltyPoints || product.loyaltyPoints || 0,
+  subWholesaleLoyaltyPoints: product.subWholesaleLoyaltyPoints || product.loyaltyPoints || 0,
+  wholesaleLoyaltyPoints: product.wholesaleLoyaltyPoints || product.loyaltyPoints || 0,
 });
 const createEmptyProductForm = () => ({
   code: "",
@@ -131,6 +140,9 @@ const createEmptyProductForm = () => ({
   contentUnit: "قطعة",
   availableQuantity: "",
   loyaltyPoints: "",
+  retailLoyaltyPoints: "",
+  subWholesaleLoyaltyPoints: "",
+  wholesaleLoyaltyPoints: "",
   imageUrl: "",
 });
 
@@ -431,6 +443,9 @@ export default function Products() {
     const retailPrice = Number(formData.retailPrice) || 0;
     const wholesaleRetailPrice = Number(formData.wholesaleRetailPrice) || retailPrice;
     const bulkPrice = Number(formData.bulkPrice) || 0;
+    const retailLoyaltyPoints = normalizeLoyaltyPoints(formData.retailLoyaltyPoints);
+    const subWholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.subWholesaleLoyaltyPoints);
+    const wholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.wholesaleLoyaltyPoints);
     const category = formData.category.trim() || "منظفات عامة";
     const categoryId = categoryRecords.find(item => item.name === category)?.id ?? null;
     const code = formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
@@ -440,10 +455,11 @@ export default function Products() {
       saleMode: formData.saleMode, barcodes: collectProductBarcodes(formData.code, formData.barcodes),
       unit: formData.unit, unitsPerPackage: unitsPerPkg, wholesalePricePerUnit: wholesalePrice,
       wholesalePricePerPiece: pieceCost, retailPrice, wholesaleRetailPrice, bulkPrice,
+      retailLoyaltyPoints, subWholesaleLoyaltyPoints, wholesaleLoyaltyPoints,
       bulkProfitPercent: calculateBulkProfit(bulkPrice, pieceCost),
       retailProfitPercent: calculateRetailProfitPercent(wholesaleRetailPrice, pieceCost),
       costPerUnit: wholesalePrice, costPerPiece: pieceCost, categoryId, category,
-      contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: normalizeLoyaltyPoints(formData.loyaltyPoints),
+      contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: retailLoyaltyPoints || normalizeLoyaltyPoints(formData.loyaltyPoints),
       quantity: Math.max(0, Number(formData.availableQuantity) || 0), minQuantity: 0,
     };
 
@@ -491,6 +507,9 @@ export default function Products() {
       contentUnit: product.contentUnit || "قطعة",
       availableQuantity: product.availableQuantity?.toString() || "0",
       loyaltyPoints: product.loyaltyPoints?.toString() || "",
+      retailLoyaltyPoints: product.retailLoyaltyPoints?.toString() || product.loyaltyPoints?.toString() || "",
+      subWholesaleLoyaltyPoints: product.subWholesaleLoyaltyPoints?.toString() || product.loyaltyPoints?.toString() || "",
+      wholesaleLoyaltyPoints: product.wholesaleLoyaltyPoints?.toString() || product.loyaltyPoints?.toString() || "",
       imageUrl: product.imageUrl || product.catalogImageUrl || ""
     });
     setEditingId(product.id);
@@ -599,8 +618,8 @@ export default function Products() {
                 <Card key={product.id} className="border-0 shadow-sm">
                   <CardHeader className="pb-3"><div className="flex items-center gap-3">{product.imageUrl || product.catalogImageUrl ? <img src={product.imageUrl || product.catalogImageUrl} alt={product.name} className="h-14 w-14 rounded-2xl border object-cover" /> : <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-slate-100 text-slate-400"><Package className="h-6 w-6" /></div>}<div><CardTitle className="text-lg text-slate-900">{product.name}</CardTitle><p className="text-xs text-slate-500">{product.category || "بدون فئة"} · {getPackageDescription(product)}</p></div></div></CardHeader>
                   <CardContent className="grid grid-cols-1 gap-2 text-sm">
-                    <div className="rounded-xl bg-blue-50 p-3"><p className="text-xs text-slate-500">سعر التجزئة</p><p className="mt-1 font-black text-blue-700">{product.retailPrice || 0} ج.م</p></div>
-                    <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-slate-500">سعر القطاعي</p><p className="mt-1 font-black text-emerald-700">{getSectorSalePrice(product)} ج.م</p></div>
+                    <div className="rounded-xl bg-blue-50 p-3"><p className="text-xs text-slate-500">سعر القطاعي</p><p className="mt-1 font-black text-blue-700">{product.retailPrice || 0} ج.م</p></div>
+                    <div className="rounded-xl bg-emerald-50 p-3"><p className="text-xs text-slate-500">سعر التجزئة</p><p className="mt-1 font-black text-emerald-700">{getSectorSalePrice(product)} ج.م</p></div>
                     {Number(product.bulkPrice) > 0 && <div className="rounded-xl bg-violet-50 p-3"><p className="text-xs text-slate-500">سعر البيع بالجملة</p><p className="mt-1 font-black text-violet-700">{product.bulkPrice} ج.م</p></div>}
                     <MarketingShareButton post={toMarketingPost(product)} compact />
                   </CardContent>
@@ -800,8 +819,8 @@ export default function Products() {
                         <span className="rounded-full bg-green-100 px-2 py-1 text-xs font-bold text-green-800 h-fit">ربح {profit}%</span>
                       </div>
                       <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
-                        <div className="rounded-lg bg-blue-50 p-2"><p className="text-xs text-gray-500">سعر التجزئة</p><p className="font-bold text-blue-700">{p.retailPrice || 0} ج.م</p></div>
-                        <div className="rounded-lg bg-green-50 p-2"><p className="text-xs text-gray-500">سعر القطاعي</p><p className="font-bold text-green-700">{sectorPrice} ج.م</p></div>
+                        <div className="rounded-lg bg-blue-50 p-2"><p className="text-xs text-gray-500">سعر القطاعي</p><p className="font-bold text-blue-700">{p.retailPrice || 0} ج.م</p></div>
+                        <div className="rounded-lg bg-green-50 p-2"><p className="text-xs text-gray-500">سعر التجزئة</p><p className="font-bold text-green-700">{sectorPrice} ج.م</p></div>
                         <div className="rounded-lg bg-indigo-50 p-2"><p className="text-xs text-gray-500">المخزون</p><p className="font-bold text-indigo-700">{p.availableQuantity || 0} {p.unit || "عبوة"}</p></div>
                         <div className="rounded-lg bg-amber-50 p-2"><p className="text-xs text-gray-500">قيمة المخزون</p><p className="font-bold text-amber-700">{stockCost.toLocaleString("ar-EG")} ج.م</p></div>
                       </div>
@@ -826,8 +845,8 @@ export default function Products() {
                       <th className="p-3">صورة واسم المنتج</th>
                       <th className="p-3">الفئة والعبوة</th>
                       <th className="p-3">تكلفة المحتوى</th>
-                      <th className="p-3">سعر التجزئة</th>
                       <th className="p-3">سعر القطاعي</th>
+                      <th className="p-3">سعر التجزئة</th>
                       <th className="p-3">نسبة الربح القطاعي</th>
                       <th className="p-3">تكلفة العبوة</th>
                       <th className="p-3">المخزون / القيمة</th>
@@ -1018,7 +1037,7 @@ export default function Products() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-gray-700 mb-1 block">سعر البيع بالتجزئة لكل {formData.contentUnit || "وحدة"} (ج.م)</label>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">سعر البيع القطاعي لكل {formData.contentUnit || "وحدة"} (ج.م)</label>
                   <Input
                     type="number"
                     step="0.01"
@@ -1028,7 +1047,7 @@ export default function Products() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-gray-700 mb-1 block">سعر البيع القطاعي لكل {formData.contentUnit || "وحدة"} (ج.م)</label>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">سعر البيع بالتجزئة لكل {formData.contentUnit || "وحدة"} (ج.م)</label>
                   <Input
                     type="number"
                     step="0.01"
@@ -1048,16 +1067,17 @@ export default function Products() {
                   />
                 </div>
                 <div>
-                  <label className="text-xs font-bold text-gray-700 mb-1 block">نقاط الولاء لكل {formData.contentUnit || "وحدة"} (اختياري)</label>
-                  <Input
-                    type="number"
-                    min="0"
-                    step="1"
-                    value={formData.loyaltyPoints}
-                    onChange={(e) => setFormData({ ...formData, loyaltyPoints: e.target.value })}
-                    placeholder="اتركها فارغة أو اكتب 0 إذا لم توجد نقاط"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-500">تُضاف تلقائيًا عند بيع الوحدة، ولا توجد أي إجبارية لإدخالها.</p>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">نقاط القطاعي لكل {formData.contentUnit || "وحدة"}</label>
+                  <Input type="number" min="0" step="0.01" value={formData.retailLoyaltyPoints} onChange={(e) => setFormData({ ...formData, retailLoyaltyPoints: e.target.value })} placeholder="مثال: 1" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">نقاط التجزئة لكل {formData.contentUnit || "وحدة"}</label>
+                  <Input type="number" min="0" step="0.01" value={formData.subWholesaleLoyaltyPoints} onChange={(e) => setFormData({ ...formData, subWholesaleLoyaltyPoints: e.target.value })} placeholder="مثال: 0.75" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">نقاط الجملة لكل {formData.contentUnit || "وحدة"}</label>
+                  <Input type="number" min="0" step="0.01" value={formData.wholesaleLoyaltyPoints} onChange={(e) => setFormData({ ...formData, wholesaleLoyaltyPoints: e.target.value })} placeholder="مثال: 0.5" />
+                  <p className="mt-1 text-[11px] text-slate-500">يحتفظ النظام بالقيمة القديمة تلقائيًا عند عدم إدخال قيم جديدة.</p>
                 </div>
                 <div>
                   <label className="text-xs font-bold text-gray-700 mb-1 block">عدد {formData.unit || "العبوات"} المتاحة بالمخزون</label>
@@ -1206,7 +1226,7 @@ export default function Products() {
                 <p className="font-black text-blue-700">{getRetailCostPrice(viewingProduct).toFixed(2)} ج.م</p>
               </div>
               <div className="rounded-xl bg-green-50 p-3">
-                <p className="text-xs text-gray-500">سعر البيع بالتجزئة</p>
+                <p className="text-xs text-gray-500">سعر البيع القطاعي</p>
                 <p className="font-black text-green-700">{viewingProduct.retailPrice || 0} ج.م</p>
               </div>
               <div className="rounded-xl bg-indigo-50 p-3">
