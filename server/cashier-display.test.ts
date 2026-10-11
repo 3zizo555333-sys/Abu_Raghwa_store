@@ -63,13 +63,60 @@ describe("PLU والكاشير وشاشة العملاء", () => {
 
   it("يجعل أصناف الصب بلا باركود الوضع الافتراضي ويعزل فئاتها عن وضع الدليل الكامل", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const catalog = readFileSync(resolve(root, "client/src/lib/posCatalog.ts"), "utf8");
     expect(cashier).toContain('useState<PosMode>("unbarcoded")');
-    expect(cashier).toContain('products.filter(isUnbarcodedProduct)');
+    expect(cashier).toContain('derivePosCatalog(products, productCategories, posMode');
+    expect(cashier).toContain('derivePosCatalog(products, productCategories, "unbarcoded"');
+    expect(catalog).toContain('products.filter(isUnbarcodedProduct)');
     expect(cashier).toContain('aria-label="نمط البيع السريع"');
     expect(cashier).toContain("أصناف الصب");
     expect(cashier).toContain("جميع المنتجات");
-    expect(cashier).toContain('posMode === "unbarcoded" ? [] : productCategories.map');
+    expect(cashier).toContain('onClick={() => { setPosMode("unbarcoded"); setActivePosCategory("__all__"); }}');
     expect(cashier).toContain('onClick={() => { setPosMode("all"); setActivePosCategory("__all__"); }}');
+    expect(cashier).toContain('if (!posCategories.includes(activePosCategory)) setActivePosCategory("__all__")');
+    const modeTabs = cashier.slice(cashier.indexOf('aria-label="نمط البيع السريع"'), cashier.indexOf('aria-label="فئات البيع السريع"'));
+    expect(modeTabs).not.toContain("setCart(");
+  });
+
+  it("يدير فئات أصناف الصب بوضوح ويقيد الحذف بدور المدير/المسؤول", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const manager = readFileSync(resolve(root, "client/src/components/UnbarcodedCategoryManager.tsx"), "utf8");
+    const permissions = readFileSync(resolve(root, "client/src/lib/productCategoryPermissions.ts"), "utf8");
+    expect(cashier).toContain("<UnbarcodedCategoryManager");
+    expect(manager).toContain("إضافة فئة");
+    expect(manager).toContain("createProductCategory");
+    expect(manager).toContain("updateProductCategory");
+    expect(manager).toContain("deleteProductCategory");
+    expect(manager).toContain('role="alertdialog"');
+    expect(manager).toContain("getActiveShopContext");
+    expect(permissions).toContain('role === "supervisor"');
+    expect(permissions).toContain('role === "admin"');
+    expect(permissions).toContain('role === "manager"');
+  });
+
+  it("يوفر نقاطاً افتراضية للصنف بلا باركود ويظل الخادم مسؤولاً عن النقاط المكتسبة", () => {
+    const products = readFileSync(resolve(root, "client/src/pages/Products.tsx"), "utf8");
+    const loyalty = readFileSync(resolve(root, "supabase/migrations/20261011135000_restore_tiered_bulk_unit_invoice_loyalty.sql"), "utf8");
+    const invoice = readFileSync(resolve(root, "supabase/migrations/20261011101500_loyalty_returns.sql"), "utf8");
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const handlePosCategoryChange"));
+    expect(products).toContain("نقاط الولاء لصنف الصب لكل");
+    expect(products).toContain('value={formData.loyaltyPoints || "30"}');
+    expect(products).toContain("resolveProductLoyaltyPoints");
+    expect(cashier).toContain("getCartLoyaltyPointsTotal(cart)");
+    expect(completeSale).toContain("saleType,");
+    expect(completeSale).toContain("quantity: item.quantity");
+    expect(completeSale).not.toContain("loyaltyPoints:");
+    expect(loyalty).toContain("when 'wholesale' then coalesce");
+    expect(loyalty).toContain("case v_invoice.sale_type");
+    expect(loyalty).toContain("coalesce(v_item.product_points, 0)");
+    expect(loyalty).toContain("v_item.quantity");
+    expect(loyalty).toContain("v_item.units_per_bulk");
+    expect(loyalty).toContain("v_item.selected_unit_snapshot = v_item.bulk_unit_name");
+    expect(loyalty).toContain("revoke all on function public.apply_invoice_loyalty");
+    expect(loyalty).not.toContain("grant execute on function public.apply_invoice_loyalty");
+    expect(invoice).toContain("v_loyalty := public.apply_invoice_loyalty");
+    expect(invoice).toContain("public.loyalty_point_ledger");
   });
 
   it("يسمح بكتابة الكمية مباشرة مع أزرار زيادة ونقصان كبيرة للمس", () => {

@@ -16,7 +16,7 @@ import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { getPackageDescription } from "@/lib/packageUnits";
 import { prepareProductImageForUpload } from "@/lib/itemImageUpload";
 import { countProductsByCategory, filterProductsByCategory } from "@/lib/productCategories";
-import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
+import { resolveProductLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { isUnbarcodedProduct } from "@/lib/barcodes";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
@@ -198,6 +198,7 @@ export default function Products() {
   const bulkPasteRef = useRef<HTMLTextAreaElement>(null);
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [formData, setFormData] = useState(createEmptyProductForm);
+  const formIsUnbarcoded = collectProductBarcodes(formData.code, formData.barcodes).length === 0;
   const barcodeFieldError = getBarcodeFieldError(formData.code, formData.barcodes);
   const availableCategories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...categoryRecords.map(item => item.name), ...products.map(product => product.category).filter(Boolean)])), [categoryRecords, products]);
   const legacyCategories = useMemo(() => Array.from(new Set(products.filter(product => !product.categoryId && product.category !== "بدون فئة").map(product => product.category))), [products]);
@@ -532,9 +533,14 @@ export default function Products() {
     const retailPrice = Number(formData.retailPrice) || 0;
     const wholesaleRetailPrice = Number(formData.wholesaleRetailPrice) || retailPrice;
     const bulkPrice = Number(formData.bulkPrice) || 0;
-    const retailLoyaltyPoints = normalizeLoyaltyPoints(formData.retailLoyaltyPoints);
-    const subWholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.subWholesaleLoyaltyPoints);
-    const wholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.wholesaleLoyaltyPoints);
+    const loyaltyPointValues = resolveProductLoyaltyPoints({
+      isUnbarcoded: formIsUnbarcoded,
+      loyaltyPoints: formData.loyaltyPoints,
+      retailLoyaltyPoints: formData.retailLoyaltyPoints,
+      subWholesaleLoyaltyPoints: formData.subWholesaleLoyaltyPoints,
+      wholesaleLoyaltyPoints: formData.wholesaleLoyaltyPoints,
+    });
+    const { retailLoyaltyPoints, subWholesaleLoyaltyPoints, wholesaleLoyaltyPoints } = loyaltyPointValues;
     const category = formData.category.trim() || "منظفات عامة";
     const productCode = formData.internalCode.trim() || formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
     const inputWithoutCategory: Omit<ProductInput, "categoryId"> = {
@@ -548,7 +554,7 @@ export default function Products() {
       bulkProfitPercent: calculateBulkProfit(bulkPrice, pieceCost),
       retailProfitPercent: calculateRetailProfitPercent(wholesaleRetailPrice, pieceCost),
       costPerUnit: wholesalePrice, costPerPiece: pieceCost, category,
-      contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: retailLoyaltyPoints || normalizeLoyaltyPoints(formData.loyaltyPoints),
+      contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: loyaltyPointValues.loyaltyPoints,
       quantity: Math.max(0, Number(formData.availableQuantity) || 0), minQuantity: 0,
     };
 
@@ -1181,6 +1187,30 @@ export default function Products() {
                     placeholder="مثال: 100"
                   />
                 </div>
+                {formIsUnbarcoded && (
+                  <div className="md:col-span-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3">
+                    <label className="mb-1 block text-xs font-black text-emerald-900">نقاط الولاء لصنف الصب لكل {formData.contentUnit || "وحدة"}</label>
+                    <Input
+                      type="number"
+                      min="0"
+                      step="1"
+                      value={formData.loyaltyPoints || "30"}
+                      onChange={event => {
+                        const value = event.target.value;
+                        setFormData(current => ({
+                          ...current,
+                          loyaltyPoints: value,
+                          retailLoyaltyPoints: value,
+                          subWholesaleLoyaltyPoints: value,
+                          wholesaleLoyaltyPoints: value,
+                        }));
+                      }}
+                      placeholder="30"
+                      aria-label="نقاط الولاء لصنف الصب لكل وحدة"
+                    />
+                    <p className="mt-1 text-[11px] text-emerald-800">القيمة الافتراضية 30 نقطة. يمكنك تخصيص نقاط القطاعي والتجزئة والجملة من الحقول التالية؛ والخادم يحسب النقاط النهائية عند إتمام الفاتورة.</p>
+                  </div>
+                )}
                 <div>
                   <label className="text-xs font-bold text-gray-700 mb-1 block">نقاط القطاعي لكل {formData.contentUnit || "وحدة"}</label>
                   <Input type="number" min="0" step="0.01" value={formData.retailLoyaltyPoints} onChange={(e) => setFormData({ ...formData, retailLoyaltyPoints: e.target.value })} placeholder="مثال: 1" />
