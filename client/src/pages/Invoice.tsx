@@ -4,7 +4,7 @@ import { useLocation } from "wouter";
 import { ArrowLeft, Download, Printer, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { buildInvoiceImageFilename, captureInvoicePng, downloadImageBlob, shareInvoicePng } from "@/lib/invoiceImage";
+import { buildInvoiceImageFilename, captureInvoicePng, downloadImageBlob, shareInvoicePng, withInvoicePrintFallback } from "@/lib/invoiceImage";
 import { getCloudInvoice, type CloudInvoice } from "@/lib/supabase/invoices";
 
 const receiptColors = {
@@ -62,13 +62,14 @@ export default function Invoice() {
 
   const handleDownload = async () => {
     if (!sale || !invoiceRef.current || isExporting) return;
+    const invoiceElement = invoiceRef.current;
     setIsExporting(true);
     try {
-      const image = await captureInvoicePng(invoiceRef.current);
-      downloadImageBlob(image, buildInvoiceImageFilename(sale.id));
-      toast.success("تم تنزيل صورة الفاتورة بصيغة PNG.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "تعذر إنشاء صورة الفاتورة.");
+      const result = await withInvoicePrintFallback(async () => {
+        const image = await captureInvoicePng(invoiceElement);
+        downloadImageBlob(image, buildInvoiceImageFilename(sale.id));
+      });
+      if (result.status === "completed") toast.success("تم تنزيل صورة الفاتورة بصيغة PNG.");
     } finally {
       setIsExporting(false);
     }
@@ -76,18 +77,17 @@ export default function Invoice() {
 
   const handleShare = async () => {
     if (!sale || !invoiceRef.current || isExporting) return;
+    const invoiceElement = invoiceRef.current;
     setIsExporting(true);
     try {
-      const image = await captureInvoicePng(invoiceRef.current);
-      const result = await shareInvoicePng(
-        image,
-        buildInvoiceImageFilename(sale.id),
-        `فاتورة ${sale.id}`,
-      );
-      if (result === "shared") toast.success("تمت مشاركة صورة الفاتورة.");
-      else toast.message("تعذرت المشاركة أو لم يدعمها المتصفح؛ تم تنزيل صورة الفاتورة تلقائيًا.");
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "تعذرت مشاركة صورة الفاتورة.");
+      const outcome = await withInvoicePrintFallback(async () => {
+        const image = await captureInvoicePng(invoiceElement);
+        return shareInvoicePng(image, buildInvoiceImageFilename(sale.id), `فاتورة ${sale.id}`);
+      });
+      if (outcome.status === "completed") {
+        if (outcome.value === "shared") toast.success("تمت مشاركة صورة الفاتورة.");
+        else toast.message("تعذرت المشاركة أو لم يدعمها المتصفح؛ تم تنزيل صورة الفاتورة تلقائيًا.");
+      }
     } finally {
       setIsExporting(false);
     }
@@ -123,9 +123,13 @@ export default function Invoice() {
         <article
           ref={invoiceRef}
           data-invoice-export-root
-          className="thermal-receipt overflow-hidden rounded-lg border shadow-lg print:rounded-none print:border-0 print:shadow-none"
+          className="thermal-receipt rounded-lg border shadow-lg print:rounded-none print:border-0 print:shadow-none"
           style={{
             "--receipt-width": `${thermalWidth}mm`,
+            width: thermalWidth === "58" ? "220px" : "302px",
+            maxWidth: "100%",
+            minHeight: "320px",
+            overflow: "visible",
             backgroundColor: receiptColors.paper,
             borderColor: receiptColors.accentSoft,
             color: receiptColors.ink,

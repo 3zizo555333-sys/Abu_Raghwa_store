@@ -46,6 +46,31 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(cashier).toContain("changeCartUnit(item.id");
   });
 
+  it("يعرض تبويبات فئات أفقية وبطاقات لمس تضيف المنتج فورًا", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const products = readFileSync(resolve(root, "client/src/lib/supabase/products.ts"), "utf8");
+    expect(cashier).toContain('aria-label="فئات البيع السريع"');
+    expect(cashier).toContain("overflow-x-auto");
+    expect(cashier).toContain("activePosCategory");
+    expect(cashier).toContain('onClick={() => addProduct(product)}');
+    expect(cashier).toContain("min-h-28");
+    expect(products).toContain('supabase.rpc("update_product"');
+    expect(products).toContain("createProductCategory");
+    expect(products).toContain("updateProductCategory");
+    expect(products).toContain("deleteProductCategory");
+    expect(products).not.toMatch(/from\("products"\)\.(?:insert|update|upsert|delete)/);
+  });
+
+  it("يسمح بكتابة الكمية مباشرة مع أزرار زيادة ونقصان كبيرة للمس", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    expect(cashier).toContain("quantityDrafts[item.id] ?? item.quantity");
+    expect(cashier).toContain("changeQuantityDraft(item.id, event.target.value)");
+    expect(cashier).toContain("commitQuantityDraft(item.id)");
+    expect(cashier).toContain("تقليل كمية ${item.name}");
+    expect(cashier).toContain("زيادة كمية ${item.name}");
+    expect(cashier).toContain("h-12 w-12");
+  });
+
   it("لا يعلن نجاح البيع ولا يفرغ السلة قبل تأكيد إنشاء الفاتورة", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
     const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const filteredProducts"));

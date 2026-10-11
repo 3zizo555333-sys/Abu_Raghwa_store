@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import html2canvas from "html2canvas";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildInvoiceImageFilename, captureInvoicePng, shareInvoicePng } from "../client/src/lib/invoiceImage";
+import { buildInvoiceImageFilename, captureInvoicePng, shareInvoicePng, withInvoicePrintFallback } from "../client/src/lib/invoiceImage";
 
 vi.mock("html2canvas", () => ({ default: vi.fn() }));
 
@@ -56,9 +56,10 @@ describe("صورة الفاتورة", () => {
     const child = { style: makeStyle() } as unknown as HTMLElement;
     const receipt = {
       style: makeStyle(),
+      scrollHeight: 390,
       querySelectorAll: () => [child],
     } as unknown as HTMLElement;
-    const content = { style: makeStyle() } as unknown as HTMLElement;
+    const content = { style: makeStyle(), scrollHeight: 390 } as unknown as HTMLElement;
     const context = {
       fillStyle: "#000000",
       clearRect: vi.fn(),
@@ -95,6 +96,16 @@ describe("صورة الفاتورة", () => {
     expect(styleValues.get("color")).toBe("rgb(12, 34, 56)");
     expect(styleValues.get("outline-color")).toBe("transparent");
     expect(styleValues.get("background-image")).toBe("none");
+    expect(styleValues.get("width")).toBe("200px");
+    expect(styleValues.get("height")).toBe("400px");
+    expect(html2canvasMock.mock.calls[0]?.[1]).toMatchObject({ useCORS: true, allowTaint: true, scale: 2 });
+  });
+
+  it("يفتح نافذة الطباعة بصمت إذا فشل التقاط PNG أو حفظه", async () => {
+    const print = vi.fn();
+    const result = await withInvoicePrintFallback(() => Promise.reject(new Error("canvas unavailable")), print);
+    expect(result).toEqual({ status: "print-fallback" });
+    expect(print).toHaveBeenCalledOnce();
   });
 
   it("يستخدم ألوان Hex صريحة في قالب الالتقاط ويحوّل أي لون CSS حديث قبل الرسم", () => {
@@ -102,7 +113,10 @@ describe("صورة الفاتورة", () => {
     const capture = readFileSync(resolve(root, "client/src/lib/invoiceImage.ts"), "utf8");
     const receipt = invoice.slice(invoice.indexOf("data-invoice-export-root"), invoice.indexOf("</article>"));
 
-    expect(invoice).toContain("captureInvoicePng(invoiceRef.current)");
+    expect(invoice).toContain("captureInvoicePng(invoiceElement)");
+    expect(invoice).toContain("withInvoicePrintFallback");
+    expect(capture).toContain("allowTaint: true");
+    expect(capture).toContain("scale: 2");
     expect(invoice).toContain('paper: "#ffffff"');
     expect(receipt).toContain("linear-gradient(to bottom");
     expect(receipt).not.toMatch(/\b(?:bg|text|border)-(?:orange|gray|slate|white|black)-(?:50|100|200|300|400|500|600|700|800|900)(?:\/\d+)?\b/);
