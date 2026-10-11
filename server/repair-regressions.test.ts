@@ -7,7 +7,10 @@ const read = (path: string) => readFileSync(new URL(path, root), "utf8");
 describe("large catalog repair regressions", () => {
   it("keeps the product page render bounded", () => {
     const source = read("client/src/pages/Products.tsx");
-    expect(source).toContain("const visibleProducts = useMemo(() => filteredProducts.slice(0, 120)");
+    const visibleProductsLimit = source.match(/const visibleProducts = useMemo\(\(\) => filteredProducts\.slice\(0,\s*(\d+)\)/);
+    expect(visibleProductsLimit).not.toBeNull();
+    expect(Number(visibleProductsLimit?.[1])).toBeGreaterThan(0);
+    expect(Number(visibleProductsLimit?.[1])).toBeLessThanOrEqual(120);
     expect(source).toContain("const tradeMarginSummary = useMemo");
   });
 

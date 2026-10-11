@@ -33,6 +33,9 @@ interface Product {
   name: string;
   unit: string;
   unitsPerPackage: number;
+  bulkUnitName: string | null;
+  unitsPerBulk: number;
+  bulkUnitPrice: number | null;
   wholesalePricePerUnit: number;
   wholesalePricePerPiece: number;
   retailPrice: number;
@@ -72,6 +75,9 @@ const mapCloudProduct = (product: CloudProduct): Product => ({
   name: product.name,
   unit: product.unit,
   unitsPerPackage: product.unitsPerPackage,
+  bulkUnitName: product.bulkUnitName,
+  unitsPerBulk: product.unitsPerBulk,
+  bulkUnitPrice: product.bulkUnitPrice,
   wholesalePricePerUnit: product.wholesalePricePerUnit ?? 0,
   wholesalePricePerPiece: product.wholesalePricePerPiece ?? 0,
   retailPrice: product.retailPrice,
@@ -106,6 +112,9 @@ const toProductInput = (product: Product, category = product.category, categoryI
   unit: product.unit,
   contentUnit: product.contentUnit || "قطعة",
   unitsPerPackage: product.unitsPerPackage || 1,
+  bulkUnitName: product.bulkUnitName,
+  unitsPerBulk: product.unitsPerBulk || 1,
+  bulkUnitPrice: product.bulkUnitPrice,
   wholesalePricePerUnit: product.wholesalePricePerUnit || 0,
   wholesalePricePerPiece: product.wholesalePricePerPiece || 0,
   retailPrice: product.retailPrice || 0,
@@ -132,6 +141,9 @@ const createEmptyProductForm = () => ({
   name: "",
   unit: "كرتونة",
   unitsPerPackage: "",
+  bulkUnitName: "",
+  unitsPerBulk: "1",
+  bulkUnitPrice: "",
   retailPrice: "",
   wholesaleRetailPrice: "",
   bulkPrice: "",
@@ -439,6 +451,14 @@ export default function Products() {
 
     const wholesalePrice = Number(formData.wholesalePrice) || 0;
     const unitsPerPkg = Number(formData.unitsPerPackage) || 1;
+    const bulkUnitName = formData.bulkUnitName.trim();
+    const unitsPerBulk = formData.unitsPerBulk.trim() === "" ? 1 : Number(formData.unitsPerBulk);
+    const bulkUnitPrice = formData.bulkUnitPrice.trim() === "" ? null : Number(formData.bulkUnitPrice);
+    if (formData.saleMode === "weight" && bulkUnitName) return toast.error("وحدة الجملة بالقطع متاحة للمنتجات التي تُباع بالوحدة فقط.");
+    if (bulkUnitName && (!Number.isInteger(unitsPerBulk) || unitsPerBulk < 1)) return toast.error("عدد القطع داخل وحدة الجملة يجب أن يكون عدداً صحيحاً أكبر من صفر.");
+    if (bulkUnitName && (bulkUnitPrice === null || !Number.isFinite(bulkUnitPrice) || bulkUnitPrice <= 0)) return toast.error("أدخل سعراً صحيحاً لوحدة الجملة قبل حفظها.");
+    if (!bulkUnitName && bulkUnitPrice !== null) return toast.error("أدخل اسم وحدة الجملة قبل تسجيل سعرها، أو امسح السعر.");
+    if (bulkUnitName && bulkUnitName === formData.contentUnit.trim()) return toast.error("اسم وحدة الجملة يجب أن يختلف عن وحدة القطعة.");
     const pieceCost = calculateWholesalePricePerPiece(wholesalePrice, unitsPerPkg);
     const retailPrice = Number(formData.retailPrice) || 0;
     const wholesaleRetailPrice = Number(formData.wholesaleRetailPrice) || retailPrice;
@@ -454,6 +474,7 @@ export default function Products() {
       plu: formData.plu.trim() || formData.code.trim() || null,
       saleMode: formData.saleMode, barcodes: collectProductBarcodes(formData.code, formData.barcodes),
       unit: formData.unit, unitsPerPackage: unitsPerPkg, wholesalePricePerUnit: wholesalePrice,
+      bulkUnitName: bulkUnitName || null, unitsPerBulk, bulkUnitPrice,
       wholesalePricePerPiece: pieceCost, retailPrice, wholesaleRetailPrice, bulkPrice,
       retailLoyaltyPoints, subWholesaleLoyaltyPoints, wholesaleLoyaltyPoints,
       bulkProfitPercent: calculateBulkProfit(bulkPrice, pieceCost),
@@ -499,6 +520,9 @@ export default function Products() {
       name: product.name || "",
       unit: product.unit || "كرتونة",
       unitsPerPackage: product.unitsPerPackage?.toString() || "",
+      bulkUnitName: product.bulkUnitName || "",
+      unitsPerBulk: product.unitsPerBulk?.toString() || "1",
+      bulkUnitPrice: product.bulkUnitPrice?.toString() || "",
       retailPrice: product.retailPrice?.toString() || "",
       wholesaleRetailPrice: getSectorSalePrice(product).toString(),
       bulkPrice: product.bulkPrice?.toString() || "",
@@ -1014,6 +1038,19 @@ export default function Products() {
                     onChange={(e) => setFormData({ ...formData, unitsPerPackage: e.target.value })}
                     placeholder={`مثال: 40 ${formData.contentUnit || "قطعة"}`}
                   />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">اسم وحدة الجملة (اختياري)</label>
+                  <Input list="product-bulk-unit-options" value={formData.bulkUnitName} onChange={(e) => setFormData({ ...formData, bulkUnitName: e.target.value })} placeholder="مثال: كرتونة أو شكارة أو بالة" />
+                  <datalist id="product-bulk-unit-options">{PACKAGE_TYPES.map(unit => <option key={unit} value={unit} />)}</datalist>
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">عدد القطع داخل {formData.bulkUnitName || "وحدة الجملة"}</label>
+                  <Input type="number" min="1" step="1" value={formData.unitsPerBulk} onChange={(e) => setFormData({ ...formData, unitsPerBulk: e.target.value })} placeholder="مثال: 24" />
+                </div>
+                <div>
+                  <label className="text-xs font-bold text-gray-700 mb-1 block">سعر {formData.bulkUnitName || "وحدة الجملة"} (ج.م)</label>
+                  <Input type="number" min="0.01" step="0.01" value={formData.bulkUnitPrice} onChange={(e) => setFormData({ ...formData, bulkUnitPrice: e.target.value })} placeholder="مثال: 480" />
                 </div>
                 <div>
                   <label className="text-xs font-bold text-gray-700 mb-1 block">سعر جملة {formData.unit || "العبوة"} (ج.م)</label>

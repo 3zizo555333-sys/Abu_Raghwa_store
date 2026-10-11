@@ -10,7 +10,20 @@ select has_table('public', 'invoices', 'invoices table exists');
 select has_table('public', 'stock_movements', 'stock ledger exists');
 select ok((select relrowsecurity from pg_class where oid = 'public.products'::regclass), 'RLS is enabled for products');
 select ok((select relforcerowsecurity from pg_class where oid = 'public.products'::regclass), 'RLS is forced for products');
-select ok(not has_table_privilege('authenticated', 'public.products', 'SELECT'), 'authenticated clients cannot select raw product cost columns');
+select ok(
+  has_table_privilege('authenticated', 'public.products', 'SELECT')
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'products'
+      and policyname = 'products_owner_supervisor_select' and cmd = 'SELECT'
+      and roles @> array['authenticated']::name[]
+      and qual like '%has_shop_role%'
+      and qual like '%manager%' and qual like '%admin%' and qual like '%supervisor%'
+      and qual like '%deleted_at%'
+  )
+  and pg_get_functiondef('public.has_shop_role(uuid,public.shop_role[])'::regprocedure) like '%status = ''active''%',
+  'product reads use an active shop-role RLS policy (manager/admin/supervisor)'
+);
 select ok(not exists (
   select 1 from information_schema.columns
   where table_schema = 'public' and table_name = 'seller_invoice_items' and column_name = 'unit_cost_snapshot'

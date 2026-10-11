@@ -14,6 +14,9 @@ export type CloudProduct = {
   unit: string;
   contentUnit: string;
   unitsPerPackage: number;
+  bulkUnitName: string | null;
+  unitsPerBulk: number;
+  bulkUnitPrice: number | null;
   retailPrice: number;
   wholesaleRetailPrice: number;
   bulkPrice: number;
@@ -50,6 +53,9 @@ export type ProductInput = {
   unit?: string;
   contentUnit?: string;
   unitsPerPackage?: number;
+  bulkUnitName?: string | null;
+  unitsPerBulk?: number;
+  bulkUnitPrice?: number | null;
   wholesalePricePerUnit?: number;
   wholesalePricePerPiece?: number;
   retailPrice?: number;
@@ -132,6 +138,9 @@ export function mapProductRow(row: Partial<ProductRow> & Record<string, unknown>
     saleMode: row.sale_mode === "weight" ? "weight" : "unit",
     unit: String(row.unit_name ?? "عبوة"), contentUnit: String(row.content_unit ?? "قطعة"),
     unitsPerPackage: numberOr(row.units_per_package, 1),
+    bulkUnitName: typeof row.bulk_unit_name === "string" ? row.bulk_unit_name : null,
+    unitsPerBulk: numberOr(row.units_per_bulk, 1),
+    bulkUnitPrice: row.bulk_unit_price == null ? null : numberOr(row.bulk_unit_price),
     retailPrice: numberOr(row.retail_price), wholesaleRetailPrice: numberOr(row.wholesale_retail_price), bulkPrice: numberOr(row.bulk_price),
     retailLoyaltyPoints: numberOr(row.retail_loyalty_points, numberOr(row.loyalty_points)), subWholesaleLoyaltyPoints: numberOr(row.sub_wholesale_loyalty_points, numberOr(row.loyalty_points)), wholesaleLoyaltyPoints: numberOr(row.wholesale_loyalty_points, numberOr(row.loyalty_points)),
     bulkProfitPercent: row.bulk_profit_percent == null ? undefined : numberOr(row.bulk_profit_percent), retailProfitPercent: row.retail_profit_percent == null ? undefined : numberOr(row.retail_profit_percent),
@@ -153,6 +162,7 @@ export function toProductPayload(product: ProductInput): Json {
     name: product.name.trim(), code: product.code ?? null, barcode: product.barcode ?? null,
     barcodes: product.barcodes ?? [], plu: product.plu ?? null, sale_mode: product.saleMode ?? "unit",
     unit_name: product.unit ?? "عبوة", content_unit: product.contentUnit ?? "قطعة", units_per_package: product.unitsPerPackage ?? 1,
+    bulk_unit_name: product.bulkUnitName?.trim() || null, units_per_bulk: product.unitsPerBulk ?? 1, bulk_unit_price: product.bulkUnitPrice ?? null,
     wholesale_price_per_unit: product.wholesalePricePerUnit ?? 0, wholesale_price_per_piece: product.wholesalePricePerPiece ?? 0,
     retail_price: product.retailPrice ?? 0, wholesale_retail_price: product.wholesaleRetailPrice ?? 0, bulk_price: product.bulkPrice ?? 0,
     cost_per_unit: product.costPerUnit ?? 0, cost_per_piece: product.costPerPiece ?? 0,

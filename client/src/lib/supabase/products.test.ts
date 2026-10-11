@@ -26,6 +26,7 @@ describe("Supabase product boundary", () => {
     const product = mapProductRow({
       id: "p-2", name: "منظف", code: "A2", barcode: "123", barcodes: ["123", "124"], plu: "PLU-2",
       sale_mode: "unit", unit_name: "كرتونة", content_unit: "قطعة", units_per_package: 6,
+      bulk_unit_name: "بالة", units_per_bulk: 24, bulk_unit_price: 250,
       wholesale_price_per_unit: 60, wholesale_price_per_piece: 10, retail_price: 15, wholesale_retail_price: 14,
       bulk_price: 12, cost_per_unit: 60, cost_per_piece: 10, bulk_profit_percent: 20, retail_profit_percent: 40,
       category_id: "cat-1", category_name: "منظفات", quantity: 5, min_quantity: 1,
@@ -35,6 +36,7 @@ describe("Supabase product boundary", () => {
 
     expect(product).toMatchObject({
       id: "p-2", barcode: "123", barcodes: ["123", "124"], categoryId: "cat-1", category: "منظفات",
+      bulkUnitName: "بالة", unitsPerBulk: 24, bulkUnitPrice: 250,
       imageId: "img-1", imageStoragePath: "shop/products/p-2/img.webp", version: 7,
       costPerUnit: 60, costPerPiece: 10, bulkProfitPercent: 20, retailProfitPercent: 40,
     });
@@ -43,11 +45,12 @@ describe("Supabase product boundary", () => {
   it("normalizes product writes into an explicit database payload", () => {
     const payload = toProductPayload({
       name: "  شامبو  ", code: "A1", saleMode: "unit", unit: "كرتونة", contentUnit: "قطعة",
-      unitsPerPackage: 6, retailPrice: 10, wholesaleRetailPrice: 9, bulkPrice: 8, category: "عناية", categoryId: "cat-3",
+      unitsPerPackage: 6, bulkUnitName: "شكارة", unitsPerBulk: 30, bulkUnitPrice: 480,
+      retailPrice: 10, wholesaleRetailPrice: 9, bulkPrice: 8, category: "عناية", categoryId: "cat-3",
       quantity: 2,
     }) as Record<string, unknown>;
 
-    expect(payload).toMatchObject({ name: "شامبو", code: "A1", unit_name: "كرتونة", units_per_package: 6, retail_price: 10, quantity: 2, category_id: "cat-3", category_name: "عناية" });
+    expect(payload).toMatchObject({ name: "شامبو", code: "A1", unit_name: "كرتونة", units_per_package: 6, bulk_unit_name: "شكارة", units_per_bulk: 30, bulk_unit_price: 480, retail_price: 10, quantity: 2, category_id: "cat-3", category_name: "عناية" });
     expect(payload).not.toHaveProperty("password");
     expect(payload).not.toHaveProperty("imageUrl");
   });
