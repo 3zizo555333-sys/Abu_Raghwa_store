@@ -17,6 +17,9 @@ export type ProductRow = {
   retail_price: number;
   wholesale_retail_price: number;
   bulk_price: number;
+  retail_loyalty_points: number;
+  sub_wholesale_loyalty_points: number;
+  wholesale_loyalty_points: number;
   cost_per_unit: number;
   cost_per_piece: number;
   bulk_profit_percent: number;

@@ -17,6 +17,9 @@ export type CloudProduct = {
   retailPrice: number;
   wholesaleRetailPrice: number;
   bulkPrice: number;
+  retailLoyaltyPoints: number;
+  subWholesaleLoyaltyPoints: number;
+  wholesaleLoyaltyPoints: number;
   bulkProfitPercent?: number;
   retailProfitPercent?: number;
   wholesalePricePerUnit?: number;
@@ -52,6 +55,9 @@ export type ProductInput = {
   retailPrice?: number;
   wholesaleRetailPrice?: number;
   bulkPrice?: number;
+  retailLoyaltyPoints?: number;
+  subWholesaleLoyaltyPoints?: number;
+  wholesaleLoyaltyPoints?: number;
   costPerUnit?: number;
   costPerPiece?: number;
   bulkProfitPercent?: number;
@@ -127,6 +133,7 @@ export function mapProductRow(row: Partial<ProductRow> & Record<string, unknown>
     unit: String(row.unit_name ?? "عبوة"), contentUnit: String(row.content_unit ?? "قطعة"),
     unitsPerPackage: numberOr(row.units_per_package, 1),
     retailPrice: numberOr(row.retail_price), wholesaleRetailPrice: numberOr(row.wholesale_retail_price), bulkPrice: numberOr(row.bulk_price),
+    retailLoyaltyPoints: numberOr(row.retail_loyalty_points, numberOr(row.loyalty_points)), subWholesaleLoyaltyPoints: numberOr(row.sub_wholesale_loyalty_points, numberOr(row.loyalty_points)), wholesaleLoyaltyPoints: numberOr(row.wholesale_loyalty_points, numberOr(row.loyalty_points)),
     bulkProfitPercent: row.bulk_profit_percent == null ? undefined : numberOr(row.bulk_profit_percent), retailProfitPercent: row.retail_profit_percent == null ? undefined : numberOr(row.retail_profit_percent),
     wholesalePricePerUnit: row.wholesale_price_per_unit == null ? undefined : numberOr(row.wholesale_price_per_unit),
     wholesalePricePerPiece: row.wholesale_price_per_piece == null ? undefined : numberOr(row.wholesale_price_per_piece),
@@ -152,6 +159,7 @@ export function toProductPayload(product: ProductInput): Json {
     bulk_profit_percent: product.bulkProfitPercent ?? 0, retail_profit_percent: product.retailProfitPercent ?? 0,
     category_id: product.categoryId ?? null, category_name: product.category ?? "بدون فئة",
     quantity: product.quantity ?? 0, min_quantity: product.minQuantity ?? 0, loyalty_points: product.loyaltyPoints ?? 0,
+    retail_loyalty_points: product.retailLoyaltyPoints ?? product.loyaltyPoints ?? 0, sub_wholesale_loyalty_points: product.subWholesaleLoyaltyPoints ?? product.loyaltyPoints ?? 0, wholesale_loyalty_points: product.wholesaleLoyaltyPoints ?? product.loyaltyPoints ?? 0,
   } as Json;
 }
 
