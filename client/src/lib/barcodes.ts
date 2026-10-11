@@ -1,7 +1,7 @@
 export type BarcodeProduct = {
   id?: string;
   code?: string;
-  barcode?: string;
+  barcode?: string | null;
   barcodes?: string | string[];
   sharedCode?: string;
   sku?: string;
@@ -40,6 +40,10 @@ export const normalizeBarcodeValues = (value: unknown): string[] => {
   }
   return trimmed.split(/[\s,;|]+/).map(item => normalizeBarcodeToken(item)).filter(Boolean);
 };
+
+/** A PLU/SKU or internal product code does not make an item barcode-labeled. */
+export const isUnbarcodedProduct = (product: Pick<BarcodeProduct, "barcode" | "barcodes">): boolean =>
+  normalizeBarcodeValues(product.barcode).length === 0 && normalizeBarcodeValues(product.barcodes).length === 0;
 
 export const getProductBarcodes = (product: BarcodeProduct): string[] => Array.from(new Set([
   ...normalizeBarcodeValues(product.code),

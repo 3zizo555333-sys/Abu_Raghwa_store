@@ -17,6 +17,7 @@ import { getPackageDescription } from "@/lib/packageUnits";
 import { prepareProductImageForUpload } from "@/lib/itemImageUpload";
 import { countProductsByCategory, filterProductsByCategory } from "@/lib/productCategories";
 import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
+import { isUnbarcodedProduct } from "@/lib/barcodes";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
@@ -134,6 +135,7 @@ const toProductInput = (product: Product, category = product.category, categoryI
   wholesaleLoyaltyPoints: product.wholesaleLoyaltyPoints || product.loyaltyPoints || 0,
 });
 const createEmptyProductForm = () => ({
+  internalCode: "",
   code: "",
   plu: "",
   saleMode: "unit" as "unit" | "weight",
@@ -174,6 +176,7 @@ export default function Products() {
   const [savingProduct, setSavingProduct] = useState(false);
   const [viewingProductId, setViewingProductId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [barcodeFilter, setBarcodeFilter] = useState<"all" | "unbarcoded">("all");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false);
   const [barcodeScannerTarget, setBarcodeScannerTarget] = useState(-1);
@@ -208,7 +211,7 @@ export default function Products() {
     return () => { active = false; };
   }, []);
 
-  useEffect(() => { setSelectedProductIds([]); }, [searchQuery]);
+  useEffect(() => { setSelectedProductIds([]); }, [searchQuery, categoryFilter, barcodeFilter]);
 
   const addProductCategory = async () => {
     const category = newCategoryName.trim();
@@ -533,9 +536,9 @@ export default function Products() {
     const subWholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.subWholesaleLoyaltyPoints);
     const wholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.wholesaleLoyaltyPoints);
     const category = formData.category.trim() || "منظفات عامة";
-    const code = formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
+    const productCode = formData.internalCode.trim() || formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
     const inputWithoutCategory: Omit<ProductInput, "categoryId"> = {
-      name: formData.name.trim(), code, barcode: formData.code.trim() || null,
+      name: formData.name.trim(), code: productCode, barcode: formData.code.trim() || null,
       plu: formData.plu.trim() || formData.code.trim() || null,
       saleMode: formData.saleMode, barcodes: collectProductBarcodes(formData.code, formData.barcodes),
       unit: formData.unit, unitsPerPackage: unitsPerPkg, wholesalePricePerUnit: wholesalePrice,
@@ -581,8 +584,9 @@ export default function Products() {
   const handleEdit = (product: Product) => {
     if (!canViewSensitiveFinancials) return;
     setFormData({
-      code: product.code || "",
-      plu: product.plu || product.code || "",
+      internalCode: product.code || "",
+      code: product.barcode || "",
+      plu: product.plu || "",
       saleMode: product.saleMode || "unit",
       barcodes: getAdditionalBarcodeSlots(product),
       name: product.name || "",
@@ -638,8 +642,9 @@ export default function Products() {
   const categoryProducts = useMemo(() => filterProductsByCategory(products, categoryFilter), [products, categoryFilter]);
   const filteredProducts = useMemo(() => categoryProducts.filter(p => {
     const query = searchQuery.toLowerCase();
-    return p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query) || (p.barcode || "").toLowerCase().includes(query) || normalizeBarcodes(p.barcodes || p.code).some(code => code.toLowerCase().includes(query)) || (p.category && p.category.toLowerCase().includes(query));
-  }), [categoryProducts, searchQuery]);
+    const matchesBarcodeFilter = barcodeFilter === "all" || isUnbarcodedProduct(p);
+    return matchesBarcodeFilter && (p.name.toLowerCase().includes(query) || p.code.toLowerCase().includes(query) || (p.barcode || "").toLowerCase().includes(query) || normalizeBarcodes(p.barcodes || p.code).some(code => code.toLowerCase().includes(query)) || (p.category && p.category.toLowerCase().includes(query)));
+  }), [categoryProducts, searchQuery, barcodeFilter]);
   const visibleProducts = useMemo(() => filteredProducts.slice(0, 50), [filteredProducts]);
   const bulkImportCount = useMemo(() => bulkImportText.split(/\r?\n/).map(row => row.trim()).filter(Boolean).length, [bulkImportText]);
 
@@ -844,7 +849,8 @@ export default function Products() {
               </div>
               <Button type="button" variant="outline" onClick={() => setShowBarcodeSearchScanner(true)} className="shrink-0 border-orange-300 text-orange-700" title="تصوير باركود للبحث"><Camera className="ml-1 h-4 w-4" />تصوير الكود</Button>
             </div>
-            <select value={categoryFilter} onChange={event => selectCategory(event.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm md:w-56"><option value="all">كل الفئات</option>{availableCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
+            <select aria-label="الفئة" value={categoryFilter} onChange={event => selectCategory(event.target.value)} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm md:w-56"><option value="all">كل الفئات</option>{availableCategories.map(category => <option key={category} value={category}>{category}</option>)}</select>
+            <select aria-label="تصنيف الباركود" value={barcodeFilter} onChange={event => setBarcodeFilter(event.target.value as "all" | "unbarcoded")} className="h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-sm md:w-56"><option value="all">كل أنواع الأصناف</option><option value="unbarcoded">أصناف الصب (بدون باركود)</option></select>
             <div className="text-sm font-semibold text-gray-600">{categoryFilter === "all" ? "كل المنتجات" : `منتجات فئة: ${categoryFilter}`} · <span className="font-bold text-blue-600">{filteredProducts.length}</span> منتج</div>
           </CardContent>
         </Card>
@@ -889,8 +895,8 @@ export default function Products() {
             ) : filteredProducts.length === 0 ? (
               <div className="text-center py-16 text-gray-500">
                 <Package className="w-16 h-16 mx-auto text-gray-300 mb-3" />
-                <p className="font-semibold text-lg">لا توجد منتجات مسجلة حتى الآن</p>
-                <p className="text-sm mt-1">اضغط على "إضافة منتج جديد" للبدء</p>
+                <p className="font-semibold text-lg">{barcodeFilter === "unbarcoded" ? "لا توجد أصناف صب بلا باركود ضمن الفئة والبحث الحاليين" : "لا توجد منتجات مسجلة حتى الآن"}</p>
+                <p className="text-sm mt-1">{barcodeFilter === "unbarcoded" ? "يمكنك إضافة صنف وترك حقول الباركود فارغة أو إزالة باركوداته من نموذج التعديل." : 'اضغط على "إضافة منتج جديد" للبدء'}</p>
               </div>
             ) : (
               <>
@@ -907,7 +913,7 @@ export default function Products() {
                           <input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleProductSelection(p.id)} className="h-5 w-5 shrink-0 accent-indigo-600" aria-label={`تحديد ${p.name}`} />
                           {p.imageUrl || p.catalogImageUrl ? <img src={p.imageUrl || p.catalogImageUrl} alt={p.name} className="h-12 w-12 shrink-0 rounded-xl border object-cover" /> : <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-400"><Package className="h-5 w-5" /></div>}
                           <div className="min-w-0">
-                          <h3 className="font-bold text-gray-900 truncate">{p.name}</h3>
+                          <div className="flex items-center gap-2"><h3 className="font-bold text-gray-900 truncate">{p.name}</h3>{isUnbarcodedProduct(p) && <span className="shrink-0 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-900">صنف صب</span>}</div>
                           <p className="text-xs text-gray-500 mt-1">{p.category || "بدون فئة"} · {getPackageDescription(p)}</p>
                           </div>
                         </div>
@@ -958,7 +964,7 @@ export default function Products() {
                         <tr key={p.id} className={`transition hover:bg-gray-50 ${selectedProductIds.includes(p.id) ? "bg-indigo-50" : ""}`}>
                           <td className="p-3 text-center"><input type="checkbox" checked={selectedProductIds.includes(p.id)} onChange={() => toggleProductSelection(p.id)} className="h-5 w-5 accent-indigo-600" aria-label={`تحديد ${p.name}`} /></td>
                           <td className="p-3 font-mono text-xs text-gray-500">{p.code}</td>
-                          <td className="p-3 font-bold text-gray-800"><div className="flex items-center gap-2">{p.imageUrl || p.catalogImageUrl ? <img src={p.imageUrl || p.catalogImageUrl} alt={p.name} className="h-10 w-10 rounded-lg border object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-400"><Package className="h-4 w-4" /></div>}<span>{p.name}</span></div></td>
+                          <td className="p-3 font-bold text-gray-800"><div className="flex items-center gap-2">{p.imageUrl || p.catalogImageUrl ? <img src={p.imageUrl || p.catalogImageUrl} alt={p.name} className="h-10 w-10 rounded-lg border object-cover" /> : <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-slate-100 text-slate-400"><Package className="h-4 w-4" /></div>}<div><span>{p.name}</span>{isUnbarcodedProduct(p) && <span className="mr-2 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-black text-amber-900">صنف صب</span>}</div></div></td>
                           <td className="p-3 text-gray-600"><p>{p.category || "بدون فئة"}</p><p className="text-xs text-slate-500">{getPackageDescription(p)}</p></td>
                           <td className="p-3 text-blue-600 font-semibold">{cost.toFixed(2)} ج.م</td>
                           <td className="p-3 text-blue-600 font-bold">{p.retailPrice || 0} ج.م</td>
@@ -1063,9 +1069,10 @@ export default function Products() {
                       </div>
                     ))}
                     <Button type="button" variant="outline" onClick={addBarcodeSlot} className="w-full border-dashed border-orange-300 text-orange-700"><Plus className="ml-1 h-4 w-4" />إضافة خانة باركود أخرى</Button>
+                    <Button type="button" variant="outline" onClick={() => setFormData(current => ({ ...current, code: "", barcodes: createEmptyAdditionalBarcodeSlots() }))} className="w-full border-dashed border-amber-300 bg-amber-50 text-amber-900"><Package className="ml-1 h-4 w-4" />تحويل إلى صنف صب (مسح كل الباركودات)</Button>
                     {editingId && <Button type="button" variant="outline" onClick={printProductBarcodeLabels} className="w-full border-emerald-300 bg-emerald-50 text-emerald-800 hover:bg-emerald-100"><Printer className="ml-1 h-4 w-4" />طباعة ملصقات الباركود ({collectProductBarcodes(formData.code, formData.barcodes).length})</Button>}
                   </div>
-                  <p className="mt-1 text-[11px] text-slate-500">تبدأ بخمس خانات للمنتج (باركود أساسي و4 إضافية)، ويمكنك إضافة خانات بلا حد. لا تضع فاصلة؛ كل رمز في خانته، وسيبحث الكاشير بها كلها.</p>
+                  <p className="mt-1 text-[11px] text-slate-500">يمكن ترك الباركود الأساسي والإضافي فارغاً لصنف الصب؛ كود المنتج الداخلي محفوظ منفصلاً ولا يحوّل الصنف تلقائياً إلى منتج بباركود.</p>
                   {barcodeFieldError && <p role="alert" className="mt-1 text-xs font-bold text-red-600">يوجد أكثر من باركود في خانة واحدة. انقل كل باركود إلى خانة منفصلة وأزل الفاصلة أو المسافات.</p>}
                 </div>
                 <div>
@@ -1242,7 +1249,7 @@ export default function Products() {
         <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-3" onClick={() => { setShowCategoryManager(false); setEditingCategoryId(null); setCategoryDraft(""); }}>
           <section role="dialog" aria-modal="true" aria-label="إدارة فئات المنتجات" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl" dir="rtl" onClick={event => event.stopPropagation()}>
             <div className="flex items-start justify-between gap-3">
-              <div><h2 className="text-xl font-black text-slate-950">إدارة فئات المنتجات</h2><p className="mt-1 text-xs text-slate-600">تُحفظ الفئات في Supabase ضمن المتجر الحالي وتُحمى بسياسات RLS والعضوية.</p></div>
+              <div><h2 className="text-xl font-black text-slate-950">إدارة فئات المنتجات</h2><p className="mt-1 text-xs text-slate-600">تُحفظ الفئات في Supabase ضمن المتجر الحالي وتُحمى بسياسات RLS والعضوية.</p><p className="mt-2 max-w-lg text-xs font-semibold text-amber-800">تظهر فئة الصب تلقائياً في الكاشير عند احتوائها منتجات بلا باركود؛ صفِّ قائمة الأصناف على «أصناف الصب» ثم انقل المنتجات للفئة المطلوبة. لا يلزم ربطها بباركود.</p></div>
               <Button type="button" size="sm" variant="ghost" aria-label="إغلاق إدارة الفئات" onClick={() => { setShowCategoryManager(false); setEditingCategoryId(null); setCategoryDraft(""); }}><X className="h-5 w-5" /></Button>
             </div>
 
