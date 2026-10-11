@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findProductsByBarcode, getProductBarcodes, matchesProductBarcode, normalizeBarcodeToken, normalizeBarcodeValues } from "./barcodes";
+import { findProductsByBarcode, getProductBarcodes, isUnbarcodedProduct, matchesProductBarcode, normalizeBarcodeToken, normalizeBarcodeValues } from "./barcodes";
 
 describe("product barcode matching", () => {
   it("normalizes comma, space, and semicolon separated additional codes", () => {
@@ -8,6 +8,14 @@ describe("product barcode matching", () => {
 
   it("reads legacy JSON barcode arrays", () => {
     expect(normalizeBarcodeValues('["8902","8903"]')).toEqual(["8902", "8903"]);
+  });
+
+  it("classifies unbarcoded items from barcode fields, not their internal SKU/PLU", () => {
+    const internalOnlyCode = { barcode: null, barcodes: [], code: "PRD-1200", plu: "PLU-10" };
+    expect(isUnbarcodedProduct(internalOnlyCode)).toBe(true);
+    expect(isUnbarcodedProduct({ barcode: "  ", barcodes: ["", "   "] })).toBe(true);
+    expect(isUnbarcodedProduct({ barcode: "8901", barcodes: [] })).toBe(false);
+    expect(isUnbarcodedProduct({ barcode: null, barcodes: ["8902"] })).toBe(false);
   });
 
   it("matches an alternate barcode regardless of whether storage is an array or string", () => {

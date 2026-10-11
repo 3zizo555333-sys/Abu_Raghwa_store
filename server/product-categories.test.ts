@@ -19,4 +19,16 @@ describe("فئات المنتجات المرنة", () => {
     expect(page).not.toContain("useCloudState");
     expect(page).not.toContain("localStorage");
   });
+
+  it("يسهّل تمييز أصناف الصب ونقلها لفئاتها من دون فرض باركود", () => {
+    const page = readFileSync(resolve(import.meta.dirname, "../client/src/pages/Products.tsx"), "utf8");
+    expect(page).toContain('useState<"all" | "unbarcoded">("all")');
+    expect(page).toContain('barcodeFilter === "all" || isUnbarcodedProduct(p)');
+    expect(page).toContain('aria-label="تصنيف الباركود"');
+    expect(page).toContain("تحويل إلى صنف صب (مسح كل الباركودات)");
+    expect(page).toContain("تظهر فئة الصب تلقائياً في الكاشير");
+    expect(page).toContain('internalCode: product.code || ""');
+    expect(page).toContain('code: product.barcode || ""');
+    expect(page).toContain('code: productCode, barcode: formData.code.trim() || null');
+  });
 });

@@ -61,6 +61,17 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(products).not.toMatch(/from\("products"\)\.(?:insert|update|upsert|delete)/);
   });
 
+  it("يجعل أصناف الصب بلا باركود الوضع الافتراضي ويعزل فئاتها عن وضع الدليل الكامل", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    expect(cashier).toContain('useState<PosMode>("unbarcoded")');
+    expect(cashier).toContain('products.filter(isUnbarcodedProduct)');
+    expect(cashier).toContain('aria-label="نمط البيع السريع"');
+    expect(cashier).toContain("أصناف الصب");
+    expect(cashier).toContain("جميع المنتجات");
+    expect(cashier).toContain('posMode === "unbarcoded" ? [] : productCategories.map');
+    expect(cashier).toContain('onClick={() => { setPosMode("all"); setActivePosCategory("__all__"); }}');
+  });
+
   it("يسمح بكتابة الكمية مباشرة مع أزرار زيادة ونقصان كبيرة للمس", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
     expect(cashier).toContain("quantityDrafts[item.id] ?? item.quantity");
