@@ -6,11 +6,13 @@ import { Barcode, Camera, Image as ImageIcon, Loader2, X } from "lucide-react";
 import { Html5Qrcode, Html5QrcodeSupportedFormats } from "html5-qrcode";
 import { BarcodeFormat, BrowserMultiFormatReader, DecodeHintType, NotFoundException } from "@zxing/library";
 import { getCameraConstraintAttempts, getCameraErrorMessage, isExpectedCameraAccessError } from "@/lib/cameraScanner";
+import { acceptLiveBarcode, createBarcodeScanGate } from "@/lib/barcodeScanCooldown";
 
 interface AdvancedBarcodeScannerProps {
   isOpen: boolean;
   onClose: () => void;
   onDetect: (barcode: string) => void;
+  onCameraDetect?: () => void;
   title?: string;
   continuous?: boolean;
 }
@@ -217,6 +219,7 @@ export function AdvancedBarcodeScanner({
   isOpen,
   onClose,
   onDetect,
+  onCameraDetect,
   title = "ماسح الباركود",
   continuous = false,
 }: AdvancedBarcodeScannerProps) {
@@ -226,24 +229,64 @@ export function AdvancedBarcodeScanner({
   const [processingImage, setProcessingImage] = useState(false);
   const [manualInput, setManualInput] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [cooldownActive, setCooldownActive] = useState(false);
   const liveScannerRef = useRef<Html5Qrcode | null>(null);
+  const pausedScannerRef = useRef<Html5Qrcode | null>(null);
+  const resumeTimerRef = useRef<number | null>(null);
+  const scanGateRef = useRef(createBarcodeScanGate());
   const scanningRef = useRef(false);
   const startingRef = useRef(false);
   const sessionRef = useRef(0);
   const mountedRef = useRef(true);
-  const lastDetectedRef = useRef<{ value: string; at: number } | null>(null);
 
   const stopScanning = () => {
     sessionRef.current += 1;
     scanningRef.current = false;
     startingRef.current = false;
+    if (resumeTimerRef.current !== null) {
+      window.clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+    pausedScannerRef.current = null;
     const scanner = liveScannerRef.current;
     liveScannerRef.current = null;
     void stopHtmlScanner(scanner);
     if (mountedRef.current) {
       setCameraReady(false);
       setStarting(false);
+      setCooldownActive(false);
     }
+  };
+
+  const pauseCameraForCooldown = (pauseUntil: number, session: number) => {
+    setCooldownActive(true);
+    const scanner = liveScannerRef.current;
+    if (scanner?.isScanning) {
+      try {
+        scanner.pause(true);
+        pausedScannerRef.current = scanner;
+      } catch {
+        // The duplicate gate remains active if the browser cannot pause its video track.
+      }
+    }
+    if (resumeTimerRef.current !== null) window.clearTimeout(resumeTimerRef.current);
+    resumeTimerRef.current = window.setTimeout(() => {
+      resumeTimerRef.current = null;
+      if (!mountedRef.current || !isOpen || !scanningRef.current || sessionRef.current !== session) return;
+      const pausedScanner = pausedScannerRef.current;
+      if (pausedScanner && liveScannerRef.current === pausedScanner && pausedScanner.isScanning) {
+        try {
+          pausedScanner.resume();
+        } catch (resumeError) {
+          console.error("تعذر استئناف ماسح الباركود تلقائياً:", resumeError);
+          setError("تعذر استئناف الكاميرا تلقائياً. أوقف المسح ثم أعد تشغيله.");
+          stopScanning();
+          return;
+        }
+      }
+      pausedScannerRef.current = null;
+      setCooldownActive(false);
+    }, Math.max(0, pauseUntil - Date.now()));
   };
 
   useEffect(() => {
@@ -290,9 +333,12 @@ export function AdvancedBarcodeScanner({
               if (!scanningRef.current || sessionRef.current !== session) return;
               const barcode = decodedText.trim();
               if (!barcode) return;
-              const now = Date.now();
-              if (continuous && lastDetectedRef.current?.value === barcode && now - lastDetectedRef.current.at < 1400) return;
-              lastDetectedRef.current = { value: barcode, at: now };
+              if (continuous) {
+                const decision = acceptLiveBarcode(scanGateRef.current, barcode);
+                if (!decision.accepted) return;
+                pauseCameraForCooldown(decision.pauseUntil, session);
+              }
+              onCameraDetect?.();
               onDetect(barcode);
               if (!continuous) handleClose();
             },
@@ -418,7 +464,7 @@ export function AdvancedBarcodeScanner({
             )}
           </div>
 
-          {cameraReady && <p className="text-center text-sm text-gray-600">وجّه المربع نحو الباركود وثبّت الهاتف لحظة. سيتم تسجيله تلقائيًا عند القراءة.</p>}
+          {cameraReady && <p className="text-center text-sm text-gray-600">{cooldownActive ? "تمت القراءة؛ أوقفت الكاميرا مؤقتاً وستستأنف تلقائياً خلال لحظة." : "وجّه المربع نحو الباركود وثبّت الهاتف لحظة. سيتم تسجيله تلقائيًا عند القراءة."}</p>}
           {processingImage && <div className="flex items-center justify-center gap-2 rounded-xl bg-blue-50 p-3 text-sm font-bold text-blue-800"><Loader2 className="h-4 w-4 animate-spin" />جاري قراءة الباركود من الصورة...</div>}
 
           {error && (

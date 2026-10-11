@@ -12,6 +12,9 @@ export type ProductRow = {
   unit_name: string;
   content_unit: string;
   units_per_package: number;
+  bulk_unit_name: string | null;
+  units_per_bulk: number;
+  bulk_unit_price: number | null;
   wholesale_price_per_unit: number;
   wholesale_price_per_piece: number;
   retail_price: number;
