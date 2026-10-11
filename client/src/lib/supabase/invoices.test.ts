@@ -59,7 +59,7 @@ describe("Supabase invoices", () => {
       unitPrice: 50,
       total: 100,
     }]);
-    expect(mapped).not.toHaveProperty("loyaltyPointsAwarded");
+    expect(mapped.loyaltyPointsAwarded).toBe(0);
     const managerItem = {
       id: "line-uuid",
       invoice_id: "invoice-uuid",
