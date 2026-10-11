@@ -11,6 +11,7 @@ export type CloudReportData = {
   rewards: LoyaltyRewardRecord[];
   giftDeliveries: GiftDeliveryRecord[];
   catalogOrders: SalesInventoryCatalogOrder[];
+  returns: Array<{ id: string; invoiceId: string; date: string; refundTotal: number; pointsReversed: number }>;
 };
 
 const numberValue = (value: unknown) => {
@@ -31,14 +32,15 @@ export async function loadCloudReportData(): Promise<CloudReportData> {
   }
 
   const supabase = getSupabaseClient();
-  const [invoicesResult, productsResult, recipesResult, customersResult, rewardsResult, redemptionsResult, ordersResult] = await Promise.all([
-    supabase.from("invoices").select("*").eq("shop_id", shopId).eq("status", "completed").order("created_at", { ascending: false }).limit(1000),
+  const [invoicesResult, productsResult, recipesResult, customersResult, rewardsResult, redemptionsResult, ordersResult, returnsResult] = await Promise.all([
+    supabase.from("invoices").select("*").eq("shop_id", shopId).in("status", ["completed", "partially_returned", "returned"]).order("created_at", { ascending: false }).limit(1000),
     supabase.from("products").select("*").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("recipes").select("*").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("loyalty_customers").select("*").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("loyalty_rewards").select("*").eq("shop_id", shopId).is("deleted_at", null).eq("is_active", true).limit(500),
     supabase.from("loyalty_redemptions").select("*").eq("shop_id", shopId).order("delivered_at", { ascending: false }).limit(1000),
     supabase.from("catalog_orders").select("*").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(1000),
+    supabase.from("invoice_returns").select("*").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(1000),
   ]);
   const invoices = requireCloudResult(invoicesResult) as any[];
   const products = requireCloudResult(productsResult) as any[];
@@ -47,6 +49,7 @@ export async function loadCloudReportData(): Promise<CloudReportData> {
   const rewards = requireCloudResult(rewardsResult) as any[];
   const redemptions = requireCloudResult(redemptionsResult) as any[];
   const catalogOrders = requireCloudResult(ordersResult) as any[];
+  const returns = requireCloudResult(returnsResult) as any[];
 
   const invoiceIds = invoices.map(invoice => String(invoice.id));
   const itemResult = invoiceIds.length
@@ -56,6 +59,18 @@ export async function loadCloudReportData(): Promise<CloudReportData> {
   const productsById = new Map(products.map(product => [String(product.id), product]));
   const customersById = new Map(customers.map(customer => [String(customer.id), customer]));
 
+  const returnIds = returns.map(item => String(item.id));
+  const returnItemResult = returnIds.length
+    ? await supabase.from("invoice_return_items").select("*").eq("shop_id", shopId).in("return_id", returnIds).limit(5000)
+    : { data: [], error: null };
+  const returnItems = requireCloudResult(returnItemResult) as any[];
+  const returnedByInvoice = new Map<string, Array<{ productId?: string; quantity: number; pointsReversed: number }>>();
+  returns.forEach(returnRow => {
+    const invoiceId = String(returnRow.invoice_id);
+    const rows = returnItems.filter(item => String(item.return_id) === String(returnRow.id));
+    returnedByInvoice.set(invoiceId, [...(returnedByInvoice.get(invoiceId) || []), ...rows.map(item => ({ productId: item.product_id ? String(item.product_id) : undefined, quantity: numberValue(item.quantity), pointsReversed: numberValue(item.points_reversed) }))]);
+  });
+
   const sales: SalesInventorySale[] = invoices.map(invoice => ({
     id: String(invoice.id),
     date: String(invoice.created_at),
@@ -64,6 +79,7 @@ export async function loadCloudReportData(): Promise<CloudReportData> {
     paymentMethod: String(invoice.payment_method || "other"),
     total: numberValue(invoice.total),
     loyaltyPointsAwarded: numberValue(invoice.loyalty_points_awarded),
+    returnedItems: returnedByInvoice.get(String(invoice.id)),
     items: invoiceItems.filter(item => String(item.invoice_id) === String(invoice.id)).map(item => {
       const product = productsById.get(String(item.product_id));
       return {
@@ -102,5 +118,5 @@ export async function loadCloudReportData(): Promise<CloudReportData> {
     itemsJson: JSON.stringify(jsonArray(order.items)), totalAmount: numberValue(order.total_amount), customerCode: null,
   }));
 
-  return { sales, products: cloudProducts, recipes: cloudRecipes, customers: loyaltyCustomers, rewards: loyaltyRewards, giftDeliveries, catalogOrders: cloudOrders };
+  return { sales, products: cloudProducts, recipes: cloudRecipes, customers: loyaltyCustomers, rewards: loyaltyRewards, giftDeliveries, catalogOrders: cloudOrders, returns: returns.map(item => ({ id: String(item.id), invoiceId: String(item.invoice_id), date: String(item.created_at), refundTotal: numberValue(item.refund_total), pointsReversed: numberValue(item.points_reversed) })) };
 }

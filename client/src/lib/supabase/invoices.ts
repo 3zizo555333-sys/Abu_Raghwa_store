@@ -66,8 +66,10 @@ export type CloudInvoice = {
   customerPhone: string;
   saleType: "retail" | "wholesale" | "bulk";
   status: string;
+  loyaltyPointsAwarded: number;
 };
 export type CloudInvoicePage = { items: CloudInvoice[]; nextOffset: number | null };
+export type ReturnableInvoiceItem = { invoice_item_id: string; product_id: string | null; product_name: string; sold_quantity: number; returned_quantity: number; remaining_quantity: number; refund_per_unit: number; points_earned: number };
 
 type InvoiceRow = Database["public"]["Tables"]["invoices"]["Row"];
 type InvoiceItemRow = Database["public"]["Views"]["seller_invoice_items"]["Row"] & { unit_cost_snapshot?: number };
@@ -277,7 +279,30 @@ export function mapCloudInvoiceRecord(row: InvoiceRow, itemRows: InvoiceItemRow[
     customerPhone: row.customer_phone,
     saleType: row.sale_type === "wholesale" || row.sale_type === "bulk" ? row.sale_type : "retail",
     status: row.status,
+    loyaltyPointsAwarded: Number(row.loyalty_points_awarded || 0),
   };
+}
+
+export async function getInvoiceReturnableItems(invoiceId: string): Promise<ReturnableInvoiceItem[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  const result = await getSupabaseClient().rpc("get_invoice_returnable_items", { p_shop_id: shopId, p_invoice_id: invoiceId });
+  const data = requireCloudResult(result);
+  if (!Array.isArray(data)) throw new Error("تعذر قراءة الأصناف القابلة للإرجاع.");
+  return data.map(row => {
+    const item = asJsonObject(row, "returnable invoice item");
+    return { invoice_item_id: String(item.invoice_item_id || ""), product_id: typeof item.product_id === "string" ? item.product_id : null, product_name: String(item.product_name || "صنف"), sold_quantity: Number(item.sold_quantity || 0), returned_quantity: Number(item.returned_quantity || 0), remaining_quantity: Number(item.remaining_quantity || 0), refund_per_unit: Number(item.refund_per_unit || 0), points_earned: Number(item.points_earned || 0) };
+  });
+}
+
+export async function createInvoiceReturn(input: { invoiceId: string; items: Array<{ invoiceItemId: string; quantity: number }>; reason?: string }): Promise<{ returnId: string; invoiceId: string; refundTotal: number; pointsReversed: number; invoiceStatus: string; idempotentReplay: boolean }> {
+  assertCloudOnline();
+  if (!input.items.length) throw new Error("اختر صنفًا واحدًا على الأقل للإرجاع.");
+  const { shopId } = await getActiveShopContext();
+  const result = await getSupabaseClient().rpc("create_invoice_return", { p_shop_id: shopId, p_invoice_id: input.invoiceId, p_idempotency_key: createInvoiceIdempotencyKey(), p_items: input.items.map(item => ({ invoice_item_id: item.invoiceItemId, quantity: item.quantity })), p_reason: input.reason?.trim() || "" });
+  const row = asJsonObject(requireCloudResult(result), "invoice return result");
+  if (typeof row.return_id !== "string" || typeof row.invoice_id !== "string") throw new Error("لم يؤكد الخادم عملية المرتجع.");
+  return { returnId: row.return_id, invoiceId: row.invoice_id, refundTotal: Number(row.refund_total || 0), pointsReversed: Number(row.points_reversed || 0), invoiceStatus: String(row.invoice_status || "partially_returned"), idempotentReplay: Boolean(row.idempotent_replay) };
 }
 
 async function getInvoiceItems(invoiceIds: string[], shopId: string, manager: boolean): Promise<InvoiceItemRow[]> {

@@ -94,6 +94,7 @@ const Auth = lazy(() => import("./pages/Auth"));
 const SalesInventory = lazy(() => import("./pages/SalesInventory"));
 const InvoiceOCR = lazy(() => import("./pages/InvoiceOCR"));
 const Invoice = lazy(() => import("./pages/Invoice"));
+const Returns = lazy(() => import("./pages/Returns"));
 const AuditLog = lazy(() => import("./pages/AuditLog"));
 const InventoryAlerts = lazy(() => import("./pages/InventoryAlerts"));
 const RecipeProduction = lazy(() => import("./pages/RecipeProduction"));
@@ -207,6 +208,7 @@ function Router() {
       <Route path={"/calculator"} component={Calculator} />
       <Route path={"/invoice-ocr"} component={withSupervisorRole(InvoiceOCR)} />
       <Route path={"/invoice"} component={Invoice} />
+      <Route path={"/returns"} component={withSupervisorRole(withPasswordProtection(Returns, 'invoices', 'إدارة المرتجعات'))} />
       <Route path={"/audit-log"} component={withSupervisorRole(AuditLog)} />
 
       <Route path={"/inventory-alerts"} component={withSupervisorRole(InventoryAlerts)} />
