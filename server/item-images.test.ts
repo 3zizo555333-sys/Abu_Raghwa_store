@@ -9,7 +9,7 @@ describe("رفع صور المنتجات والتركيبات", () => {
     const router = readFileSync(resolve(projectRoot, "server/routers.ts"), "utf8");
     const productsApi = readFileSync(resolve(projectRoot, "client/src/lib/supabase/productImages.ts"), "utf8");
     const productsPage = readFileSync(resolve(projectRoot, "client/src/pages/Products.tsx"), "utf8");
-    const imagePolicy = readFileSync(resolve(projectRoot, "supabase/migrations/20261011113000_fix_product_image_storage_rls.sql"), "utf8");
+    const imagePolicy = readFileSync(resolve(projectRoot, "supabase/migrations/20261011083915_fix_product_image_storage_rls.sql"), "utf8");
     expect(router).toContain("itemImages: router");
     expect(router).toContain("item-images/${safeItemId}");
     expect(router).toContain("image/webp");
