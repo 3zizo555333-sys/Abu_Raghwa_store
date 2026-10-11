@@ -205,9 +205,13 @@ export async function listProductCategories(): Promise<ProductCategory[]> {
 export async function createProduct(input: ProductInput): Promise<CloudProduct> {
   assertCloudOnline();
   const supabase = getSupabaseClient();
-  const { shopId } = await getActiveShopContext();
-  const result = await supabase.rpc("create_product", { p_shop_id: shopId, p_payload: toProductPayload(input) });
-  return mapProductRow(requireCloudResult(result) as unknown as ProductRow, shopId);
+  const { shopId: storeId } = await getActiveShopContext();
+  if (!storeId) throw new Error("لم يتم تحديد المتجر النشط لإضافة المنتج.");
+  // shop_id is the canonical database column for the store_id selected from
+  // the authenticated user's active membership; it is passed separately from
+  // the product payload so it cannot be omitted by the form.
+  const result = await supabase.rpc("create_product", { p_shop_id: storeId, p_payload: toProductPayload(input) });
+  return mapProductRow(requireCloudResult(result) as unknown as ProductRow, storeId);
 }
 
 export async function updateProduct(input: ProductInput & { id: string; expectedVersion: number }): Promise<CloudProduct> {
