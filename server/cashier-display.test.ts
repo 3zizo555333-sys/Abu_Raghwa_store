@@ -2,8 +2,9 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 
+const root = resolve(import.meta.dirname, "..");
+
 describe("PLU والكاشير وشاشة العملاء", () => {
-  const root = resolve(import.meta.dirname, "..");
   it("يحتفظ بكود PLU وطريقة البيع بالوزن في نموذج المنتجات", () => {
     const products = readFileSync(resolve(root, "client/src/pages/Products.tsx"), "utf8");
     expect(products).toContain("plu?: string");
@@ -23,6 +24,26 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(cashier).toContain("findProductsByBarcode(barcodeProducts, code)");
     expect(cashier).toContain("setBarcodeChoices(matches)");
     expect(products).toContain('supabase.rpc("search_products_by_barcode"');
+  });
+
+  it("يعرض أزرار نوع البيع داخل السلة ويعيد تسعيرها قبل الإتمام", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const selector = readFileSync(resolve(root, "client/src/components/SaleTypeSegmentedControl.tsx"), "utf8");
+    const selectorIndex = cashier.indexOf("<SaleTypeSegmentedControl");
+    const cartIndex = cashier.indexOf("<aside");
+    const checkoutIndex = cashier.indexOf("onClick={completeSale}");
+
+    expect(selectorIndex).toBeGreaterThan(cartIndex);
+    expect(selectorIndex).toBeLessThan(checkoutIndex);
+    expect(selector).toContain('aria-label="نوع البيع"');
+    expect(selector).toContain("aria-pressed={selected}");
+    expect(selector).toContain("onClick={() => onChange(type.value)}");
+    expect(selector).toContain('label: "قطاعي"');
+    expect(selector).toContain('label: "تجزئة"');
+    expect(selector).toContain('label: "جملة"');
+    expect(cashier).toContain("total: item.quantity * unitPrice");
+    expect(cashier).toContain("getSaleUnitOptions(item,");
+    expect(cashier).toContain("changeCartUnit(item.id");
   });
 
   it("لا يعلن نجاح البيع ولا يفرغ السلة قبل تأكيد إنشاء الفاتورة", () => {
