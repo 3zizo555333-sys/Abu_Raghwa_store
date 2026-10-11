@@ -20,7 +20,7 @@ import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
-import { createProduct, createProductsInChunks, deleteProducts, listProductCategories, updateProduct, uploadProductImage, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
+import { createProduct, createProductCategory, createProductsInChunks, deleteProductCategory, deleteProducts, ensureProductCategory, listProductCategories, updateProduct, updateProductCategory, uploadProductImage, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
 
 interface Product {
@@ -160,13 +160,12 @@ const createEmptyProductForm = () => ({
 
 export default function Products() {
   const [, navigate] = useLocation();
-  const { isSeller, canViewSensitiveFinancials } = useStaffAccess();
+  const { isSeller, isManager: canDeleteCategories, canViewSensitiveFinancials } = useStaffAccess();
   const queryClient = useQueryClient();
   const [searchQuery, setSearchQuery] = useState("");
   const productsQuery = useCloudProducts({ search: searchQuery, pageSize: 50 });
   const products = useMemo(() => productsQuery.products.map(mapCloudProduct), [productsQuery.products]);
   const [recipes] = useState<any[]>([]);
-  const [customCategories, setCustomCategories] = useState<string[]>([]);
   const [categoryRecords, setCategoryRecords] = useState<ProductCategory[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -181,6 +180,11 @@ export default function Products() {
   const [showBarcodeSearchScanner, setShowBarcodeSearchScanner] = useState(false);
   const [showStats, setShowStats] = useState(false);
   const [showCategoryPicker, setShowCategoryPicker] = useState(false);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [categoryDraft, setCategoryDraft] = useState("");
+  const [savingCategory, setSavingCategory] = useState(false);
+  const [busyCategoryId, setBusyCategoryId] = useState<string | null>(null);
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [bulkImportText, setBulkImportText] = useState("");
   const [bulkCategoryName, setBulkCategoryName] = useState("");
@@ -192,7 +196,8 @@ export default function Products() {
   const [isUploadingImage, setIsUploadingImage] = useState(false);
   const [formData, setFormData] = useState(createEmptyProductForm);
   const barcodeFieldError = getBarcodeFieldError(formData.code, formData.barcodes);
-  const availableCategories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...categoryRecords.map(item => item.name), ...customCategories, ...products.map(product => product.category).filter(Boolean)])), [categoryRecords, customCategories, products]);
+  const availableCategories = useMemo(() => Array.from(new Set([...DEFAULT_CATEGORIES, ...categoryRecords.map(item => item.name), ...products.map(product => product.category).filter(Boolean)])), [categoryRecords, products]);
+  const legacyCategories = useMemo(() => Array.from(new Set(products.filter(product => !product.categoryId && product.category !== "بدون فئة").map(product => product.category))), [products]);
   const categoryCounts = useMemo(() => countProductsByCategory(products, availableCategories), [products, availableCategories]);
 
   useEffect(() => {
@@ -205,19 +210,73 @@ export default function Products() {
 
   useEffect(() => { setSelectedProductIds([]); }, [searchQuery]);
 
-  const addProductCategory = () => {
+  const addProductCategory = async () => {
     const category = newCategoryName.trim();
     if (!category) return toast.error("اكتب اسم الفئة الجديدة أولًا");
     const existing = availableCategories.find(item => item.localeCompare(category, "ar", { sensitivity: "base" }) === 0);
-    if (existing) {
-      setFormData(current => ({ ...current, category: existing }));
+    try {
+      const record = await ensureProductCategory(existing || category);
+      if (record) setCategoryRecords(current => current.some(item => item.id === record.id) ? current : [...current, record].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      setFormData(current => ({ ...current, category: existing || record?.name || category }));
       setNewCategoryName("");
-      return toast.message("الفئة موجودة بالفعل وتم اختيارها");
+      toast.success(existing ? `تم اختيار الفئة المحفوظة «${existing}»` : `تم إنشاء الفئة «${category}» وحفظها سحابيًا`);
+    } catch (error) {
+      toast.error(`تعذر حفظ الفئة في Supabase. ${error instanceof Error ? error.message : "تحقق من الصلاحيات والاتصال."}`);
     }
-    setCustomCategories(current => [...current, category]);
-    setFormData(current => ({ ...current, category }));
-    setNewCategoryName("");
-    toast.success(`تم اختيار فئة «${category}»؛ ستُحفظ مع المنتج عند حفظه`);
+  };
+
+  const saveCategoryDraft = async () => {
+    const name = categoryDraft.trim();
+    if (!name) return toast.error("اكتب اسم الفئة أولًا");
+    setSavingCategory(true);
+    try {
+      const saved = editingCategoryId ? await updateProductCategory(editingCategoryId, name) : await createProductCategory(name);
+      const refreshed = await listProductCategories();
+      setCategoryRecords(refreshed);
+      if (categoryFilter !== "all" && editingCategoryId) {
+        const previous = categoryRecords.find(item => item.id === editingCategoryId)?.name;
+        if (previous === categoryFilter) setCategoryFilter(saved.name);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      setEditingCategoryId(null);
+      setCategoryDraft("");
+      toast.success(editingCategoryId ? `تم تعديل الفئة إلى «${saved.name}»` : `تم حفظ الفئة «${saved.name}» على المتجر`);
+    } catch (error) {
+      toast.error(`تعذر حفظ الفئة. ${error instanceof Error ? error.message : "تحقق من اتصال Supabase وصلاحية عضويتك."}`);
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  const adoptLegacyCategory = async (name: string) => {
+    setSavingCategory(true);
+    try {
+      const saved = await createProductCategory(name);
+      setCategoryRecords(current => current.some(item => item.id === saved.id) ? current : [...current, saved].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.success(`تم حفظ «${saved.name}» وربط المنتجات القديمة بها`);
+    } catch (error) {
+      toast.error(`تعذر اعتماد الفئة القديمة. ${error instanceof Error ? error.message : "تحقق من الاتصال والصلاحيات."}`);
+    } finally {
+      setSavingCategory(false);
+    }
+  };
+
+  const removeCategory = async (category: ProductCategory) => {
+    if (!confirm(`حذف فئة «${category.name}»؟ ستُنقل المنتجات المرتبطة بها إلى «بدون فئة» عبر RPC آمن؛ لن تتغير الأسعار أو الكميات أو المخزون.`)) return;
+    setBusyCategoryId(category.id);
+    try {
+      const result = await deleteProductCategory(category.id);
+      setCategoryRecords(current => current.filter(item => item.id !== category.id));
+      if (categoryFilter === category.name) setCategoryFilter("all");
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.success(`حُذفت الفئة وفُصلت ${result.unassignedProducts} منتجات عنها دون تغيير المخزون`);
+    } catch (error) {
+      await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
+      toast.error(`تعذر حذف الفئة؛ لم تُحذف قبل نجاح تحديث المنتجات. ${error instanceof Error ? error.message : "تحقق من الاتصال والصلاحيات ثم أعد المحاولة."}`);
+    } finally {
+      setBusyCategoryId(null);
+    }
   };
 
   const resetProductForm = () => {
@@ -304,12 +363,18 @@ export default function Products() {
     if (!selectedProductIds.length) return toast.error("حدد منتجًا واحدًا على الأقل أولًا");
     if (!target) return toast.error("اختر الفئة التي ستُنقل إليها المنتجات");
     const existing = availableCategories.find(item => item.localeCompare(target, "ar", { sensitivity: "base" }) === 0) || target;
-    const categoryId = categoryRecords.find(item => item.name === existing)?.id ?? null;
+    let categoryId: string | null = null;
+    try {
+      const record = await ensureProductCategory(existing);
+      categoryId = record?.id ?? null;
+      if (record) setCategoryRecords(current => current.some(item => item.id === record.id) ? current : [...current, record].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+    } catch (error) {
+      return toast.error(`تعذر حفظ الفئة قبل نقل المنتجات. ${error instanceof Error ? error.message : "تحقق من الاتصال."}`);
+    }
     const selected = products.filter(product => selectedProductIds.includes(product.id));
     if (selected.length !== selectedProductIds.length) return toast.error("تعذر العثور على كل المنتجات المحددة في الصفحات المحمّلة؛ ألغِ التحديد ثم أعد المحاولة.");
     const outcomes = await Promise.allSettled(selected.map(product => updateProduct({ ...toProductInput(product, existing, categoryId), id: product.id, expectedVersion: product.version })));
     await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
-    setCustomCategories(current => current.includes(existing) ? current : [...current, existing]);
     setSelectedProductIds([]);
     setMoveCategory("");
     const failures = outcomes.filter((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
@@ -344,7 +409,6 @@ export default function Products() {
     const rows = bulkImportText.split(/\r?\n/).map(row => row.trim()).filter(Boolean);
     if (!rows.length) return toast.error("الصق أسماء المنتجات أولًا");
     const existingCategory = availableCategories.find(item => item.localeCompare(category, "ar", { sensitivity: "base" }) === 0) || category;
-    const categoryId = categoryRecords.find(item => item.name === existingCategory)?.id ?? null;
     const imported = rows.map(row => {
       const [name, code = ""] = row.split(/\t|\s*;\s*|\s*,\s*/).map(value => value.trim());
       return { name, code };
@@ -352,6 +416,9 @@ export default function Products() {
     if (!imported.length) return toast.error("لم أجد أسماء منتجات صالحة في النص الملصوق");
     let savedCount = 0;
     try {
+      const categoryRecord = await ensureProductCategory(existingCategory);
+      const categoryId = categoryRecord?.id ?? null;
+      if (categoryRecord) setCategoryRecords(current => current.some(item => item.id === categoryRecord.id) ? current : [...current, categoryRecord].sort((a, b) => a.name.localeCompare(b.name, "ar")));
       const inputs: ProductInput[] = imported.map((item, index) => {
         const generatedCode = item.code || `PRD-${Date.now().toString().slice(-4)}-${index + 1}`;
         return {
@@ -370,7 +437,6 @@ export default function Products() {
         toast.error(`تم حفظ ${savedCount} من ${inputs.length} فقط؛ بقي نص الاستيراد للمراجعة ولم تُخفَ البيانات المدخلة. ${result.failed} صفوف فشلت.`);
         return;
       }
-      setCustomCategories(current => current.includes(existingCategory) ? current : [...current, existingCategory]);
       setBulkImportText("");
       setBulkCategoryName("");
       setShowBulkPaste(true);
@@ -467,9 +533,8 @@ export default function Products() {
     const subWholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.subWholesaleLoyaltyPoints);
     const wholesaleLoyaltyPoints = normalizeLoyaltyPoints(formData.wholesaleLoyaltyPoints);
     const category = formData.category.trim() || "منظفات عامة";
-    const categoryId = categoryRecords.find(item => item.name === category)?.id ?? null;
     const code = formData.code.trim() || `PRD-${Date.now().toString().slice(-4)}`;
-    const input: ProductInput = {
+    const inputWithoutCategory: Omit<ProductInput, "categoryId"> = {
       name: formData.name.trim(), code, barcode: formData.code.trim() || null,
       plu: formData.plu.trim() || formData.code.trim() || null,
       saleMode: formData.saleMode, barcodes: collectProductBarcodes(formData.code, formData.barcodes),
@@ -479,13 +544,16 @@ export default function Products() {
       retailLoyaltyPoints, subWholesaleLoyaltyPoints, wholesaleLoyaltyPoints,
       bulkProfitPercent: calculateBulkProfit(bulkPrice, pieceCost),
       retailProfitPercent: calculateRetailProfitPercent(wholesaleRetailPrice, pieceCost),
-      costPerUnit: wholesalePrice, costPerPiece: pieceCost, categoryId, category,
+      costPerUnit: wholesalePrice, costPerPiece: pieceCost, category,
       contentUnit: formData.contentUnit.trim() || "قطعة", loyaltyPoints: retailLoyaltyPoints || normalizeLoyaltyPoints(formData.loyaltyPoints),
       quantity: Math.max(0, Number(formData.availableQuantity) || 0), minQuantity: 0,
     };
 
     setSavingProduct(true);
     try {
+      const categoryRecord = await ensureProductCategory(category);
+      if (categoryRecord) setCategoryRecords(current => current.some(item => item.id === categoryRecord.id) ? current : [...current, categoryRecord].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      const input: ProductInput = { ...inputWithoutCategory, categoryId: categoryRecord?.id ?? null };
       const saved = editingId
         ? await updateProduct({ ...input, id: editingId, expectedVersion: editingVersion ?? 0 })
         : await createProduct(input);
@@ -696,6 +764,9 @@ export default function Products() {
               className="border-emerald-500 text-emerald-700 font-bold"
             >
               <Plus className="w-4 h-4 mr-1" /> إضافة مجموعة منتجات
+            </Button>
+            <Button type="button" variant="outline" onClick={() => { setEditingCategoryId(null); setCategoryDraft(""); setShowCategoryManager(true); }} className="border-violet-300 text-violet-800">
+              <Edit2 className="ml-1 h-4 w-4" /> إدارة الفئات
             </Button>
           </div>
         </div>
@@ -1166,6 +1237,42 @@ export default function Products() {
 
       <AdvancedBarcodeScanner isOpen={showBarcodeScanner} onClose={() => { setShowBarcodeScanner(false); setBarcodeScannerTarget(-1); }} onDetect={(code) => { const target = barcodeScannerTarget; setFormData(current => target < 0 ? ({ ...current, code }) : ({ ...current, barcodes: current.barcodes.map((value, index) => index === target ? code : value) })); setShowBarcodeScanner(false); setBarcodeScannerTarget(-1); toast.success(target < 0 ? `تم تسجيل الباركود الأساسي: ${code}` : `تم تسجيل الباركود الإضافي: ${code}`); }} title={barcodeScannerTarget < 0 ? "تصوير الباركود الأساسي" : `تصوير الباركود الإضافي ${barcodeScannerTarget + 1}`} />
       <AdvancedBarcodeScanner isOpen={showBarcodeSearchScanner} onClose={() => setShowBarcodeSearchScanner(false)} onDetect={(code) => { setSearchQuery(code); setCategoryFilter("all"); setShowBarcodeSearchScanner(false); toast.success(`تم البحث بالكود: ${code}`); }} title="تصوير باركود للبحث عن المنتج" />
+
+      {showCategoryManager && (
+        <div className="fixed inset-0 z-[80] flex items-center justify-center bg-black/55 p-3" onClick={() => { setShowCategoryManager(false); setEditingCategoryId(null); setCategoryDraft(""); }}>
+          <section role="dialog" aria-modal="true" aria-label="إدارة فئات المنتجات" className="max-h-[90vh] w-full max-w-xl overflow-y-auto rounded-3xl bg-white p-5 shadow-2xl" dir="rtl" onClick={event => event.stopPropagation()}>
+            <div className="flex items-start justify-between gap-3">
+              <div><h2 className="text-xl font-black text-slate-950">إدارة فئات المنتجات</h2><p className="mt-1 text-xs text-slate-600">تُحفظ الفئات في Supabase ضمن المتجر الحالي وتُحمى بسياسات RLS والعضوية.</p></div>
+              <Button type="button" size="sm" variant="ghost" aria-label="إغلاق إدارة الفئات" onClick={() => { setShowCategoryManager(false); setEditingCategoryId(null); setCategoryDraft(""); }}><X className="h-5 w-5" /></Button>
+            </div>
+
+            <form className="mt-4 flex gap-2" onSubmit={event => { event.preventDefault(); void saveCategoryDraft(); }}>
+              <Input value={categoryDraft} maxLength={120} onChange={event => setCategoryDraft(event.target.value)} placeholder={editingCategoryId ? "اسم الفئة الجديد" : "اسم فئة جديدة — مثال: سوائل"} aria-label="اسم الفئة" />
+              <Button type="submit" disabled={savingCategory} className="shrink-0 bg-violet-700 text-white hover:bg-violet-800">{savingCategory ? "جارٍ الحفظ..." : editingCategoryId ? "حفظ التعديل" : <><Plus className="ml-1 h-4 w-4" />إضافة</>}</Button>
+              {editingCategoryId && <Button type="button" variant="outline" disabled={savingCategory} onClick={() => { setEditingCategoryId(null); setCategoryDraft(""); }}>إلغاء</Button>}
+            </form>
+
+            <div className="mt-4 space-y-2">
+              {categoryRecords.length === 0 && <p className="rounded-xl bg-slate-50 p-4 text-sm text-slate-600">لا توجد فئات محفوظة بعد. أضف فئة جديدة أو اعتمد الفئات القديمة أدناه.</p>}
+              {categoryRecords.map(category => (
+                <div key={category.id} className="flex items-center justify-between gap-2 rounded-xl border border-slate-200 p-3">
+                  <span className="min-w-0 truncate font-bold text-slate-900">{category.name}</span>
+                  <div className="flex shrink-0 gap-2">
+                    <Button type="button" size="sm" variant="outline" disabled={savingCategory || busyCategoryId === category.id} onClick={() => { setEditingCategoryId(category.id); setCategoryDraft(category.name); }}><Edit2 className="ml-1 h-4 w-4" />تعديل</Button>
+                    {canDeleteCategories && <Button type="button" size="sm" variant="outline" disabled={savingCategory || busyCategoryId === category.id} onClick={() => void removeCategory(category)} className="border-red-200 text-red-700"><Trash2 className="ml-1 h-4 w-4" />{busyCategoryId === category.id ? "جارٍ الحذف..." : "حذف"}</Button>}
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {legacyCategories.length > 0 && <section className="mt-5 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+              <h3 className="font-black text-amber-950">فئات قديمة غير محفوظة كسجلات</h3>
+              <p className="mt-1 text-xs text-amber-900">اعتماد الفئة ينشئ سجلًا سحابيًا ويربط المنتجات القديمة بها عبر RPC مع الحفاظ على السعر والمخزون.</p>
+              <div className="mt-3 flex flex-wrap gap-2">{legacyCategories.map(name => <Button type="button" key={name} size="sm" variant="outline" disabled={savingCategory} onClick={() => void adoptLegacyCategory(name)} className="border-amber-300 bg-white text-amber-950"><Plus className="ml-1 h-3.5 w-3.5" />{name} · حفظ</Button>)}</div>
+            </section>}
+          </section>
+        </div>
+      )}
 
       {showCategoryPicker && (
         <div className="fixed inset-0 z-[70] bg-black/35" onClick={() => setShowCategoryPicker(false)}>

@@ -173,7 +173,7 @@ export function toProductPayload(product: ProductInput): Json {
   } as Json;
 }
 
-export async function listProductsPage(input: { cursor?: ProductCursor | null; search?: string; categoryId?: string | null; limit?: number } = {}): Promise<ProductPage> {
+export async function listProductsPage(input: { cursor?: ProductCursor | null; search?: string; categoryId?: string | null; limit?: number; includeImages?: boolean } = {}): Promise<ProductPage> {
   const supabase = getSupabaseClient();
   const { shopId } = await getActiveShopContext();
   const result = await supabase.rpc("list_products_page", {
@@ -187,7 +187,7 @@ export async function listProductsPage(input: { cursor?: ProductCursor | null; s
   const data = requireCloudResult(result) as unknown as ProductPage;
   const items = await Promise.all(data.items.map(async item => {
     const product = mapProductRow(item as unknown as Partial<ProductRow> & Record<string, unknown>, shopId);
-    if (product.imageStoragePath) {
+    if (input.includeImages !== false && product.imageStoragePath) {
       try { product.imageUrl = await getSignedProductImageUrl(product.imageStoragePath); } catch { /* Keep product rows available if a private image URL expires or cannot be signed. */ }
     }
     return product;
@@ -218,6 +218,117 @@ export async function listProductCategories(): Promise<ProductCategory[]> {
   const { shopId } = await getActiveShopContext();
   const result = await supabase.from("product_categories").select("id, name").eq("shop_id", shopId).order("sort_order").order("name");
   return requireCloudResult(result).map(category => ({ id: category.id, name: category.name }));
+}
+
+const normalizedCategoryName = (name: string) => name.trim().replace(/\s+/g, " ");
+const sameCategoryName = (left: string, right: string) => left.localeCompare(right, "ar", { sensitivity: "base" }) === 0;
+
+async function updateMatchingProductCategories(input: {
+  matchCategoryId: string | null;
+  matchLegacyName: string;
+  nextCategoryId: string | null;
+  nextCategoryName: string;
+}) {
+  assertCloudOnline();
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  let cursor: ProductCursor | null = null;
+  let updated = 0;
+
+  do {
+    const page = await listProductsPage({ cursor, limit: 100, includeImages: false });
+    const matchingProducts = page.items.filter(product =>
+      (input.matchCategoryId !== null && product.categoryId === input.matchCategoryId)
+      || (!product.categoryId && product.category === input.matchLegacyName),
+    );
+
+    for (let index = 0; index < matchingProducts.length; index += 10) {
+      const batch = matchingProducts.slice(index, index + 10);
+      const outcomes = await Promise.allSettled(batch.map(product => supabase.rpc("update_product", {
+        p_shop_id: shopId,
+        p_product_id: product.id,
+        p_expected_version: product.version,
+        p_payload: { category_id: input.nextCategoryId, category_name: input.nextCategoryName } as Json,
+      }).then(result => requireCloudResult(result))));
+      const failure = outcomes.find((outcome): outcome is PromiseRejectedResult => outcome.status === "rejected");
+      updated += outcomes.filter(outcome => outcome.status === "fulfilled").length;
+      if (failure) {
+        const detail = failure.reason instanceof Error ? failure.reason.message : "رفض الخادم تحديث أحد المنتجات.";
+        throw new Error(`تم تحديث ارتباط ${updated} منتجًا، لكن تعذر إكمال تحديث روابط الفئة. أعد المحاولة بعد مراجعة المنتجات. ${detail}`);
+      }
+    }
+
+    cursor = page.next_cursor;
+    if (page.has_more && !cursor) throw new Error("تعذر متابعة صفحات المنتجات؛ لم يؤكد الخادم مؤشر الصفحة التالية.");
+  } while (cursor);
+
+  return updated;
+}
+
+export async function createProductCategory(name: string): Promise<ProductCategory> {
+  assertCloudOnline();
+  const normalized = normalizedCategoryName(name);
+  if (!normalized || normalized.length > 120) throw new Error("اسم الفئة مطلوب ويجب ألا يتجاوز 120 حرفًا.");
+  if (normalized === "بدون فئة") throw new Error("لا يمكن إنشاء سجل للفئة الافتراضية «بدون فئة».");
+
+  const existing = (await listProductCategories()).find(category => sameCategoryName(category.name, normalized));
+  if (existing) {
+    await updateMatchingProductCategories({ matchCategoryId: null, matchLegacyName: existing.name, nextCategoryId: existing.id, nextCategoryName: existing.name });
+    return existing;
+  }
+
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  const result = await supabase.from("product_categories").insert({ shop_id: shopId, name: normalized }).select("id, name").single();
+  const record = requireCloudResult(result);
+  const category = { id: record.id, name: record.name };
+
+  // Old products may carry category_name without a category_id. Adopt those
+  // labels through the version-checked update_product RPC, never direct writes.
+  await updateMatchingProductCategories({ matchCategoryId: null, matchLegacyName: category.name, nextCategoryId: category.id, nextCategoryName: category.name });
+  return category;
+}
+
+export async function ensureProductCategory(name: string): Promise<ProductCategory | null> {
+  const normalized = normalizedCategoryName(name);
+  if (!normalized || normalized === "بدون فئة") return null;
+  const categories = await listProductCategories();
+  const existing = categories.find(category => sameCategoryName(category.name, normalized));
+  return existing ?? createProductCategory(normalized);
+}
+
+export async function updateProductCategory(id: string, name: string): Promise<ProductCategory> {
+  assertCloudOnline();
+  const normalized = normalizedCategoryName(name);
+  if (!normalized || normalized.length > 120 || normalized === "بدون فئة") throw new Error("أدخل اسم فئة صالحًا بطول لا يتجاوز 120 حرفًا.");
+
+  const categories = await listProductCategories();
+  const current = categories.find(category => category.id === id);
+  if (!current) throw new Error("لم تعد الفئة موجودة في المتجر الحالي؛ حدّث القائمة ثم أعد المحاولة.");
+  const duplicate = categories.find(category => category.id !== id && sameCategoryName(category.name, normalized));
+  if (duplicate) throw new Error(`توجد فئة أخرى باسم «${duplicate.name}». اختر اسمًا مختلفًا.`);
+  if (current.name === normalized) return current;
+
+  await updateMatchingProductCategories({ matchCategoryId: id, matchLegacyName: current.name, nextCategoryId: id, nextCategoryName: normalized });
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  const result = await supabase.from("product_categories").update({ name: normalized }).eq("id", id).eq("shop_id", shopId).select("id, name").single();
+  const record = requireCloudResult(result);
+  return { id: record.id, name: record.name };
+}
+
+export async function deleteProductCategory(id: string): Promise<{ deleted: boolean; unassignedProducts: number }> {
+  assertCloudOnline();
+  const context = await getActiveShopContext();
+  if (context.role !== "manager" && context.role !== "admin") throw new Error("حذف الفئات متاح للمدير أو المسؤول فقط.");
+  const category = (await listProductCategories()).find(item => item.id === id);
+  if (!category) throw new Error("لم تعد الفئة موجودة في المتجر الحالي؛ حدّث القائمة ثم أعد المحاولة.");
+
+  const unassignedProducts = await updateMatchingProductCategories({ matchCategoryId: id, matchLegacyName: category.name, nextCategoryId: null, nextCategoryName: "بدون فئة" });
+  const supabase = getSupabaseClient();
+  const result = await supabase.from("product_categories").delete().eq("id", id).eq("shop_id", context.shopId).select("id").single();
+  requireCloudResult(result);
+  return { deleted: true, unassignedProducts };
 }
 
 export async function createProduct(input: ProductInput): Promise<CloudProduct> {

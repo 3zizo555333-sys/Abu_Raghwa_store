@@ -92,14 +92,12 @@ export async function captureInvoicePng(element: HTMLElement): Promise<Blob> {
       throw new Error("عنصر الفاتورة غير ظاهر أو بلا أبعاد.");
     }
 
-    const scale = typeof window === "undefined"
-      ? 2
-      : Math.min(3, Math.max(2, window.devicePixelRatio || 1));
+    const fixedWidth = Math.ceil(bounds.width);
     const canvas = await html2canvas(element, {
       backgroundColor: "#ffffff",
-      scale,
+      scale: 2,
       useCORS: true,
-      allowTaint: false,
+      allowTaint: true,
       logging: false,
       scrollX: 0,
       scrollY: 0,
@@ -108,7 +106,19 @@ export async function captureInvoicePng(element: HTMLElement): Promise<Blob> {
         const content = clonedDocument.querySelector<HTMLElement>("[data-invoice-export-content]");
         content?.style.removeProperty("transform");
         content?.style.removeProperty("transform-origin");
-        if (receipt) normalizeModernColors(clonedDocument, receipt);
+        if (receipt) {
+          const fixedHeight = Math.max(Math.ceil(bounds.height), Number(receipt.scrollHeight) || 0, Number(content?.scrollHeight) || 0);
+          receipt.style.setProperty("box-sizing", "border-box", "important");
+          receipt.style.setProperty("width", `${fixedWidth}px`, "important");
+          receipt.style.setProperty("min-width", `${fixedWidth}px`, "important");
+          receipt.style.setProperty("max-width", `${fixedWidth}px`, "important");
+          receipt.style.setProperty("height", `${fixedHeight}px`, "important");
+          receipt.style.setProperty("min-height", `${fixedHeight}px`, "important");
+          receipt.style.setProperty("max-height", `${fixedHeight}px`, "important");
+          receipt.style.setProperty("overflow", "visible", "important");
+          receipt.style.setProperty("margin", "0", "important");
+          normalizeModernColors(clonedDocument, receipt);
+        }
       },
     });
 
@@ -136,6 +146,21 @@ export async function captureInvoicePng(element: HTMLElement): Promise<Blob> {
     }
     const details = error instanceof Error ? ` ${error.message}` : "";
     throw new Error(`تعذر التقاط صورة الفاتورة.${details}`);
+  }
+}
+
+export type InvoicePngFallbackResult<T> = { status: "completed"; value: T } | { status: "print-fallback" };
+
+/** Runs a PNG action and silently opens the browser print dialog if capture/export fails. */
+export async function withInvoicePrintFallback<T>(
+  action: () => Promise<T> | T,
+  print: () => void = () => { if (typeof window !== "undefined") window.print(); },
+): Promise<InvoicePngFallbackResult<T>> {
+  try {
+    return { status: "completed", value: await action() };
+  } catch {
+    try { print(); } catch { /* Keep the mobile fallback silent; the browser may block printing. */ }
+    return { status: "print-fallback" };
   }
 }
 

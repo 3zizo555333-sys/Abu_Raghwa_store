@@ -9,8 +9,12 @@ describe("فئات المنتجات المرنة", () => {
     expect(page).toContain("createProduct");
     expect(page).toContain("updateProduct");
     expect(page).toContain("addProductCategory");
-    expect(page).toContain("إضافة فئة");
-    expect(page).toContain("customCategories");
+    expect(page).toContain("createProductCategory");
+    expect(page).toContain("updateProductCategory");
+    expect(page).toContain("deleteProductCategory");
+    expect(page).toContain("إدارة فئات المنتجات");
+    expect(page).toContain("فئات قديمة غير محفوظة كسجلات");
+    expect(page).not.toContain("customCategories");
     expect(page).toContain("availableCategories");
     expect(page).not.toContain("useCloudState");
     expect(page).not.toContain("localStorage");
