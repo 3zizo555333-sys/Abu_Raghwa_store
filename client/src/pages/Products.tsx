@@ -20,7 +20,8 @@ import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { collectProductBarcodes, createEmptyAdditionalBarcodeSlots, getAdditionalBarcodeSlots, getBarcodeFieldError } from "@/lib/productBarcodeSlots";
 import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
-import { createProduct, createProductsInChunks, deleteProducts, listProductCategories, updateProduct, uploadProductImage, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
+import { createProduct, createProductsInChunks, deleteProducts, listProductCategories, updateProduct, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
+import { uploadPreparedCloudProductImage } from "@/lib/supabase/productImages";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
 
 interface Product {
@@ -464,14 +465,16 @@ export default function Products() {
     };
 
     setSavingProduct(true);
+    let savedProduct: CloudProduct | null = null;
     try {
       const saved = editingId
         ? await updateProduct({ ...input, id: editingId, expectedVersion: editingVersion ?? 0 })
         : await createProduct(input);
+      savedProduct = saved;
       setEditingId(saved.id);
       setEditingVersion(saved.version);
       if (pendingImage) {
-        await uploadProductImage({ productId: saved.id, expectedVersion: saved.version, blob: pendingImage.blob, mimeType: pendingImage.mimeType });
+        await uploadPreparedCloudProductImage({ productId: saved.id, expectedVersion: saved.version, blob: pendingImage.blob, mimeType: pendingImage.mimeType });
         setEditingVersion(saved.version + 1);
       }
       await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
@@ -483,7 +486,10 @@ export default function Products() {
       setPendingImage(null);
     } catch (error) {
       await queryClient.invalidateQueries({ queryKey: ["supabase-products"] });
-      toast.error(`لم يؤكد الخادم حفظ التغييرات. ${error instanceof Error ? error.message : "تحقق من الاتصال ثم أعد المحاولة."}`);
+      const details = error instanceof Error ? error.message : "تحقق من الاتصال ثم أعد المحاولة.";
+      toast.error(savedProduct
+        ? `تم حفظ بيانات المنتج، لكن تعذر رفع الصورة وربطها. أعد المحاولة بعد تصحيح الرفع؛ بقيت الصورة المحددة في النموذج. ${details}`
+        : `لم يؤكد الخادم حفظ التغييرات. ${details}`);
     } finally {
       setSavingProduct(false);
     }

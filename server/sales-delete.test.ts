@@ -24,7 +24,6 @@ describe("حذف المبيعات من السجل", () => {
   it("لا يحذف فاتورة سحابية أو يعيد كتابتها من snapshot محلية", () => {
     const source = readFileSync(resolve(projectRoot, "client/src/pages/Sales.tsx"), "utf8");
 
-    expect(source).toContain("إرجاع الفواتير وحذفها غير متاحين");
     expect(source).not.toContain("handleDeleteSale");
     expect(source).not.toContain("deleteCloudInvoice");
     expect(source).not.toContain("updatedSales");

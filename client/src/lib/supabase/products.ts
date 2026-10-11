@@ -277,29 +277,6 @@ export async function createProductsInChunks(inputs: ProductInput[], onProgress?
   return { created, failed };
 }
 
-export async function uploadProductImage(input: { productId: string; expectedVersion: number; blob: Blob; mimeType: "image/jpeg" | "image/png" | "image/webp" }): Promise<{ imageId: string; storagePath: string }> {
-  assertCloudOnline();
-  if (input.blob.size < 1 || input.blob.size > 5 * 1024 * 1024) throw new Error("حجم صورة المنتج يجب ألا يتجاوز 5 ميجابايت بعد التجهيز.");
-  const supabase = getSupabaseClient();
-  const { shopId } = await getActiveShopContext();
-  const imageId = crypto.randomUUID();
-  const extension = input.mimeType === "image/png" ? "png" : input.mimeType === "image/webp" ? "webp" : "jpg";
-  const storagePath = `${shopId}/products/${input.productId}/${imageId}.${extension}`;
-  const upload = await supabase.storage.from("product-images").upload(storagePath, input.blob, { contentType: input.mimeType, upsert: false });
-  if (upload.error) requireCloudResult({ data: null, error: upload.error });
-  const registered = await supabase.rpc("register_product_image", {
-    p_shop_id: shopId,
-    p_product_id: input.productId,
-    p_expected_version: input.expectedVersion,
-    p_image_id: imageId,
-    p_storage_path: storagePath,
-    p_content_type: input.mimeType,
-    p_size_bytes: input.blob.size,
-  });
-  requireCloudResult(registered);
-  return { imageId, storagePath };
-}
-
 export async function getSignedProductImageUrl(storagePath: string, expiresInSeconds = 3600): Promise<string> {
   const supabase = getSupabaseClient();
   const { data, error } = await supabase.storage.from("product-images").createSignedUrl(storagePath, Math.min(Math.max(expiresInSeconds, 60), 3600));
