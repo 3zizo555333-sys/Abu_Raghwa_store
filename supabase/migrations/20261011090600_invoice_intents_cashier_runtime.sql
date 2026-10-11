@@ -2,7 +2,7 @@
 -- This runtime migration provisions the cashier recovery flow.
 begin;
 
-create table public.invoice_intents (
+create table if not exists public.invoice_intents (
   id uuid primary key default gen_random_uuid(),
   shop_id uuid not null references public.shops(id) on delete cascade,
   actor_id uuid not null references auth.users(id) on delete cascade,
@@ -19,9 +19,9 @@ create table public.invoice_intents (
   check (state <> 'cancelled' or invoice_id is null)
 );
 
-create index invoice_intents_actor_recent_idx
+create index if not exists invoice_intents_actor_recent_idx
   on public.invoice_intents(shop_id, actor_id, updated_at desc);
-create unique index invoice_intents_one_open_per_actor_idx
+create unique index if not exists invoice_intents_one_open_per_actor_idx
   on public.invoice_intents(shop_id, actor_id)
   where state in ('pending', 'completed');
 
