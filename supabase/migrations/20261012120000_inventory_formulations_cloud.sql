@@ -36,7 +36,7 @@ create policy apartment_inventory_images_manager_insert on public.apartment_inve
   with check (public.has_shop_role(shop_id, array['manager','admin','supervisor']::public.shop_role[]));
 create policy apartment_inventory_images_manager_delete on public.apartment_inventory_images for delete to authenticated
   using (public.has_shop_role(shop_id, array['manager','admin']::public.shop_role[]));
-revoke all on public.apartment_inventory_images from public, anon;
+revoke all on public.apartment_inventory_images from public, anon, authenticated;
 grant select, delete on public.apartment_inventory_images to authenticated;
 
 create or replace function public.apartment_inventory_shop_from_path(p_name text)

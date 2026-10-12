@@ -1,12 +1,13 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(15);
+select plan(16);
 
 select has_table('public', 'apartment_inventory_images', 'private apartment inventory image metadata exists');
 select ok(to_regclass('public.formulations') is not null, 'formulations compatibility view exists');
 select ok(exists (select 1 from information_schema.columns where table_schema='public' and table_name='recipe_ingredients' and column_name='raw_material_id'), 'formulation ingredients reference raw materials');
 select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.apartment_inventory_images'::regclass), 'image metadata has forced RLS');
 select ok(not has_table_privilege('authenticated','public.apartment_inventory_bulk_requests','SELECT'), 'bulk idempotency receipts are inaccessible to clients');
+select ok(not has_table_privilege('authenticated','public.apartment_inventory_images','INSERT'), 'clients cannot bypass image registration metadata checks');
 select ok(to_regprocedure('public.create_apartment_inventory_items_bulk(uuid,uuid,jsonb)') is not null, 'atomic idempotent bulk insert RPC exists');
 select ok(to_regprocedure('public.move_apartment_inventory_items_category(uuid,jsonb,text)') is not null, 'version-guarded category move RPC exists');
 select ok(to_regprocedure('public.register_apartment_inventory_image(uuid,uuid,uuid,text,text,bigint)') is not null, 'apartment image registration RPC exists');
