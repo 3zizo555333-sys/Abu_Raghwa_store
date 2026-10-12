@@ -170,6 +170,20 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(cashier).not.toContain("sessionStorage");
   });
 
+  it("يعرض سبب رفض checkout ويسمح بإلغاء intent بعد تأكيد الخادم أنه pending فقط", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const invoices = readFileSync(resolve(root, "client/src/lib/supabase/invoices.ts"), "utf8");
+    const cancelFlow = cashier.slice(cashier.indexOf("const cancelFrozenInvoice"), cashier.indexOf("const completeSale"));
+    expect(cashier).toContain("formatInvoiceCheckoutError(error)");
+    expect(cashier).toContain("إلغاء المحاولة المعلّقة وتعديل السلة");
+    expect(cancelFlow).toContain("await getRecoverableInvoiceIntent()");
+    expect(cancelFlow).toContain('intent.state === "pending"');
+    expect(cancelFlow).toContain("await cancelPendingInvoiceIntent(intent.intentId)");
+    expect(cancelFlow).toContain('intent.state === "completed"');
+    expect(invoices).toContain('"acknowledgment"');
+    expect(invoices).toContain("invoiceResult");
+  });
+
   it("يسجل شاشة عرض عامة متصلة ببيانات المنتجات والعروض", () => {
     const app = readFileSync(resolve(root, "client/src/App.tsx"), "utf8");
     const display = readFileSync(resolve(root, "client/src/pages/CustomerDisplay.tsx"), "utf8");
