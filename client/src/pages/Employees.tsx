@@ -1,5 +1,5 @@
 import { browserState } from "@/lib/browserState";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Banknote, CheckCircle2, Clock, Edit2, KeyRound, LockKeyhole, LogOut, Plus, ShieldCheck, Trash2, UnlockKeyhole, WalletCards, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -32,6 +32,7 @@ export default function Employees() {
   const [, navigate] = useLocation();
   const utils = trpc.useUtils();
   const staffAccess = useStaffAccess({ monitorMembership: true });
+  const managerLoginAttemptedForUser = useRef<string | null>(null);
   const [storedEmployees, setStoredEmployees] = useState<EmployeeRecord[]>([]);
   const [storedAttendance, setStoredAttendance] = useState<AttendanceRecord[]>([]);
   const employees = normalizeEmployees(storedEmployees);
@@ -63,7 +64,13 @@ export default function Employees() {
   const reviewWithdrawal = trpc.employeeFinance.reviewWithdrawal.useMutation({ onSuccess: () => utils.employeeFinance.managerOverview.invalidate(), onError: error => toast.error(error.message) });
   const deleteEmployee = trpc.employeeFinance.deleteEmployee.useMutation({ onSuccess: (_, variables) => { setStoredEmployees(current => normalizeEmployees(current).filter(item => item.id !== variables.employeeId)); setStoredAttendance(current => normalizeAttendance(current).filter(item => item.employeeId !== variables.employeeId)); utils.employeeFinance.managerOverview.invalidate(); toast.success("تم حذف العامل نهائيًا"); }, onError: error => toast.error(error.message) });
 
-  useEffect(() => { if (isManager && financeAccess !== "manager" && !managerLogin.isPending) managerLogin.mutate(); }, [financeAccess, isManager, managerLogin]);
+  useEffect(() => {
+    if (!isManager) { managerLoginAttemptedForUser.current = null; return; }
+    const userId = staffAccess.user?.id;
+    if (!userId || financeAccess === "manager" || managerLogin.isPending || managerLoginAttemptedForUser.current === userId) return;
+    managerLoginAttemptedForUser.current = userId;
+    managerLogin.mutate();
+  }, [financeAccess, isManager, managerLogin.isPending, managerLogin.mutate, staffAccess.user?.id]);
   useEffect(() => { if (!isManager) { browserState.remove("abu_employee_finance_token"); setFinanceAccess(null); } }, [isManager]);
 
   const saveEmployee = async () => {
