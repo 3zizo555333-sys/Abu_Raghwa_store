@@ -18,10 +18,10 @@ create index if not exists invoice_items_formulation_idx
 
 -- Keep the existing per-shop invoice views, now with the nullable formula link.
 create or replace view public.seller_invoice_items with (security_barrier = true) as
-  select id, invoice_id, shop_id, product_id, formulation_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, line_total, created_at
+  select id, invoice_id, shop_id, product_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, line_total, created_at, formulation_id
   from public.invoice_items where public.is_shop_member(shop_id);
 create or replace view public.manager_invoice_items with (security_barrier = true) as
-  select id, invoice_id, shop_id, product_id, formulation_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, unit_cost_snapshot, line_total, created_at
+  select id, invoice_id, shop_id, product_id, product_name_snapshot, product_code_snapshot, selected_unit_snapshot, sale_mode_snapshot, quantity, stock_quantity_delta, unit_price_snapshot, unit_cost_snapshot, line_total, created_at, formulation_id
   from public.invoice_items where public.is_shop_member(shop_id) and public.has_shop_role(shop_id, array['manager','admin','supervisor']::public.shop_role[]);
 revoke all on public.seller_invoice_items, public.manager_invoice_items from public, anon, authenticated;
 grant select on public.seller_invoice_items, public.manager_invoice_items to authenticated;
