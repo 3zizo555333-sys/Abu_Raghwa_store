@@ -62,6 +62,9 @@ export type Database = {
 	      offers: Table<{ id: string; shop_id: string; title: string; public_description: string; starts_at: string | null; ends_at: string | null; status: "draft" | "active" | "paused" | "expired"; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      tasks: Table<{ id: string; shop_id: string; title: string; description: string; status: "open" | "in_progress" | "done" | "cancelled"; assigned_to: string | null; due_at: string | null; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
       product_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string }>;
+      apartment_inventory_categories: Table<{ id: string; shop_id: string; name: string; created_at: string; updated_at: string }>;
+	      apartment_inventory_items: Table<{ id: string; shop_id: string; name: string; supplier: string; location: string; unit: string; pieces_per_unit: number; quantity: number; extra_pieces: number; wholesale_price: number; retail_price: number; wholesale_retail_price: number; category_name: string; created_at: string; updated_at: string }>;
+	      apartment_inventory_images: Table<{ id: string; shop_id: string; item_id: string; storage_path: string; content_type: string; size_bytes: number; created_by: string | null; created_at: string }>;
       products: Table<ProductRow>;
       product_images: Table<{ id: string; shop_id: string; product_id: string; storage_path: string; content_type: string; size_bytes: number; created_by: string | null; created_at: string }>;
       invoices: Table<{ id: string; shop_id: string; invoice_number: string; idempotency_key: string; status: string; sale_type: string; payment_method: string; customer_name: string; customer_phone: string; subtotal: number; discount_type: string; discount_value: number; discount_amount: number; total: number; loyalty_customer_id: string | null; loyalty_points_awarded: number; created_by: string | null; created_at: string }>;
@@ -76,8 +79,8 @@ export type Database = {
       shortage_items: Table<{ id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; current_quantity: number; min_quantity: number; shortage: number; unit: string; reported_at: string; status: "pending" | "ordered" | "received"; notes: string; category: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
       shortage_categories: Table<{ id: string; shop_id: string; name: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      shortage_manual_products: Table<{ id: string; shop_id: string; category_name: string; name: string; unit: string; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
-	      recipes: Table<{ id: string; shop_id: string; name: string; description: string; cost_price: number; retail_price: number; category: string; version: number; created_at: string; updated_at: string; deleted_at: string | null }>;
-	      recipe_ingredients: Table<{ id: string; recipe_id: string; shop_id: string; product_id: string | null; unit: string; quantity: number; cost: number; created_at: string; updated_at: string }>;
+	      recipes: Table<{ id: string; shop_id: string; name: string; description: string; cost_price: number; retail_price: number; category: string; version: number; production_quantity: number; production_unit: string; notes: string; loyalty_points: number; image_url: string | null; is_password_protected: boolean; password_hash: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+	      recipe_ingredients: Table<{ id: string; recipe_id: string; shop_id: string; product_id: string | null; raw_material_id: string | null; material_name_snapshot: string; unit: string; quantity: number; cost: number; created_at: string; updated_at: string }>;
 	      loyalty_customers: Table<{ id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number; total_points_earned: number; total_spent: number; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      loyalty_rewards: Table<{ id: string; shop_id: string; gift_name: string; points_required: number; gift_cost: number; description: string; is_active: boolean; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      loyalty_redemptions: Table<{ id: string; shop_id: string; customer_id: string; reward_id: string; points_deducted: number; gift_cost: number; delivered_at: string; delivered_by: string | null; notes: string; created_at: string }>;
@@ -96,6 +99,7 @@ export type Database = {
       seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
 	      manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
 	      loyalty_customer_balances: { Row: { id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number }; Relationships: [] };
+	      formulations: { Row: Database["public"]["Tables"]["recipes"]["Row"]; Relationships: [] };
     };
     Functions: {
       search_products_by_barcode: { Args: { p_shop_id: string; p_barcode: string }; Returns: Json };
@@ -122,7 +126,11 @@ export type Database = {
       set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
       replace_shortage_manual_products: { Args: { p_shop_id: string; p_category: string; p_names: string[] }; Returns: Database["public"]["Tables"]["shortage_manual_products"]["Row"][] };
       get_invoice_returnable_items: { Args: { p_shop_id: string; p_invoice_id: string }; Returns: Json };
-      create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idempotency_key: string; p_items: Json; p_reason?: string }; Returns: Json };
+create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idempotency_key: string; p_items: Json; p_reason?: string }; Returns: Json };
+	      create_apartment_inventory_items_bulk: { Args: { p_shop_id: string; p_request_id: string; p_items: Json }; Returns: Json };
+	      move_apartment_inventory_items_category: { Args: { p_shop_id: string; p_expected_items: Json; p_category: string }; Returns: Json };
+	      register_apartment_inventory_image: { Args: { p_shop_id: string; p_item_id: string; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
+	      save_formulation_with_ingredients: { Args: { p_shop_id: string; p_formulation_id: string | null; p_expected_version: number | null; p_formulation: Json; p_ingredients: Json }; Returns: Json };
     };
     Enums: {
       shop_role: "manager" | "admin" | "supervisor" | "seller";

@@ -26,18 +26,20 @@ export async function loadCloudDashboardStats(): Promise<CloudDashboardStats> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
   const supabase = getSupabaseClient();
-  const [salesResult, productsResult, tasksResult, offersResult, recipesResult] = await Promise.all([
+  const [salesResult, productsResult, tasksResult, offersResult, recipesResult, materialsResult] = await Promise.all([
     supabase.from("invoices").select("id, total").eq("shop_id", shopId).eq("status", "completed").limit(1000),
     supabase.from("products").select("id, quantity, min_quantity, retail_price, wholesale_price_per_unit, cost_per_unit", { count: "exact" }).eq("shop_id", shopId).is("deleted_at", null).limit(50),
     supabase.from("tasks").select("id, status").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
     supabase.from("offers").select("id, status").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
-    supabase.from("recipes").select("id, name, cost_price, retail_price").eq("shop_id", shopId).is("deleted_at", null).limit(1000),
+    supabase.from("recipes").select("id, name, cost_price, retail_price", { count: "exact" }).eq("shop_id", shopId).is("deleted_at", null).limit(1000),
+    supabase.from("raw_materials").select("id", { count: "exact" }).eq("shop_id", shopId).is("deleted_at", null).limit(1),
   ]);
   const sales = requireCloudResult(salesResult) as any[];
   const products = requireCloudResult(productsResult) as any[];
   const tasks = requireCloudResult(tasksResult) as any[];
   const offers = requireCloudResult(offersResult) as any[];
   const recipes = requireCloudResult(recipesResult) as any[];
+  const materials = requireCloudResult(materialsResult) as any[];
   const margin = calculateTradeMarginSummary(products as any, recipes as any);
   return {
     totalSales: sales.length,
@@ -47,8 +49,8 @@ export async function loadCloudDashboardStats(): Promise<CloudDashboardStats> {
     totalEmployees: 0,
     activeTasks: tasks.filter(task => !["done", "cancelled", "completed"].includes(String(task.status))).length,
     activeOffers: offers.filter(offer => String(offer.status) === "active").length,
-    totalRecipes: recipes.length,
-    totalMaterials: 0,
+    totalRecipes: recipesResult.count ?? recipes.length,
+    totalMaterials: materialsResult.count ?? materials.length,
     shopProfitPercent: margin.marginPercent,
     shopProfit: margin.unitProfit,
     shopCost: margin.unitCost,

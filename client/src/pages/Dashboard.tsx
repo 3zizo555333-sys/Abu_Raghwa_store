@@ -58,6 +58,13 @@ export default function Dashboard() {
 
   const loadData = async () => setStats(await loadCloudDashboardStats());
 
+  useEffect(() => {
+    const refresh = () => { if (document.visibilityState === "visible") void loadData().catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحديث إحصاءات لوحة التحكم.")); };
+    const interval = window.setInterval(refresh, 30_000);
+    window.addEventListener("focus", refresh);
+    return () => { window.clearInterval(interval); window.removeEventListener("focus", refresh); };
+  }, []);
+
   const statCards = [
     {
       icon: ShoppingCart,
