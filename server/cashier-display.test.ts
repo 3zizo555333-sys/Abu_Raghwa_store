@@ -17,9 +17,12 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
     const quantities = readFileSync(resolve(root, "client/src/lib/cashierQuantity.ts"), "utf8");
     const products = readFileSync(resolve(root, "client/src/lib/supabase/products.ts"), "utf8");
-    expect(cashier).toContain('step={item.unit === "كيلو" || item.unit === "جرام" || item.unit === "لتر" ? "any" : 1}');
+    expect(cashier).toContain('step="any"');
     expect(cashier).toContain("normalizeCashierQuantity(rawQuantity)");
-    expect(quantities).toContain('unit === "كيلو" || unit === "جرام" || unit === "لتر" ? 0.001 : 1');
+    expect(quantities).toContain("return 1;");
+    expect(quantities).toContain("getCashierWeightPresets");
+    expect(cashier).toContain("isCashierWeightUnit(item.unit)");
+    expect(quantities).toContain("+¼ كجم");
     expect(quantities).toContain("Math.round(value * 1_000_000) / 1_000_000");
     expect(cashier).toContain("findProductsByBarcode(barcodeProducts, code)");
     expect(cashier).toContain("setBarcodeChoices(matches)");
@@ -50,7 +53,8 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
     const products = readFileSync(resolve(root, "client/src/lib/supabase/products.ts"), "utf8");
     expect(cashier).toContain('aria-label="فئات البيع السريع"');
-    expect(cashier).toContain("overflow-x-auto");
+    expect(cashier).toContain("flex-wrap gap-2 pb-2");
+    expect(cashier).not.toContain("overflow-x-auto");
     expect(cashier).toContain("activePosCategory");
     expect(cashier).toContain('onClick={() => addProduct(product)}');
     expect(cashier).toContain("min-h-28");
@@ -127,6 +131,30 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(cashier).toContain("تقليل كمية ${item.name}");
     expect(cashier).toContain("زيادة كمية ${item.name}");
     expect(cashier).toContain("h-12 w-12");
+  });
+
+  it("يمنع التركيز التلقائي على الهاتف ويثبت viewport وحقول الإدخال دون تمرير أفقي", () => {
+    const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const styles = readFileSync(resolve(root, "client/src/index.css"), "utf8");
+    const html = readFileSync(resolve(root, "client/index.html"), "utf8");
+    expect(cashier).toContain('matchMedia("(pointer: coarse)")');
+    expect(cashier).toContain("cashier-mobile min-h-dvh w-full max-w-full overflow-x-hidden");
+    expect(styles).toContain("overflow-x: hidden");
+    expect(styles).toContain("font-size: 16px !important");
+    expect(styles).toContain("#root {");
+    expect(html).toContain("maximum-scale=1");
+    expect(html).toContain("viewport-fit=cover");
+  });
+
+  it("يعرض معاينة الفاتورة بعرض الشاشة ويمنع قص الجدول أفقياً مع إبقاء مقاس الطباعة", () => {
+    const invoice = readFileSync(resolve(root, "client/src/pages/Invoice.tsx"), "utf8");
+    const styles = readFileSync(resolve(root, "client/src/index.css"), "utf8");
+    expect(invoice).toContain("invoice-mobile min-h-dvh w-full max-w-full overflow-x-hidden");
+    expect(invoice).toContain("max-w-3xl");
+    expect(invoice).toContain("table-fixed");
+    expect(invoice).toContain('width: "100%"');
+    expect(styles).toContain(".thermal-receipt {");
+    expect(styles).toContain("width: var(--receipt-width, 80mm) !important");
   });
 
   it("لا يعلن نجاح البيع ولا يفرغ السلة قبل تأكيد إنشاء الفاتورة", () => {

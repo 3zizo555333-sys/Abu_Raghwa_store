@@ -101,17 +101,17 @@ export default function Invoice() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-100 p-3 print:bg-white print:p-0" dir="rtl">
-      <div className="mx-auto max-w-lg">
-        <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-white p-2 shadow-sm print:hidden">
+    <main className="invoice-mobile min-h-dvh w-full max-w-full overflow-x-hidden overscroll-x-none bg-gray-100 p-0 print:bg-white print:p-0" dir="rtl">
+      <div className="mx-auto flex min-h-dvh w-full min-w-0 max-w-3xl flex-col">
+        <div className="sticky top-0 z-20 mb-2 grid w-full min-w-0 grid-cols-2 items-center gap-2 bg-white/95 p-2 shadow-sm backdrop-blur print:hidden sm:static sm:flex sm:flex-wrap sm:justify-between sm:rounded-lg">
           <Button variant="outline" size="sm" onClick={() => navigate("/sales")}><ArrowLeft className="ml-1 h-4 w-4" />المبيعات</Button>
-          <div className="flex items-center gap-1 rounded bg-gray-100 px-2 py-1 text-xs">
+          <div className="flex min-w-0 items-center justify-center gap-2 rounded bg-gray-100 px-2 py-2 text-sm">
             <button type="button" onClick={() => setZoomLevel(value => Math.max(70, value - 10))}>−</button>
             <span>{zoomLevel}%</span>
             <button type="button" onClick={() => setZoomLevel(value => Math.min(130, value + 10))}>+</button>
             <button type="button" onClick={() => setZoomLevel(100)} className="mr-1 text-orange-700">إعادة</button>
           </div>
-          <select aria-label="عرض الطابعة الحرارية" value={thermalWidth} onChange={event => setThermalWidth(event.target.value as "58" | "80")} className="rounded border p-1 text-xs">
+          <select aria-label="عرض الطابعة الحرارية" value={thermalWidth} onChange={event => setThermalWidth(event.target.value as "58" | "80")} className="min-w-0 rounded border p-2 text-sm">
             <option value="80">حراري 80 مم</option>
             <option value="58">حراري 58 مم</option>
           </select>
@@ -123,11 +123,12 @@ export default function Invoice() {
         <article
           ref={invoiceRef}
           data-invoice-export-root
-          className="thermal-receipt rounded-lg border shadow-lg print:rounded-none print:border-0 print:shadow-none"
+          className="thermal-receipt mx-auto w-full min-w-0 max-w-full rounded-none border shadow-lg sm:rounded-lg print:rounded-none print:border-0 print:shadow-none"
           style={{
             "--receipt-width": `${thermalWidth}mm`,
-            width: thermalWidth === "58" ? "220px" : "302px",
-            maxWidth: "100%",
+            width: "100%",
+            maxWidth: "min(100%, 720px)",
+            marginInline: "auto",
             minHeight: "320px",
             overflow: "visible",
             backgroundColor: receiptColors.paper,
@@ -138,7 +139,7 @@ export default function Invoice() {
         >
           <div
             data-invoice-export-content
-            className="p-5"
+            className="w-full min-w-0 p-3 sm:p-6"
             style={{
               transform: `scale(${zoomLevel / 100})`,
               transformOrigin: "top center",
@@ -152,24 +153,24 @@ export default function Invoice() {
               <p className="mt-1 text-xs font-bold" style={{ color: receiptColors.ink }}>للتواصل: 01069035599</p>
             </header>
 
-            <div className="mb-3 flex justify-between rounded px-3 py-2 text-xs" style={{ backgroundColor: receiptColors.accentSoft, color: receiptColors.ink }}>
+            <div className="mb-3 flex flex-wrap justify-between gap-2 rounded px-3 py-2 text-xs" style={{ backgroundColor: receiptColors.accentSoft, color: receiptColors.ink }}>
               <span>رقم الفاتورة: <b dir="ltr">{sale.id}</b></span>
               <span>التاريخ: <b>{new Date(sale.date).toLocaleString("ar-EG")}</b></span>
             </div>
 
             {(sale.customerName || sale.customerPhone) && (
-              <div className="mb-3 flex justify-between rounded border px-3 py-2 text-xs" style={{ borderColor: receiptColors.accentBorder, backgroundColor: receiptColors.paper, color: receiptColors.ink }}>
+              <div className="mb-3 flex flex-wrap justify-between gap-2 rounded border px-3 py-2 text-xs" style={{ borderColor: receiptColors.accentBorder, backgroundColor: receiptColors.paper, color: receiptColors.ink }}>
                 <span>العميل: <b>{sale.customerName || "عميل عام"}</b></span>
                 <span>الهاتف: <b>{sale.customerPhone || "غير محدد"}</b></span>
               </div>
             )}
 
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-xs">
+            <div className="w-full min-w-0 overflow-hidden">
+              <table className="w-full table-fixed border-collapse text-xs">
                 <thead>
                   <tr style={{ backgroundColor: receiptColors.accentStrong, color: receiptColors.paper }}>
-                    <th className="border p-2 text-right" style={{ borderColor: receiptColors.accent }}>المنتج</th>
-                    <th className="border p-2" style={{ borderColor: receiptColors.accent }}>الوحدة</th>
+                    <th className="break-words border p-1.5 text-right sm:p-2" style={{ borderColor: receiptColors.accent }}>المنتج</th>
+                    <th className="break-words border p-1.5 sm:p-2" style={{ borderColor: receiptColors.accent }}>الوحدة</th>
                     <th className="border p-2" style={{ borderColor: receiptColors.accent }}>الكمية</th>
                     <th className="border p-2" style={{ borderColor: receiptColors.accent }}>السعر</th>
                     <th className="border p-2" style={{ borderColor: receiptColors.accent }}>الإجمالي</th>
@@ -181,11 +182,11 @@ export default function Invoice() {
                     const cellStyle: CSSProperties = { borderColor: receiptColors.accentBorder, color: receiptColors.ink };
                     return (
                       <tr key={`${item.productId}-${index}`} style={{ backgroundColor: rowBackground }}>
-                        <td className="border p-2 font-semibold" style={cellStyle}>{item.productName}</td>
-                        <td className="border p-2" style={cellStyle}>{item.selectedUnitType || "قطعة"}</td>
-                        <td className="border p-2 text-center" style={cellStyle}>{item.quantity}</td>
+                        <td className="break-words border p-1.5 font-semibold sm:p-2" style={cellStyle}>{item.productName}</td>
+                        <td className="break-words border p-1.5 sm:p-2" style={cellStyle}>{item.selectedUnitType || "قطعة"}</td>
+                        <td className="break-words border p-1.5 text-center sm:p-2" style={cellStyle}>{item.quantity}</td>
                         <td className="border p-2 text-center" style={cellStyle}>{item.unitPrice.toFixed(2)}</td>
-                        <td className="border p-2 text-center font-bold" style={{ ...cellStyle, color: receiptColors.accent }}>{item.total.toFixed(2)}</td>
+                        <td className="break-words border p-1.5 text-center font-bold sm:p-2" style={{ ...cellStyle, color: receiptColors.accent }}>{item.total.toFixed(2)}</td>
                       </tr>
                     );
                   })}
