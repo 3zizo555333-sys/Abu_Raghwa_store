@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createInvoiceIdempotencyKey, mapCloudInvoiceRecord } from "./invoices";
+import { createInvoiceIdempotencyKey, formatInvoiceCheckoutError, InvoiceCheckoutError, mapCloudInvoiceRecord } from "./invoices";
 import type { Database } from "./database.types";
 
 describe("Supabase invoices", () => {
@@ -8,6 +8,16 @@ describe("Supabase invoices", () => {
     const second = createInvoiceIdempotencyKey();
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(second).not.toBe(first);
+  });
+
+  it("explains server stock rejection and keeps checkout failure stage and intent id", () => {
+    const error = new InvoiceCheckoutError("completion", new Error("INSUFFICIENT_STOCK:٥ سلك"), "intent-uuid");
+    expect(error.phase).toBe("completion");
+    expect(error.intentId).toBe("intent-uuid");
+    expect(formatInvoiceCheckoutError(error)).toContain("٥ سلك");
+    expect(formatInvoiceCheckoutError(error)).toContain("لم تُحفظ الفاتورة جزئيًا");
+    expect(formatInvoiceCheckoutError(new Error("permission denied: SHOP_ACCESS_DENIED"))).toContain("صلاحية المتجر أو الجلسة");
+    expect(formatInvoiceCheckoutError(new Error("opaque server error"))).toContain("opaque server error");
   });
 
   it("maps server invoice and safe invoice-item view rows for the Arabic invoice pages", () => {

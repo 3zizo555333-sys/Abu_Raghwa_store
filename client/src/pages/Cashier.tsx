@@ -8,7 +8,7 @@ import { AdvancedBarcodeScanner } from "@/components/AdvancedBarcodeScanner";
 import { UnbarcodedCategoryManager, type PosCategoryChange } from "@/components/UnbarcodedCategoryManager";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
 import { listProductCategories, type CloudProduct, type ProductCategory } from "@/lib/supabase/products";
-import { acknowledgeInvoiceIntent, completeInvoiceIntent, createCloudInvoice, createInvoiceIdempotencyKey, getRecoverableInvoiceIntent, type CreateInvoiceInput } from "@/lib/supabase/invoices";
+import { acknowledgeInvoiceIntent, cancelPendingInvoiceIntent, completeInvoiceIntent, createCloudInvoice, createInvoiceIdempotencyKey, formatInvoiceCheckoutError, getRecoverableInvoiceIntent, InvoiceCheckoutError, type CreateInvoiceInput } from "@/lib/supabase/invoices";
 import { findProductsByBarcode, normalizeBarcodeToken } from "@/lib/barcodes";
 import { getContentUnit, getLoyaltyPointsForSaleUnit, getSalePriceForUnit, getSaleUnitOptions } from "@/lib/packageUnits";
 import { getCashierQuantityStep, getCashierWeightPresets, isCashierWeightUnit, normalizeCashierQuantity } from "@/lib/cashierQuantity";
@@ -21,7 +21,7 @@ import { useScaleConnection } from "@/lib/scaleConnection";
 type Product = CloudProduct;
 type SaleType = "retail" | "wholesale" | "bulk";
 type CartItem = { id: string; productId: string; formulationId?: string; name: string; quantity: number; unitPrice: number; total: number; unit: string; unitName: string; contentUnit: string; saleMode: Product["saleMode"]; bulkUnitName: string | null; unitsPerBulk: number; bulkUnitPrice: number | null; loyaltyPoints: number; prices: Record<SaleType, number>; points: Record<SaleType, number> };
-type PendingInvoice = { idempotencyKey: string; payload: CreateInvoiceInput };
+type PendingInvoice = { idempotencyKey: string; payload: CreateInvoiceInput; intentId?: string };
 const FORMULATIONS_CATEGORY = "التركيبات";
 const saleTypeLabel: Record<SaleType, string> = { retail: "قطاعي", wholesale: "تجزئة", bulk: "جملة" };
 const getSaleValues = (product: Product, saleType: SaleType) => {
@@ -49,6 +49,9 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
   const [quantityDrafts, setQuantityDrafts] = useState<Record<string, string>>({});
   const [isSaving, setIsSaving] = useState(false);
   const [attemptLocked, setAttemptLocked] = useState(true);
+  const [checkoutError, setCheckoutError] = useState("");
+  const [pendingIntentId, setPendingIntentId] = useState<string | null>(null);
+  const [isCancellingInvoice, setIsCancellingInvoice] = useState(false);
   const [scaleProductId, setScaleProductId] = useState("");
   const pendingInvoiceRef = useRef<PendingInvoice | null>(null);
   const codeInputRef = useRef<HTMLInputElement>(null);
@@ -85,14 +88,19 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
   useEffect(() => {
     let active = true;
     const recoverPendingInvoice = async () => {
+      let recoveryIntentId: string | null = null;
       try {
         const intent = await getRecoverableInvoiceIntent();
         if (!active) return;
         if (!intent) {
           setAttemptLocked(false);
+          setPendingIntentId(null);
           return;
         }
 
+        recoveryIntentId = intent.intentId;
+        setPendingIntentId(intent.intentId);
+        setCheckoutError("");
         setAttemptLocked(true);
         setIsSaving(true);
         const created = intent.state === "completed" && intent.invoiceResult
@@ -109,8 +117,10 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
       } catch (error) {
         if (!active) return;
         setAttemptLocked(true);
-        const message = error instanceof Error ? error.message : "تعذر التحقق من محاولة البيع السابقة.";
-        toast.error(`توجد محاولة بيع لم تُحسم بعد. لم نبدأ فاتورة جديدة؛ أعد تحميل الصفحة بعد استعادة الاتصال. ${message}`);
+        if (recoveryIntentId) setPendingIntentId(recoveryIntentId);
+        const message = formatInvoiceCheckoutError(error);
+        setCheckoutError(message);
+        toast.error(`توجد محاولة بيع لم تُحسم بعد. لم نبدأ فاتورة جديدة. ${message}`);
       } finally {
         if (active) setIsSaving(false);
       }
@@ -289,6 +299,42 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
   };
   const quantityStep = (item: CartItem) => getCashierQuantityStep(item.unit);
 
+  const cancelFrozenInvoice = async () => {
+    if (isSaving || isCancellingInvoice) return;
+    setIsCancellingInvoice(true);
+    try {
+      const intent = await getRecoverableInvoiceIntent();
+      const expectedIntentId = pendingIntentId ?? pendingInvoiceRef.current?.intentId;
+      if (!intent) throw new Error("لم يعثر الخادم على محاولة معلّقة؛ أبقينا السلة مقفلة احتياطًا لتجنب بيع مكرر.");
+      if (expectedIntentId && intent.intentId !== expectedIntentId) throw new Error("تغيّرت محاولة البيع على الخادم؛ أعد تحميل الكاشير للتحقق من حالتها.");
+      if (intent.state === "pending") {
+        await cancelPendingInvoiceIntent(intent.intentId);
+        pendingInvoiceRef.current = null;
+        setPendingIntentId(null);
+        setCheckoutError("");
+        setAttemptLocked(false);
+        toast.success("ألغى الخادم المحاولة غير المكتملة. يمكنك الآن تعديل السلة وإعادة البيع.");
+        return;
+      }
+      if ((intent.state === "completed" || intent.state === "acknowledged") && intent.invoiceResult) {
+        pendingInvoiceRef.current = null;
+        setCart([]);
+        setCustomerName("");
+        setCustomerPhone("");
+        toast.message(`الفاتورة ${intent.invoiceResult.invoice_number} مؤكدة بالفعل؛ لن نلغيها أو نكرر البيع.`);
+        navigate(`/invoice?invoiceId=${encodeURIComponent(intent.invoiceResult.invoice_id)}`);
+        return;
+      }
+      throw new Error("لم يؤكد الخادم أن المحاولة قابلة للإلغاء؛ أبقينا السلة مقفلة بأمان.");
+    } catch (error) {
+      const message = formatInvoiceCheckoutError(error);
+      setCheckoutError(message);
+      toast.error(message);
+    } finally {
+      setIsCancellingInvoice(false);
+    }
+  };
+
   const completeSale = async () => {
     if (isSaving) return;
     if (!pendingInvoiceRef.current && !cart.length) return toast.error("أضف منتجًا واحدًا على الأقل للفاتورة.");
@@ -314,11 +360,18 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
       setAttemptLocked(true);
     }
 
+    setCheckoutError("");
     setIsSaving(true);
     try {
-      const created = await createCloudInvoice(pendingInvoiceRef.current.payload);
+      const pending = pendingInvoiceRef.current;
+      if (!pending) return;
+      const created = await createCloudInvoice(pending.payload, intent => {
+        pendingInvoiceRef.current = { ...pending, intentId: intent.intentId };
+        setPendingIntentId(intent.intentId);
+      });
       // Keep the idempotency key only in memory until the atomic RPC confirms the invoice.
       pendingInvoiceRef.current = null;
+      setPendingIntentId(null);
       setAttemptLocked(false);
       setCart([]);
       setCustomerName("");
@@ -326,8 +379,46 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
       toast.success(`أكد الخادم الفاتورة ${created.invoice_number}.`);
       navigate(`/invoice?invoiceId=${encodeURIComponent(created.invoice_id)}`);
     } catch (error) {
-      const message = error instanceof Error ? error.message : "تعذر تأكيد الفاتورة من الخادم.";
-      toast.error(`${message} لم تُفرّغ السلة؛ أعد المحاولة بالسلة نفسها ولا تغلق الصفحة قبل التأكيد.`);
+      if (error instanceof InvoiceCheckoutError && error.phase === "acknowledgment" && error.invoiceResult) {
+        pendingInvoiceRef.current = null;
+        setPendingIntentId(error.intentId ?? null);
+        setCart([]);
+        setCustomerName("");
+        setCustomerPhone("");
+        setAttemptLocked(true);
+        toast.message(`تم تأكيد الفاتورة ${error.invoiceResult.invoice_number}؛ تعذر فقط تسجيل إقرار الاستلام، فلا تعِد البيع.`);
+        navigate(`/invoice?invoiceId=${encodeURIComponent(error.invoiceResult.invoice_id)}`);
+        return;
+      }
+      const message = formatInvoiceCheckoutError(error);
+      setCheckoutError(message);
+      const failedIntentId = error instanceof InvoiceCheckoutError ? error.intentId : pendingInvoiceRef.current?.intentId;
+      if (failedIntentId) {
+        setPendingIntentId(failedIntentId);
+        if (pendingInvoiceRef.current) pendingInvoiceRef.current = { ...pendingInvoiceRef.current, intentId: failedIntentId };
+      } else {
+        try {
+          const recoverable = await getRecoverableInvoiceIntent();
+          if (recoverable?.state === "pending") {
+            setPendingIntentId(recoverable.intentId);
+            if (pendingInvoiceRef.current) pendingInvoiceRef.current = { ...pendingInvoiceRef.current, intentId: recoverable.intentId };
+          } else if ((recoverable?.state === "completed" || recoverable?.state === "acknowledged") && recoverable.invoiceResult) {
+            pendingInvoiceRef.current = null;
+            setCart([]);
+            setCustomerName("");
+            setCustomerPhone("");
+            toast.message(`الفاتورة ${recoverable.invoiceResult.invoice_number} مؤكدة بالفعل؛ لم نبدأ بيعًا جديدًا.`);
+            navigate(`/invoice?invoiceId=${encodeURIComponent(recoverable.invoiceResult.invoice_id)}`);
+          } else if (!recoverable && error instanceof InvoiceCheckoutError && error.phase === "intent") {
+            pendingInvoiceRef.current = null;
+            setPendingIntentId(null);
+            setAttemptLocked(false);
+          }
+        } catch {
+          // If the connection is uncertain, keep the same idempotency key and frozen cart.
+        }
+      }
+      toast.error(`${message} لم تُفرّغ السلة؛ أعد المحاولة كما هي أو ألغِ المحاولة المعلّقة بعد تأكيد الخادم.`);
     } finally {
       setIsSaving(false);
     }
@@ -385,5 +476,5 @@ export default function Cashier({ onBackToSalesChoice }: { onBackToSalesChoice?:
   {scale.status === "unsupported" && <p className="mt-2 text-xs text-amber-800">Web Serial غير متاح على هذا المتصفح. يمكن استخدام ميزان USB/Bluetooth يرسل الوزن كلوحة مفاتيح.</p>}
   {scale.status === "connected" && <div className="mt-3 grid gap-2 sm:grid-cols-[1fr_auto]"><select value={scaleProductId} onChange={event => setScaleProductId(event.target.value)} className="h-10 rounded-md border border-emerald-200 bg-white px-3 text-sm"><option value="">اختر المنتج الذي سيأخذ الوزن</option>{products.map(product => <option key={product.id} value={product.id}>{product.name}</option>)}</select><Button type="button" disabled={!scale.reading || !scaleProductId || !scale.reading.stable} onClick={() => { const product = products.find(item => item.id === scaleProductId); if (!product || !scale.reading) return; addProductWithQuantity(product, scale.reading.value); toast.success(`تمت إضافة ${scale.reading.value.toFixed(3)} كجم من ${product.name}`); }} className="bg-emerald-600 hover:bg-emerald-700">إضافة الوزن {scale.reading ? `${scale.reading.value.toFixed(3)} كجم` : "—"}</Button></div>}
   {scale.reading && <p className="mt-2 text-xs font-bold text-emerald-900">القراءة: {scale.reading.value.toFixed(3)} كجم — {scale.reading.stable ? "ثابتة" : "غير مستقرة"}</p>}
-</div><div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2"><Input value={customerName} disabled={attemptLocked} onChange={event => setCustomerName(event.target.value)} placeholder="اسم العميل (اختياري)" /><Input value={customerPhone} disabled={attemptLocked} onChange={event => setCustomerPhone(event.target.value)} placeholder="الهاتف (اختياري)" type="tel" /></div><SaleTypeSegmentedControl value={saleType} onChange={changeSaleType} disabled={attemptLocked} /><div className="rounded-2xl bg-orange-50 p-4"><p className="text-sm font-bold text-orange-900">إجمالي الفاتورة التقديري</p><p className="text-3xl font-black text-orange-700">{total.toFixed(2)} ج.م</p><p className="mt-1 text-xs text-orange-900">النقاط المتوقعة: {getCartLoyaltyPointsTotal(cart).toFixed(2)} · نوع البيع: {saleTypeLabel[saleType]}</p><p className="mt-1 text-xs text-orange-900">يعتمد الخادم السعر والمخزون النهائيين عند الإتمام الذري.</p></div><Button onClick={completeSale} disabled={isSaving || !cart.length} className="w-full bg-emerald-600 py-6 text-base hover:bg-emerald-700"><Check className="ml-2 h-5 w-5" />{isSaving ? "بانتظار تأكيد الخادم..." : attemptLocked ? "إعادة المحاولة بنفس الفاتورة" : "إتمام وطباعة الفاتورة"}</Button>{attemptLocked && <p className="text-center text-xs text-amber-800">لم يؤكد الخادم الفاتورة بعد. أعد المحاولة بالسلة المجمدة نفسها دون تعديل.</p>}<p className="text-center text-[11px] text-slate-500">لا تُفرّغ السلة ولا تظهر رسالة نجاح قبل استجابة RPC.</p></div>}</aside></div></div><AdvancedBarcodeScanner isOpen={scannerOpen} continuous onClose={() => setScannerOpen(false)} onCameraDetect={() => { cameraScanFeedbackPendingRef.current = true; provideScanFeedback(); }} onDetect={code => { setBarcode(code); beginBarcodeLookup(code, cameraScanFeedbackPendingRef.current); }} title="امسح باركود المنتجات بشكل مستمر" /></main>;
+</div><div className="grid gap-2 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:grid-cols-2"><Input value={customerName} disabled={attemptLocked} onChange={event => setCustomerName(event.target.value)} placeholder="اسم العميل (اختياري)" /><Input value={customerPhone} disabled={attemptLocked} onChange={event => setCustomerPhone(event.target.value)} placeholder="الهاتف (اختياري)" type="tel" /></div><SaleTypeSegmentedControl value={saleType} onChange={changeSaleType} disabled={attemptLocked} /><div className="rounded-2xl bg-orange-50 p-4"><p className="text-sm font-bold text-orange-900">إجمالي الفاتورة التقديري</p><p className="text-3xl font-black text-orange-700">{total.toFixed(2)} ج.م</p><p className="mt-1 text-xs text-orange-900">النقاط المتوقعة: {getCartLoyaltyPointsTotal(cart).toFixed(2)} · نوع البيع: {saleTypeLabel[saleType]}</p><p className="mt-1 text-xs text-orange-900">يعتمد الخادم السعر والمخزون النهائيين عند الإتمام الذري.</p></div><Button onClick={completeSale} disabled={isSaving || !cart.length} className="w-full bg-emerald-600 py-6 text-base hover:bg-emerald-700"><Check className="ml-2 h-5 w-5" />{isSaving ? "بانتظار تأكيد الخادم..." : attemptLocked ? "إعادة المحاولة بنفس الفاتورة" : "إتمام وطباعة الفاتورة"}</Button>{attemptLocked && <p className="text-center text-xs text-amber-800">إذا كان الاتصال غير مؤكد فأعد المحاولة بالسلة نفسها. عند رفض الخادم ستظهر التفاصيل أدناه، ولن نغيّر السلة قبل تأكيد الإلغاء.</p>}{checkoutError && <div role="alert" className="space-y-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-900"><p>{checkoutError}</p>{pendingIntentId && !isSaving && <Button type="button" variant="outline" onClick={cancelFrozenInvoice} disabled={isCancellingInvoice} className="w-full border-red-300 text-red-900 hover:bg-red-100">{isCancellingInvoice ? "نتحقق من حالة المحاولة..." : "إلغاء المحاولة المعلّقة وتعديل السلة"}</Button>}</div>}<p className="text-center text-[11px] text-slate-500">لا تُفرّغ السلة ولا تظهر رسالة نجاح قبل استجابة RPC.</p></div>}</aside></div></div><AdvancedBarcodeScanner isOpen={scannerOpen} continuous onClose={() => setScannerOpen(false)} onCameraDetect={() => { cameraScanFeedbackPendingRef.current = true; provideScanFeedback(); }} onDetect={code => { setBarcode(code); beginBarcodeLookup(code, cameraScanFeedbackPendingRef.current); }} title="امسح باركود المنتجات بشكل مستمر" /></main>;
 }

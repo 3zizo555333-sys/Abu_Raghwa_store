@@ -27,6 +27,25 @@ export type CreatedInvoice = {
   idempotent_replay: boolean;
 };
 
+export type InvoiceCheckoutPhase = "intent" | "completion" | "acknowledgment";
+
+export class InvoiceCheckoutError extends Error {
+  readonly phase: InvoiceCheckoutPhase;
+  readonly intentId?: string;
+  readonly invoiceResult?: CreatedInvoice;
+  readonly originalError: unknown;
+
+  constructor(phase: InvoiceCheckoutPhase, originalError: unknown, intentId?: string, invoiceResult?: CreatedInvoice) {
+    const message = originalError instanceof Error ? originalError.message : String(originalError || "تعذر إتمام الفاتورة.");
+    super(message);
+    this.name = "InvoiceCheckoutError";
+    this.phase = phase;
+    this.intentId = intentId;
+    this.invoiceResult = invoiceResult;
+    this.originalError = originalError;
+  }
+}
+
 export type RecoverableInvoiceIntent = {
   intentId: string;
   state: "pending" | "completed" | "acknowledged" | "cancelled";
@@ -79,6 +98,19 @@ type InvoiceItemRow = Database["public"]["Views"]["seller_invoice_items"]["Row"]
 export function createInvoiceIdempotencyKey(): string {
   if (!globalThis.crypto?.randomUUID) throw new Error("المتصفح لا يدعم مفاتيح الطلب الآمنة؛ حدّث المتصفح لإتمام البيع.");
   return globalThis.crypto.randomUUID();
+}
+
+export function formatInvoiceCheckoutError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error || "تعذر تأكيد الفاتورة من الخادم.");
+  const insufficientStock = message.match(/INSUFFICIENT_STOCK:([^\n]+)/i);
+  if (insufficientStock) {
+    return `رفض الخادم الفاتورة: المخزون غير كافٍ للصنف «${insufficientStock[1].trim()}». لم تُحفظ الفاتورة جزئيًا ولم يُخصم مخزون. ألغِ المحاولة ثم صحّح الكمية أو حدّث المخزون قبل إعادة البيع.`;
+  }
+  if (message.includes("INVALID_PRODUCT_UNIT")) return "رفض الخادم الفاتورة: وحدة البيع غير صالحة لهذا الصنف. ألغِ المحاولة واختر وحدة مسجلة للمنتج.";
+  if (message.includes("INVALID_FORMULATION_UNIT")) return "رفض الخادم الفاتورة: وحدة التركيبة لا تطابق وحدة إنتاجها. راجع وحدة التركيبة ثم ألغِ المحاولة وأعد البيع.";
+  if (message.includes("INVALID_FORMULATION_PRICE")) return "رفض الخادم الفاتورة: سعر بيع التركيبة غير صالح. حدّث سعرها ثم ألغِ المحاولة وأعد البيع.";
+  if (message.includes("SHOP_ACCESS_DENIED")) return "رفض الخادم الفاتورة بسبب صلاحية المتجر أو الجلسة. سجّل الدخول بالحساب المصرّح به ثم أعد المحاولة.";
+  return `لم يؤكد الخادم الفاتورة: ${message}`;
 }
 
 type JsonObject = { [key: string]: Json | undefined };
@@ -240,16 +272,32 @@ export async function cancelPendingInvoiceIntent(intentId: string): Promise<void
   if (data.state !== "cancelled") throw new Error("لم يؤكد الخادم إلغاء محاولة الفاتورة.");
 }
 
-export async function createCloudInvoice(input: CreateInvoiceInput): Promise<CreatedInvoice> {
-  const intent = await createInvoiceIntent(input);
-  if (intent.state === "cancelled") throw new Error("تم إلغاء محاولة هذه الفاتورة؛ ابدأ محاولة بيع جديدة.");
-  let created: CreatedInvoice;
-  if ((intent.state === "completed" || intent.state === "acknowledged") && intent.invoiceResult) {
-    created = intent.invoiceResult;
-  } else {
-    created = await completeInvoiceIntent(intent.intentId);
+export async function createCloudInvoice(input: CreateInvoiceInput, onIntent?: (intent: RecoverableInvoiceIntent) => void): Promise<CreatedInvoice> {
+  let intent: RecoverableInvoiceIntent;
+  try {
+    intent = await createInvoiceIntent(input);
+  } catch (error) {
+    throw new InvoiceCheckoutError("intent", error);
   }
-  if (intent.state !== "acknowledged") await acknowledgeInvoiceIntent(intent.intentId);
+  onIntent?.(intent);
+  if (intent.state === "cancelled") throw new InvoiceCheckoutError("intent", new Error("تم إلغاء محاولة هذه الفاتورة؛ ابدأ محاولة بيع جديدة."), intent.intentId);
+  let created: CreatedInvoice;
+  try {
+    if ((intent.state === "completed" || intent.state === "acknowledged") && intent.invoiceResult) {
+      created = intent.invoiceResult;
+    } else {
+      created = await completeInvoiceIntent(intent.intentId);
+    }
+  } catch (error) {
+    throw new InvoiceCheckoutError("completion", error, intent.intentId);
+  }
+  if (intent.state !== "acknowledged") {
+    try {
+      await acknowledgeInvoiceIntent(intent.intentId);
+    } catch (error) {
+      throw new InvoiceCheckoutError("acknowledgment", error, intent.intentId, created);
+    }
+  }
   return created;
 }
 
