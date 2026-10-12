@@ -16,7 +16,7 @@ select is(public.apartment_inventory_shop_from_path('11111111-1111-4111-8111-111
 select is(public.apartment_inventory_shop_from_path('11111111-1111-4111-8111-111111111111/products/22222222-2222-4222-8222-222222222222/33333333-3333-4333-8333-333333333333.webp'), null, 'apartment helper rejects product paths');
 select ok(exists (select 1 from pg_constraint where conname='recipe_ingredients_raw_material_shop_fk' and conrelid='public.recipe_ingredients'::regclass), 'raw material foreign key is shop-scoped');
 select ok(exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='apartment_inventory_image_manager_insert' and with_check like '%apartment_inventory_shop_from_path%'), 'image upload policy restricts writes to the scoped path');
-select ok(exists (select 1 from pg_policies where schemaname='public' and tablename='recipe_ingredients' and policyname='recipe_ingredients_manager_delete' and cmd='DELETE'), 'atomic formulation edits may replace ingredients for managers only');
+select ok(exists (select 1 from pg_policies where schemaname='public' and tablename='recipe_ingredients' and policyname='recipe_ingredients_formulation_delete' and cmd='DELETE'), 'atomic formulation edits may replace ingredients for managers only');
 select ok((select not public from storage.buckets where id='product-images'), 'the shared product-images bucket remains private');
 
 select * from finish();

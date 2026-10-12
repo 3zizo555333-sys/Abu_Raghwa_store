@@ -156,7 +156,7 @@ alter table public.recipe_ingredients add column if not exists raw_material_id u
 alter table public.recipe_ingredients add column if not exists material_name_snapshot text not null default '';
 alter table public.recipe_ingredients add constraint recipe_ingredients_raw_material_shop_fk foreign key(raw_material_id,shop_id) references public.raw_materials(id,shop_id) on delete restrict;
 create index if not exists recipe_ingredients_raw_material_idx on public.recipe_ingredients(shop_id,raw_material_id);
-create policy recipe_ingredients_manager_delete on public.recipe_ingredients for delete to authenticated
+create policy recipe_ingredients_formulation_delete on public.recipe_ingredients for delete to authenticated
   using (public.has_shop_role(shop_id,array['manager','admin','supervisor']::public.shop_role[]));
 create or replace view public.formulations with (security_invoker=true) as
   select id,shop_id,name,description,cost_price,retail_price,category,version,production_quantity,production_unit,notes,loyalty_points,image_url,is_password_protected,password_hash,created_at,updated_at,deleted_at from public.recipes;
