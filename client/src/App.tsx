@@ -189,7 +189,7 @@ function Router() {
       <Route path={"/cashier"} component={withPasswordProtection(Cashier, 'newsale', 'كاشير الكمبيوتر')} />
       <Route path={"/reports"} component={withSupervisorRole(withPasswordProtection(Reports, 'viewreports', 'عرض التقارير'))} />
       <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'viewreports', 'جرد المبيعات والأرباح'))} />
-      <Route path={"/employees"} component={withSupervisorRole(Employees)} />
+      <Route path={"/employees"} component={Employees} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'tasks', 'إدارة المهام'))} />
       <Route path={"/points-system"} component={withSupervisorRole(withPasswordProtection(PointsSystem, 'points', 'نظام النقط'))} />
       <Route path={"/offers"} component={withSupervisorRole(withPasswordProtection(Offers, 'offers', 'العروض'))} />

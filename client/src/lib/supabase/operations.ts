@@ -2,6 +2,7 @@ import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./clie
 import { getActiveShopContext } from "./products";
 import { listProductsPage } from "./products";
 import type { Database } from "./database.types";
+import { getSignedFormulationImageUrls, isFormulationImageStoragePath } from "./formulationImages";
 
 type Tables = Database["public"]["Tables"];
 type Row<K extends keyof Tables> = Tables[K]["Row"];
@@ -90,6 +91,27 @@ export async function saveCatalogManualProduct(input: Omit<Insert<"catalog_manua
   return requireCloudResult(input.id ? await client.from("catalog_manual_products").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_manual_products").insert(payload).select().single()) as Row<"catalog_manual_products">;
 }
 
+export async function saveCatalogFormulation(input: {
+  id: string; version: number; catalog_visible: boolean; catalog_price?: number | null;
+  catalog_old_price?: number | null; catalog_description: string; catalog_details_url: string;
+  catalog_category: string; catalog_company: string; loyalty_points: number;
+}) {
+  assertCloudOnline(); const id = await shopId();
+  const result = await getSupabaseClient().from("recipes").update({
+    catalog_visible: input.catalog_visible,
+    catalog_price: input.catalog_price ?? null,
+    catalog_old_price: input.catalog_old_price ?? null,
+    catalog_description: input.catalog_description,
+    catalog_details_url: input.catalog_details_url,
+    catalog_category: input.catalog_category,
+    catalog_company: input.catalog_company,
+    loyalty_points: input.loyalty_points,
+    version: input.version + 1,
+  }).eq("id", input.id).eq("shop_id", id).eq("version", input.version).is("deleted_at", null).select("*").single();
+  const row = requireCloudResult(result) as Row<"recipes">;
+  return row;
+}
+
 export async function listCatalogDisplayData() {
   const [productsPage, taxonomy, pricing, recipes] = await Promise.all([
     listProductsPage({ limit: 50 }),
@@ -97,7 +119,15 @@ export async function listCatalogDisplayData() {
     getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
     (async () => { const id = await shopId(); return requireCloudResult(await getSupabaseClient().from("recipes").select("*").eq("shop_id", id).is("deleted_at", null).limit(1000)); })(),
   ]);
-  return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes };
+  let signedImages = new Map<string, string>();
+  const imagePaths = recipes.map(row => row.image_url).filter(isFormulationImageStoragePath);
+  try { signedImages = await getSignedFormulationImageUrls(imagePaths); } catch { /* Keep catalog rows usable while private Storage is temporarily unavailable. */ }
+  const catalogRecipes = recipes.map(row => ({
+    ...row,
+    image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
+    image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
+  }));
+  return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
 }
 
 export async function listCatalogRewards() {

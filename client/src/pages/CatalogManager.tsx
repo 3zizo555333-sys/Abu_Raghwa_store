@@ -11,7 +11,8 @@ import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 
 type CatalogOrder = {
   id: string;
@@ -73,7 +74,17 @@ export default function CatalogManager() {
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;
       setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
-      setRecipes((data.recipes as any[]).map(recipe => ({ id: String(recipe.id), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), category: String(recipe.category || "تركيبات"), catalogVisible: false, notes: String(recipe.description || "") })));
+      setRecipes((data.recipes as any[]).map(recipe => ({
+        id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""),
+        salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"),
+        category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"),
+        catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price),
+        catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price),
+        catalogDescription: String(recipe.catalog_description || recipe.description || ""),
+        catalogDetailsUrl: String(recipe.catalog_details_url || ""), loyaltyPoints: Number(recipe.loyalty_points || 0),
+        catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined,
+        notes: String(recipe.description || ""),
+      })));
       setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name })));
       setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name })));
       setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
@@ -205,6 +216,27 @@ export default function CatalogManager() {
 
   const updateRecipe = (id: string, patch: Partial<CatalogRecipe>) => setRecipes(current => (Array.isArray(current) ? current : []).map(recipe => recipe.id === id ? { ...recipe, ...patch } : recipe));
 
+  const saveRecipe = async (id: string) => {
+    const recipe = safeRecipes.find(item => item.id === id);
+    if (!recipe || typeof recipe.version !== "number") return toast.error("تعذر معرفة إصدار التركيبة؛ حدّث الصفحة ثم أعد المحاولة.");
+    const detailsUrl = getSafeCatalogDetailsUrl(recipe.catalogDetailsUrl);
+    if (recipe.catalogDetailsUrl?.trim() && !detailsUrl) return toast.error("أدخل رابط تفاصيل يبدأ بـ http:// أو https://.");
+    try {
+      const saved = await saveCatalogFormulation({
+        id, version: recipe.version, catalog_visible: recipe.catalogVisible === true,
+        catalog_price: recipe.catalogPrice ?? null, catalog_old_price: recipe.catalogOldPrice ?? null,
+        catalog_description: recipe.catalogDescription || "", catalog_details_url: detailsUrl,
+        catalog_category: recipe.category || "تركيبات", catalog_company: recipe.company || "أبو رغوة",
+        loyalty_points: Math.max(0, Math.floor(Number(recipe.loyaltyPoints) || 0)),
+      });
+      updateRecipe(id, { version: saved.version, catalogVisible: saved.catalog_visible, catalogPrice: saved.catalog_price ?? undefined,
+        catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
+        catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
+        loyaltyPoints: saved.loyalty_points });
+      toast.success("تم حفظ إعدادات التركيبة في Supabase");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات الكتالوج"); }
+  };
+
   const addRegisteredProduct = () => {
     const product = safeProducts.find(item => item.id === selectedProductId);
     if (!product) return toast.error("اختر منتجاً مسجلاً من القائمة أولاً");
@@ -260,22 +292,18 @@ export default function CatalogManager() {
 
   const handleRecipeImage = async (file: File | undefined, recipeId: string) => {
     if (!file) return;
-    if (!(["image/jpeg", "image/png", "image/webp"] as string[]).includes(file.type)) return toast.error("اختر صورة بصيغة JPG أو PNG أو WEBP");
-    if (file.size > 6 * 1024 * 1024) return toast.error("حجم الصورة يجب ألا يزيد عن 6 ميجابايت");
+    if (!file.type.startsWith("image/")) return toast.error("اختر ملف صورة صالحًا");
+    if (file.size > 16 * 1024 * 1024) return toast.error("حجم الصورة الأصلية يجب ألا يزيد عن 16 ميجابايت");
     const uploadId = `recipe_${recipeId}`;
+    const recipe = safeRecipes.find(item => item.id === recipeId);
+    if (!recipe || typeof recipe.version !== "number") return toast.error("حدّث قائمة التركيبات ثم أعد اختيار الصورة.");
     setUploadingProductId(uploadId);
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("invalid image"));
-        reader.onerror = () => reject(reader.error || new Error("image read failed"));
-        reader.readAsDataURL(file);
-      });
-      const result = await uploadProductImage.mutateAsync({ productId: uploadId, fileName: file.name || "recipe-image", mimeType: file.type as "image/jpeg" | "image/png" | "image/webp", base64: dataUrl });
-      updateRecipe(recipeId, { catalogImageUrl: result.url });
-      toast.success("تم رفع صورة التركيبة وحفظها سحابياً");
-    } catch {
-      toast.error("تعذر رفع صورة التركيبة، حاول مرة أخرى");
+      const result = await uploadCloudFormulationImage({ formulationId: recipeId, expectedVersion: recipe.version, file, previousStoragePath: recipe.imageStoragePath });
+      updateRecipe(recipeId, { catalogImageUrl: result.signedUrl || undefined, imageStoragePath: result.storagePath, version: result.version });
+      toast.success("رُفعت صورة التركيبة إلى product-images الخاص وربطت بالسجل السحابي");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر رفع صورة التركيبة، حاول مرة أخرى");
     } finally {
       setUploadingProductId(null);
     }
@@ -495,7 +523,7 @@ export default function CatalogManager() {
               const price = getCatalogPrice(recipe);
               const galleryInputId = `catalog-recipe-gallery-${recipeId}`;
               const cameraInputId = `catalog-recipe-camera-${recipeId}`;
-              return <div key={recipe.id} className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4"><div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div className="flex gap-3"><div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-violet-100 bg-white">{recipe.catalogImageUrl ? <img src={recipe.catalogImageUrl} alt={`صورة ${recipe.name}`} className="h-full w-full object-cover" /> : <Building2 className="h-7 w-7 text-violet-300" />}</div><div><div className="flex items-center gap-2"><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-700">تركيبة</span><h3 className="font-black text-slate-900">{recipe.name}</h3></div><p className="mt-1 text-xs text-slate-500">سعر البيع: {price} ج.م · {recipe.unit || "وحدة"} · نقاط الولاء: <strong className="text-amber-700">{Math.max(0, Math.floor(Number(recipe.loyaltyPoints) || 0))}</strong></p><div className="mt-2 flex flex-wrap gap-2"><label htmlFor={galleryInputId} className="inline-flex cursor-pointer items-center rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-100"><ImagePlus className="ml-1 h-3.5 w-3.5" />المعرض<input id={galleryInputId} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => handleRecipeImage(event.target.files?.[0], recipeId)} /></label><label htmlFor={cameraInputId} className="inline-flex cursor-pointer items-center rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-violet-700"><Camera className="ml-1 h-3.5 w-3.5" />الكاميرا<input id={cameraInputId} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={event => handleRecipeImage(event.target.files?.[0], recipeId)} /></label>{uploadingProductId === `recipe_${recipeId}` && <span className="self-center text-xs font-bold text-violet-700">جارٍ رفع الصورة...</span>}</div></div></div><label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={recipe.catalogVisible === true} onChange={event => updateRecipe(recipeId, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-7"><select value={recipe.category || ""} onChange={event => updateRecipe(recipeId, { category: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الفئة</option>{safeCategories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select><select value={recipe.company || ""} onChange={event => updateRecipe(recipeId, { company: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الشركة</option>{safeCompanies.map(company => <option key={company.id} value={company.name}>{company.name}</option>)}</select><Input type="number" value={recipe.catalogPrice ?? ""} onChange={event => updateRecipe(recipeId, { catalogPrice: event.target.value === "" ? undefined : Number(event.target.value) })} placeholder={`سعر الكتالوج ${price}`} /><Input type="number" value={recipe.catalogOldPrice ?? ""} onChange={event => updateRecipe(recipeId, { catalogOldPrice: event.target.value === "" ? undefined : Number(event.target.value) })} placeholder="السعر القديم" /><Input value={recipe.catalogDescription ?? ""} onChange={event => updateRecipe(recipeId, { catalogDescription: event.target.value })} placeholder="وصف مختصر للتركيبة" /><Input type="number" min="0" step="1" value={recipe.loyaltyPoints ?? ""} onChange={event => updateRecipe(recipeId, { loyaltyPoints: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} placeholder="نقاط الولاء لكل وحدة" /><Input value={recipe.catalogDetailsUrl ?? ""} onChange={event => updateRecipe(recipeId, { catalogDetailsUrl: event.target.value })} onBlur={event => updateRecipe(recipeId, { catalogDetailsUrl: getSafeCatalogDetailsUrl(event.target.value) })} placeholder="رابط فيديو أو منشور التعريف" dir="ltr" /></div></div>;
+              return <div key={recipe.id} className="rounded-2xl border border-violet-100 bg-violet-50/40 p-4"><div className="mb-3 flex flex-col gap-2 md:flex-row md:items-start md:justify-between"><div className="flex gap-3"><div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden rounded-2xl border border-violet-100 bg-white">{recipe.catalogImageUrl ? <img src={recipe.catalogImageUrl} alt={`صورة ${recipe.name}`} className="h-full w-full object-cover" /> : <Building2 className="h-7 w-7 text-violet-300" />}</div><div><div className="flex items-center gap-2"><span className="rounded-lg bg-violet-100 px-2 py-1 text-[10px] font-black text-violet-700">تركيبة</span><h3 className="font-black text-slate-900">{recipe.name}</h3></div><p className="mt-1 text-xs text-slate-500">سعر البيع: {price} ج.م · {recipe.unit || "وحدة"} · نقاط الولاء: <strong className="text-amber-700">{Math.max(0, Math.floor(Number(recipe.loyaltyPoints) || 0))}</strong></p><div className="mt-2 flex flex-wrap gap-2"><label htmlFor={galleryInputId} className="inline-flex cursor-pointer items-center rounded-lg border border-violet-200 bg-white px-2.5 py-1.5 text-xs font-bold text-violet-700 hover:bg-violet-100"><ImagePlus className="ml-1 h-3.5 w-3.5" />المعرض<input id={galleryInputId} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => { void handleRecipeImage(event.target.files?.[0], recipeId); event.target.value = ""; }} /></label><label htmlFor={cameraInputId} className="inline-flex cursor-pointer items-center rounded-lg bg-violet-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-violet-700"><Camera className="ml-1 h-3.5 w-3.5" />الكاميرا<input id={cameraInputId} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" onChange={event => { void handleRecipeImage(event.target.files?.[0], recipeId); event.target.value = ""; }} /></label>{uploadingProductId === `recipe_${recipeId}` && <span className="self-center text-xs font-bold text-violet-700">جارٍ رفع الصورة...</span>}</div></div></div><label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={recipe.catalogVisible === true} onChange={event => updateRecipe(recipeId, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label></div><div className="grid gap-2 md:grid-cols-2 xl:grid-cols-7"><select value={recipe.category || ""} onChange={event => updateRecipe(recipeId, { category: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الفئة</option>{safeCategories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select><select value={recipe.company || ""} onChange={event => updateRecipe(recipeId, { company: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الشركة</option>{safeCompanies.map(company => <option key={company.id} value={company.name}>{company.name}</option>)}</select><Input type="number" value={recipe.catalogPrice ?? ""} onChange={event => updateRecipe(recipeId, { catalogPrice: event.target.value === "" ? undefined : Number(event.target.value) })} placeholder={`سعر الكتالوج ${price}`} /><Input type="number" value={recipe.catalogOldPrice ?? ""} onChange={event => updateRecipe(recipeId, { catalogOldPrice: event.target.value === "" ? undefined : Number(event.target.value) })} placeholder="السعر القديم" /><Input value={recipe.catalogDescription ?? ""} onChange={event => updateRecipe(recipeId, { catalogDescription: event.target.value })} placeholder="وصف مختصر للتركيبة" /><Input type="number" min="0" step="1" value={recipe.loyaltyPoints ?? ""} onChange={event => updateRecipe(recipeId, { loyaltyPoints: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} placeholder="نقاط الولاء لكل وحدة" /><Input value={recipe.catalogDetailsUrl ?? ""} onChange={event => updateRecipe(recipeId, { catalogDetailsUrl: event.target.value })} onBlur={event => updateRecipe(recipeId, { catalogDetailsUrl: getSafeCatalogDetailsUrl(event.target.value) })} placeholder="رابط فيديو أو منشور التعريف" dir="ltr" /></div><Button type="button" className="mt-3 bg-violet-700 hover:bg-violet-800" onClick={() => void saveRecipe(recipeId)}>حفظ إعدادات التركيبة في Supabase</Button></div>;
             })}
             {filteredRecipes.length === 0 && <p className="py-6 text-center text-sm text-slate-500">لا توجد تركيبات مطابقة. أضف تركيبة أولاً من صفحة التركيبات.</p>}
           </CardContent>

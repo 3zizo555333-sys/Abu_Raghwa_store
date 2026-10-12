@@ -1,13 +1,14 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
 import type { Database, Json } from "./database.types";
+import { getSignedFormulationImageUrls, isFormulationImageStoragePath } from "./formulationImages";
 
 export type CloudFormulationIngredient = { materialId: string; materialName: string; quantity: number; unit: string; cost: number };
 export type CloudFormulation = {
   id: string; name: string; ingredients: CloudFormulationIngredient[]; totalCost: number;
   productionQuantity: number; productionUnit: string; costPerUnit: number; salePrice: number;
   profitValue: number; profitPercent: number; notes: string; createdDate: string;
-  isPasswordProtected: boolean; password?: string; imageUrl?: string; loyaltyPoints: number; version: number;
+  isPasswordProtected: boolean; password?: string; imageUrl?: string; imageStoragePath?: string; loyaltyPoints: number; version: number;
 };
 export type CloudFormulationInput = Omit<CloudFormulation, "id" | "version" | "createdDate" | "profitValue" | "profitPercent"> & { id?: string; version?: number };
 
@@ -40,6 +41,9 @@ export async function listCloudFormulations(): Promise<CloudFormulation[]> {
   const client = getSupabaseClient();
   const formulas = requireCloudResult(await client.from("formulations").select("*").eq("shop_id", shopId).is("deleted_at", null).order("created_at", { ascending: false }).limit(2000)) as Database["public"]["Tables"]["recipes"]["Row"][];
   if (!formulas.length) return [];
+  const storagePaths = formulas.map(row => row.image_url).filter(isFormulationImageStoragePath);
+  let signedImages = new Map<string, string>();
+  try { signedImages = await getSignedFormulationImageUrls(storagePaths); } catch { /* Keep recipe records visible when Storage signing is temporarily unavailable. */ }
   const rows = requireCloudResult(await client.from("recipe_ingredients").select("id,recipe_id,shop_id,raw_material_id,material_name_snapshot,unit,quantity,cost,created_at,updated_at").eq("shop_id", shopId).in("recipe_id", formulas.map(row => row.id)).limit(10000)) as Database["public"]["Tables"]["recipe_ingredients"]["Row"][];
   const grouped = new Map<string, CloudFormulationIngredient[]>();
   for (const row of rows) {
@@ -59,7 +63,8 @@ export async function listCloudFormulations(): Promise<CloudFormulation[]> {
       profitPercent: salePrice * qty > 0 ? profitValue / (salePrice * qty) * 100 : 0,
       notes: row.notes || row.description || "", createdDate: row.created_at,
       isPasswordProtected: row.is_password_protected, password: row.password_hash ?? undefined, loyaltyPoints: row.loyalty_points,
-      imageUrl: row.image_url || undefined, version: row.version,
+      imageUrl: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? undefined : row.image_url)) : undefined,
+      imageStoragePath: isFormulationImageStoragePath(row.image_url) ? row.image_url : undefined, version: row.version,
     };
   });
 }
@@ -75,7 +80,7 @@ export async function saveCloudFormulation(input: CloudFormulationInput): Promis
     name: input.name.trim(), description: input.notes, notes: input.notes,
     cost_price: totalCost, retail_price: input.salePrice, category: "عام",
     production_quantity: input.productionQuantity, production_unit: input.productionUnit,
-    loyalty_points: input.loyaltyPoints, image_url: input.imageUrl || null,
+    loyalty_points: input.loyaltyPoints, image_url: input.imageStoragePath || input.imageUrl || null,
     is_password_protected: input.isPasswordProtected,
     password_hash: passwordHash || null,
   } as unknown as Json;
@@ -99,7 +104,8 @@ export async function saveCloudFormulation(input: CloudFormulationInput): Promis
     productionQuantity: qty, productionUnit: String(row.production_unit), costPerUnit: total / qty,
     salePrice: sale, profitValue, profitPercent: sale * qty ? profitValue / (sale * qty) * 100 : 0,
     notes: String(row.notes ?? ""), createdDate: String(row.created_at), isPasswordProtected: Boolean(row.is_password_protected), password: row.password_hash ? String(row.password_hash) : undefined,
-    loyaltyPoints: n(row.loyalty_points), imageUrl: row.image_url ? String(row.image_url) : undefined, version: n(row.version),
+    loyaltyPoints: n(row.loyalty_points), imageUrl: row.image_url && !isFormulationImageStoragePath(String(row.image_url)) ? String(row.image_url) : undefined,
+    imageStoragePath: isFormulationImageStoragePath(row.image_url) ? String(row.image_url) : undefined, version: n(row.version),
   };
 }
 

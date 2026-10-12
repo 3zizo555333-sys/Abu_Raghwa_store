@@ -20,6 +20,7 @@ export interface CatalogProduct {
 
 export interface CatalogRecipe {
   id: string;
+  version?: number;
   name: string;
   salePrice?: number;
   productionUnit?: string;
@@ -31,6 +32,7 @@ export interface CatalogRecipe {
   catalogOldPrice?: number;
   catalogDescription?: string;
   catalogImageUrl?: string;
+  imageStoragePath?: string;
   catalogDetailsUrl?: string;
   loyaltyPoints?: number;
 }

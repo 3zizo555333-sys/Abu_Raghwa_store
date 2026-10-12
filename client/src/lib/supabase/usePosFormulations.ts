@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { getActiveShopContext, subscribeToShopChanges } from "./products";
 import { getSupabaseClient, requireCloudResult } from "./client";
+import { getSignedFormulationImageUrls, isFormulationImageStoragePath } from "./formulationImages";
 
 export type PosFormulation = {
   id: string;
@@ -28,8 +29,10 @@ export function usePosFormulations() {
           .select("id,shop_id,name,retail_price,production_unit,loyalty_points,image_url,updated_at")
           .eq("shop_id", shopId).order("name").limit(500);
         const rows = requireCloudResult(result) as Array<{id:string;name:string;retail_price:number;production_unit:string;loyalty_points:number;image_url:string|null}>;
+        let signedImages = new Map<string, string>();
+        try { signedImages = await getSignedFormulationImageUrls(rows.map(row => row.image_url).filter(isFormulationImageStoragePath)); } catch { /* Product cards remain usable without optional images. */ }
         if (active) {
-          setFormulations(rows.map(row => ({ id: row.id, name: row.name, salePrice: Number(row.retail_price) || 0, productionUnit: row.production_unit, loyaltyPoints: Number(row.loyalty_points) || 0, imageUrl: row.image_url })));
+          setFormulations(rows.map(row => ({ id: row.id, name: row.name, salePrice: Number(row.retail_price) || 0, productionUnit: row.production_unit, loyaltyPoints: Number(row.loyalty_points) || 0, imageUrl: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null })));
           setError(null);
           setLoading(false);
         }
