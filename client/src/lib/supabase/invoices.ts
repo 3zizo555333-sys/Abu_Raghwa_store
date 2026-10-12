@@ -4,6 +4,7 @@ import type { Database, Json } from "./database.types";
 
 export type InvoiceItemInput = {
   productId: string;
+  formulationId?: string;
   quantity: number;
   selectedUnitType: string;
 };
@@ -30,7 +31,7 @@ export type RecoverableInvoiceIntent = {
   intentId: string;
   state: "pending" | "completed" | "acknowledged" | "cancelled";
   payload: {
-    items: Array<{ product_id: string; quantity: number; selected_unit_type: string }>;
+    items: Array<{ product_id: string; formulation_id?: string; quantity: number; selected_unit_type: string }>;
     sale_type: "retail" | "wholesale" | "bulk";
     payment_method: "cash" | "card" | "check" | "bank_transfer" | "other";
     customer_name: string;
@@ -143,7 +144,9 @@ function parseInvoiceIntent(value: Json): RecoverableInvoiceIntent {
         || typeof selectedUnitType !== "string") {
       throw new Error("محاولة الفاتورة المحفوظة تحتوي بندًا غير صالح.");
     }
-    return { product_id: productId, quantity, selected_unit_type: selectedUnitType };
+    const formulationId = entry.formulation_id;
+    if (formulationId !== undefined && (typeof formulationId !== "string" || formulationId !== productId)) throw new Error("مرجع التركيبة في محاولة الفاتورة غير صالح.");
+    return { product_id: productId, ...(typeof formulationId === "string" ? { formulation_id: formulationId } : {}), quantity, selected_unit_type: selectedUnitType };
   });
   const invoiceResult = row.invoice_result === undefined || row.invoice_result === null
     ? null
@@ -186,6 +189,7 @@ export async function createInvoiceIntent(input: CreateInvoiceInput): Promise<Re
       product_id: item.productId,
       quantity: item.quantity,
       selected_unit_type: item.selectedUnitType,
+      ...(item.formulationId ? { formulation_id: item.formulationId } : {}),
     })),
     sale_type: input.saleType,
     payment_method: input.paymentMethod,

@@ -289,20 +289,20 @@ function RecipesContent() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-50 p-4" dir="rtl">
-      <div className="max-w-7xl mx-auto">
-        <div className="flex justify-between items-center mb-6">
+    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gray-50 p-3 sm:p-4" dir="rtl">
+      <div className="mx-auto w-full min-w-0 max-w-7xl overflow-x-hidden">
+        <div className="mb-6 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-800">🧪 إدارة التركيبات</h1>
-            <p className="text-gray-600 mt-1">حساب دقيق لتكلفة الكيلو من الخامات (مثل 12000 ÷ 60 = 200 ج.م)</p>
+            <h1 className="break-words text-2xl font-bold text-gray-800 sm:text-3xl">🧪 إدارة التركيبات</h1>
+            <p className="mt-1 break-words text-sm text-gray-600">حساب دقيق لتكلفة الكيلو من الخامات (مثل 12000 ÷ 60 = 200 ج.م)</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex w-full min-w-0 flex-wrap gap-2 sm:w-auto">
             <Button
               onClick={() => {
                 setShowForm(!showForm);
                 if (showForm) resetForm();
               }}
-              className="bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-2"
+              className="min-w-0 flex-1 whitespace-normal bg-blue-600 text-white hover:bg-blue-700 sm:flex-none"
             >
               <Plus className="w-4 h-4" />
               تركيبة جديدة
@@ -310,7 +310,7 @@ function RecipesContent() {
             <Button
               variant="outline"
               onClick={() => navigate("/dashboard")}
-              className="flex items-center gap-2"
+              className="min-w-0 flex-1 whitespace-normal sm:flex-none"
             >
               <ArrowLeft className="w-4 h-4" />
               العودة
@@ -320,10 +320,10 @@ function RecipesContent() {
 
         {/* Modal عرض التركيبة الأصلي بالملاحظات وتفاصيل الخامات */}
         {viewingRecipe && (
-          <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl p-6 max-w-lg w-full shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
-              <div className="flex justify-between items-center border-b pb-3">
-                <h2 className="text-xl font-bold text-gray-900 flex items-center gap-2">
+          <div className="fixed inset-0 z-50 flex max-w-full items-center justify-center overflow-x-hidden bg-black/60 p-2 sm:p-4">
+            <div className="w-full min-w-0 max-w-lg space-y-4 overflow-x-hidden overflow-y-auto rounded-xl bg-white p-4 shadow-2xl sm:p-6 max-h-[90vh]">
+              <div className="flex min-w-0 items-center justify-between gap-2 border-b pb-3">
+                <h2 className="flex min-w-0 items-center gap-2 break-words text-lg font-bold text-gray-900 sm:text-xl">
                   {viewingRecipe.imageUrl || viewingRecipe.catalogImageUrl ? <img src={viewingRecipe.imageUrl || viewingRecipe.catalogImageUrl} alt={viewingRecipe.name} className="h-12 w-12 rounded-xl border object-cover" /> : <span>🧪</span>} {viewingRecipe.name}
                 </h2>
                 <Button variant="ghost" size="sm" onClick={() => setViewingRecipe(null)}>
@@ -331,7 +331,7 @@ function RecipesContent() {
                 </Button>
               </div>
 
-              <div className="grid grid-cols-2 gap-3 bg-blue-50 p-3 rounded-lg text-sm">
+              <div className="grid min-w-0 grid-cols-1 gap-3 overflow-x-hidden rounded-lg bg-blue-50 p-3 text-sm sm:grid-cols-2">
                 <div>
                   <span className="text-gray-600">كمية الإنتاج: </span>
                   <span className="font-bold">{viewingRecipe.productionQuantity} {viewingRecipe.productionUnit}</span>
@@ -372,9 +372,9 @@ function RecipesContent() {
                       <div key={idx} className="flex justify-between items-center bg-gray-50 p-2.5 rounded border text-xs">
                         <div>
                           <span className="font-bold text-gray-800">{ing.materialName}</span>
-                          <span className="text-gray-500 mr-2">({ing.quantity} {ing.unit} × {unitPrice.toFixed(2)} ج.م)</span>
+                          <span className="mr-2 break-words text-gray-500">({ing.quantity} {ing.unit} × {unitPrice.toFixed(2)} ج.م)</span>
                         </div>
-                        <span className="font-bold text-orange-600">{ing.cost.toFixed(2)} ج.م</span>
+                        <span className="max-w-full break-words font-bold tabular-nums text-orange-600">{ing.cost.toFixed(2)} ج.م</span>
                       </div>
                     );
                   })}
@@ -636,9 +636,9 @@ function RecipesContent() {
         })()}
 
         {/* Recipes Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid min-w-0 grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3 sm:gap-6">
           {recipes.map((recipe) => (
-            <Card key={recipe.id} className="border-0 shadow-sm bg-white relative">
+            <Card key={recipe.id} className="relative min-w-0 max-w-full overflow-hidden border-0 bg-white shadow-sm">
               {recipe.isPasswordProtected && (
                 <span className="absolute top-3 left-3 bg-orange-100 text-orange-700 p-1.5 rounded-full" title="محمية بكلمة مرور">
                   <Lock className="w-4 h-4" />
@@ -647,20 +647,20 @@ function RecipesContent() {
               <CardHeader className="pb-3 border-b">
                 <CardTitle className="flex justify-between items-center text-lg gap-3">
                   <span className="flex min-w-0 items-center gap-3">{recipe.imageUrl || recipe.catalogImageUrl ? <img src={recipe.imageUrl || recipe.catalogImageUrl} alt={recipe.name} className="h-12 w-12 shrink-0 rounded-xl border object-cover" /> : <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-slate-100 text-slate-400"><ImagePlus className="h-5 w-5" /></div>}<span className="truncate">{recipe.name}</span></span>
-                  <span className="text-sm bg-orange-100 text-orange-800 px-2 py-1 rounded">
+                  <span className="max-w-[42%] shrink-0 break-words text-left text-xs tabular-nums bg-orange-100 text-orange-800 px-2 py-1 rounded sm:text-sm">
                     {recipe.totalCost?.toFixed(2)} ج.م
                   </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="pt-4 space-y-3">
-                <div className="text-sm text-gray-600 space-y-1">
+                <div className="min-w-0 break-words text-sm text-gray-600 space-y-1">
                   <p>الإنتاج: {recipe.productionQuantity} {recipe.productionUnit}</p>
                   <p>تكلفة الوحدة: {recipe.costPerUnit?.toFixed(2)} ج.م</p>
-                  <p>سعر البيع: {recipe.salePrice?.toFixed(2)} ج.م</p>
+                  <p className="break-words tabular-nums">سعر البيع: {recipe.salePrice?.toFixed(2)} ج.م</p>
                   <p>نقاط الولاء: {normalizeLoyaltyPoints(recipe.loyaltyPoints)}</p>
                   <p className="font-bold text-green-600">هامش الربح: {calculateRecipeProfit(recipe).profitPercent.toFixed(2)}%</p>
                 </div>
-                <div className="border-t pt-3 flex justify-between gap-1">
+                <div className="flex flex-wrap justify-between gap-1 border-t pt-3">
                   <Button onClick={() => handleViewRecipeClick(recipe)} size="sm" variant="outline" className="text-green-600 flex-1">
                     <Eye className="w-3.5 h-3.5 ml-1" /> عرض
                   </Button>
