@@ -3,6 +3,7 @@ export interface EmployeeRecord {
   name: string;
   phone: string;
   position: string;
+  role?: "supervisor" | "cashier" | "seller";
   salary: number;
   joinDate: string;
 }
@@ -33,6 +34,7 @@ export const normalizeEmployees = (value: unknown): EmployeeRecord[] => {
       name: text(source.name) || "موظف بدون اسم",
       phone: text(source.phone),
       position: text(source.position),
+      role: source.role === "supervisor" || source.role === "cashier" ? source.role : "seller",
       salary: Math.max(0, number(source.salary)),
       joinDate: text(source.joinDate) || "غير مسجل",
     };

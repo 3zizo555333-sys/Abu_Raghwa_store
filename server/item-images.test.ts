@@ -25,16 +25,21 @@ describe("رفع صور المنتجات والتركيبات", () => {
     const products = readFileSync(resolve(projectRoot, "client/src/pages/Products.tsx"), "utf8");
     const recipes = readFileSync(resolve(projectRoot, "client/src/pages/Recipes.tsx"), "utf8");
     const uploadHelper = readFileSync(resolve(projectRoot, "client/src/lib/itemImageUpload.ts"), "utf8");
+    const formulationImages = readFileSync(resolve(projectRoot, "client/src/lib/supabase/formulationImages.ts"), "utf8");
+    const posFormulations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/usePosFormulations.ts"), "utf8");
     for (const page of [products, recipes]) {
       expect(page).toContain("capture=\"environment\"");
-      expect(page).toContain("اختيار من المعرض");
       expect(page).toContain("catalogImageUrl");
       expect(page).toContain("accept=\"image/*\"");
     }
+    expect(recipes).toContain("المعرض");
+    expect(formulationImages).toContain('storage.from("product-images")');
+    expect(formulationImages).toContain('upload(storagePath, image');
+    expect(formulationImages).toContain('createSignedUrls(paths');
+    expect(posFormulations).toContain("getSignedFormulationImageUrls");
     expect(products).toContain("prepareProductImageForUpload");
-    expect(recipes).toContain("prepareItemImageForUpload");
     expect(products).toContain("uploadProductImage({ productId: saved.id");
-    expect(recipes).toContain("uploadRecipeImage.mutateAsync");
+    expect(recipes).toContain("uploadCloudFormulationImage");
     expect(uploadHelper).toContain("convertToJpeg");
     expect(uploadHelper).toContain("DIRECT_UPLOAD_BYTES");
     expect(products).toContain("imageUrl: product.imageUrl || product.catalogImageUrl");

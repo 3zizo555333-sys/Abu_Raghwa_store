@@ -9,10 +9,9 @@ import { toast } from "sonner";
 import { calculateRecipeProfit, calculateRecipesProfitSummary } from "../lib/recipeProfit";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
-import { trpc } from "@/lib/trpc";
-import { prepareItemImageForUpload } from "@/lib/itemImageUpload";
 import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
 import { deleteCloudFormulation, listCloudFormulations, saveCloudFormulation, verifyFormulationPassword } from "@/lib/supabase/formulations";
+import { removeCloudFormulationImage, uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { listRawMaterials } from "@/lib/supabase/operations";
 
 interface RawMaterial {
@@ -50,6 +49,7 @@ interface Recipe {
   isPasswordProtected?: boolean;
   password?: string;
   imageUrl?: string;
+  imageStoragePath?: string;
   catalogImageUrl?: string;
   loyaltyPoints?: number;
   version: number;
@@ -93,7 +93,9 @@ function RecipesContent() {
   const [showPasswordModal, setShowPasswordModal] = useState<string | null>(null);
   const [recipePasswordInput, setRecipePasswordInput] = useState("");
   const [isUploadingImage, setIsUploadingImage] = useState(false);
-  const uploadRecipeImage = trpc.itemImages.upload.useMutation();
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null);
+  const [pendingImagePreview, setPendingImagePreview] = useState("");
+  const [imagePathToRemove, setImagePathToRemove] = useState("");
   const [formData, setFormData] = useState({
     name: "",
     productionQuantity: "",
@@ -102,8 +104,11 @@ function RecipesContent() {
     notes: "",
     password: "",
     loyaltyPoints: "",
-    imageUrl: ""
+    imageUrl: "",
+    imageStoragePath: ""
   });
+
+  useEffect(() => () => { if (pendingImagePreview) URL.revokeObjectURL(pendingImagePreview); }, [pendingImagePreview]);
 
   useEffect(() => {
     void Promise.all([listCloudFormulations(), listRawMaterials()]).then(([formulas, rows]) => {
@@ -114,17 +119,14 @@ function RecipesContent() {
 
   const handleRecipeImageUpload = async (file: File | undefined) => {
     if (!file) return;
-    setIsUploadingImage(true);
     try {
-      const prepared = await prepareItemImageForUpload(file);
-      const itemId = editingId || `recipe_${Date.now()}`;
-      const uploaded = await uploadRecipeImage.mutateAsync({ itemId, fileName: prepared.fileName, dataUrl: prepared.dataUrl });
-      setFormData(current => ({ ...current, imageUrl: uploaded.url }));
-      toast.success("تم رفع صورة التركيبة وحفظها سحابيًا");
+      if (!file.type.startsWith("image/")) throw new Error("اختر ملف صورة صالحًا.");
+      setPendingImageFile(file);
+      setPendingImagePreview(URL.createObjectURL(file));
+      setImagePathToRemove("");
+      toast.message("ستُرفع الصورة مباشرة إلى مخزن Supabase الخاص عند حفظ التركيبة.");
     } catch (error) {
-      toast.error(error instanceof Error && error.message.includes("large") ? "الصورة كبيرة جدًا؛ جرّب صورة أصغر من 16 ميجابايت" : "تعذر تجهيز أو رفع صورة التركيبة، حاول مرة أخرى");
-    } finally {
-      setIsUploadingImage(false);
+      toast.error(error instanceof Error ? error.message : "تعذر اختيار الصورة.");
     }
   };
 
@@ -178,14 +180,30 @@ function RecipesContent() {
       isPasswordProtected: !!formData.password || Boolean(current?.isPasswordProtected),
       password: formData.password || undefined,
       imageUrl: formData.imageUrl || undefined,
+      imageStoragePath: formData.imageStoragePath || undefined,
       catalogImageUrl: formData.imageUrl || undefined,
       version: current?.version ?? 1,
     };
 
     try {
-      const saved = await saveCloudFormulation(input);
-      setRecipes(previous => editingId ? previous.map(recipe => recipe.id === editingId ? saved as Recipe : recipe) : [saved as Recipe, ...previous]);
-      toast.success(editingId ? "تم تحديث التركيبة ومكوناتها في Supabase" : "تم حفظ التركيبة ومكوناتها في Supabase");
+      let saved = await saveCloudFormulation(input);
+      setRecipes(previous => previous.some(recipe => recipe.id === saved.id) ? previous.map(recipe => recipe.id === saved.id ? saved as Recipe : recipe) : [saved as Recipe, ...previous]);
+      setEditingId(saved.id);
+      if (pendingImageFile) {
+        setIsUploadingImage(true);
+        try {
+          const uploaded = await uploadCloudFormulationImage({ formulationId: saved.id, expectedVersion: saved.version, file: pendingImageFile, previousStoragePath: saved.imageStoragePath });
+          saved = { ...saved, imageStoragePath: uploaded.storagePath, imageUrl: uploaded.signedUrl || undefined, version: uploaded.version };
+          setRecipes(previous => previous.map(recipe => recipe.id === saved.id ? saved as Recipe : recipe));
+        } catch (imageError) {
+          setRecipes(previous => previous.map(recipe => recipe.id === saved.id ? saved as Recipe : recipe));
+          toast.error(`حُفظت بيانات التركيبة، لكن تعذر ربط الصورة. أعد المحاولة من النموذج: ${imageError instanceof Error ? imageError.message : "فشل رفع الصورة"}`);
+          return;
+        } finally { setIsUploadingImage(false); }
+      } else if (imagePathToRemove) {
+        try { await removeCloudFormulationImage(imagePathToRemove); } catch (cleanupError) { console.warn("Old formulation image cleanup failed.", cleanupError); }
+      }
+      toast.success(editingId ? "تم تحديث التركيبة ومكوناتها وصورتها في Supabase" : "تم حفظ التركيبة ومكوناتها وصورتها في Supabase");
       resetForm();
     } catch (error) {
       toast.error(error instanceof Error ? `لم يتم حفظ التركيبة: ${error.message}` : "لم يتم حفظ التركيبة.");
@@ -193,6 +211,9 @@ function RecipesContent() {
   };
 
   const resetForm = () => {
+    setPendingImageFile(null);
+    setPendingImagePreview("");
+    setImagePathToRemove("");
     setFormData({
       name: "",
       productionQuantity: "",
@@ -201,7 +222,8 @@ function RecipesContent() {
       notes: "",
       password: "",
       loyaltyPoints: "",
-      imageUrl: ""
+      imageUrl: "",
+      imageStoragePath: ""
     });
     setSelectedIngredients([]);
     setEditingId(null);
@@ -209,6 +231,9 @@ function RecipesContent() {
   };
 
   const handleEdit = (recipe: Recipe) => {
+    setPendingImageFile(null);
+    setPendingImagePreview("");
+    setImagePathToRemove("");
     setFormData({
       name: recipe.name,
       productionQuantity: recipe.productionQuantity.toString(),
@@ -217,7 +242,8 @@ function RecipesContent() {
       notes: recipe.notes || "",
       password: "",
       loyaltyPoints: recipe.loyaltyPoints?.toString() || "",
-      imageUrl: recipe.imageUrl || recipe.catalogImageUrl || ""
+      imageUrl: recipe.imageUrl || recipe.catalogImageUrl || "",
+      imageStoragePath: recipe.imageStoragePath || ""
     });
     setSelectedIngredients(recipe.ingredients || []);
     setEditingId(recipe.id);
@@ -511,8 +537,8 @@ function RecipesContent() {
 
                 <div className="rounded-xl border border-violet-200 bg-violet-50 p-4">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
-                    {formData.imageUrl ? <img src={formData.imageUrl} alt="معاينة التركيبة" className="h-24 w-24 rounded-2xl border-2 border-white bg-white object-cover shadow" /> : <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-white text-violet-400"><ImagePlus className="h-8 w-8" /></div>}
-                    <div className="flex-1"><p className="font-black text-violet-950">صورة التركيبة أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">اختَر الصورة من المعرض أو صوّرها مباشرة بالكاميرا.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => handleRecipeImageUpload(event.target.files?.[0])} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => handleRecipeImageUpload(event.target.files?.[0])} /></label>{formData.imageUrl && <Button type="button" size="sm" variant="outline" onClick={() => setFormData(current => ({ ...current, imageUrl: "" }))}>إزالة الصورة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري تجهيز ورفع صورة الكاميرا...</p>}</div>
+                    {(pendingImagePreview || formData.imageUrl) ? <img src={pendingImagePreview || formData.imageUrl} alt="معاينة التركيبة" className="h-24 w-24 rounded-2xl border-2 border-white bg-white object-cover shadow" /> : <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-white text-violet-400"><ImagePlus className="h-8 w-8" /></div>}
+                    <div className="flex-1"><p className="font-black text-violet-950">صورة التركيبة أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">تُضغط الصورة ثم تُرفع إلى bucket الخاص product-images عند حفظ التركيبة.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => { void handleRecipeImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" capture="environment" className="hidden" onChange={(event) => { void handleRecipeImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label>{(formData.imageUrl || pendingImagePreview) && <Button type="button" size="sm" variant="outline" onClick={() => { if (formData.imageStoragePath) setImagePathToRemove(formData.imageStoragePath); setPendingImageFile(null); setPendingImagePreview(""); setFormData(current => ({ ...current, imageUrl: "", imageStoragePath: "" })); }}>إزالة الصورة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري رفع الصورة إلى Supabase Storage وربطها بالتركيبة...</p>}</div>
                   </div>
                 </div>
 
