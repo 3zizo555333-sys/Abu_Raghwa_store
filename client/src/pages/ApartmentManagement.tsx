@@ -1,28 +1,24 @@
-import { browserState } from "@/lib/browserState";
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useLocation } from 'wouter';
-import { Plus, Trash2, ChevronDown, ChevronUp, AlertCircle, Search, TrendingUp, BarChart3, Eye, X, ClipboardPaste, ArrowRightLeft, CheckSquare } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, AlertCircle, Search, TrendingUp, BarChart3, Eye, X, ClipboardPaste, ArrowRightLeft, CheckSquare, Pencil, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  createCloudApartmentCategory,
+  createCloudApartmentItems,
+  deleteCloudApartmentItems,
+  listCloudApartmentInventory,
+  updateCloudApartmentItem,
+  updateCloudApartmentItemsCategory,
+  type ApartmentInventoryInput,
+  type ApartmentInventoryItem,
+} from '@/lib/supabase/apartmentInventory';
 
-interface InventoryItem {
-  id: string;
-  name: string;
-  supplier: string;
-  location: string;
-  unit: string;
-  piecesPerUnit: number;
-  quantity: number;
-  extraPieces: number;
-  wholesalePrice: number;
-  retailPrice: number;
-  wholesaleRetailPrice: number;
-  category: string;
-  createdAt: string;
-}
+type InventoryItem = ApartmentInventoryItem;
 
 interface InventoryLog {
   id: string;
@@ -35,13 +31,24 @@ interface InventoryLog {
 }
 
 const UNITS = ['كرتونة', 'بالة', 'شكارة', 'علبة', 'دسته', 'شرينك', 'قطعة', 'كيلو'];
-const STORAGE_KEY = 'abu_raghwa_apartment_items';
-const CATEGORIES_KEY = 'abu_raghwa_apartment_categories';
+
+const createEmptyInventoryForm = (): ApartmentInventoryInput => ({
+  name: '', supplier: '', location: '', unit: '', piecesPerUnit: 0,
+  quantity: 0, extraPieces: 0, wholesalePrice: 0, retailPrice: 0,
+  wholesaleRetailPrice: 0, category: '',
+});
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : 'تعذر حفظ التغييرات في السحابة.';
+}
 
 export default function ApartmentManagement() {
   const [, navigate] = useLocation();
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [logs, setLogs] = useState<InventoryLog[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [canDeleteItems, setCanDeleteItems] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null);
   const [expandedItem, setExpandedItem] = useState<string | null>(null);
@@ -56,49 +63,34 @@ export default function ApartmentManagement() {
   const [showBulkImport, setShowBulkImport] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<string[]>([]);
   const [moveCategory, setMoveCategory] = useState('');
+  const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [editFormData, setEditFormData] = useState<ApartmentInventoryInput | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [savingMutation, setSavingMutation] = useState(false);
+  const [savingItemIds, setSavingItemIds] = useState<string[]>([]);
+  const pendingItemIds = useRef(new Set<string>());
 
   // Form state
-  const [formData, setFormData] = useState({
-    name: '',
-    supplier: '',
-    location: '',
-    unit: '',
-    piecesPerUnit: 0,
-    quantity: 0,
-    extraPieces: 0,
-    wholesalePrice: 0,
-    retailPrice: 0,
-    wholesaleRetailPrice: 0,
-    category: '',
-  });
+  const [formData, setFormData] = useState<ApartmentInventoryInput>(createEmptyInventoryForm);
 
-  // تحميل البيانات من browserState عند بدء التطبيق
-  useEffect(() => {
-    const saved = browserState.get(STORAGE_KEY);
-    if (saved) {
-      try {
-        setItems(JSON.parse(saved));
-      } catch (error) {
-        console.error('خطأ في تحميل البيانات:', error);
-      }
+  const refreshCloudData = useCallback(async (silent = false) => {
+    setLoading(true);
+    setLoadError(null);
+    try {
+      const snapshot = await listCloudApartmentInventory();
+      setItems(snapshot.items);
+      setCategoryNames(snapshot.categories);
+      setCanDeleteItems(snapshot.role === 'manager' || snapshot.role === 'admin');
+    } catch (error) {
+      const message = errorMessage(error);
+      setLoadError(message);
+      if (!silent) toast.error(`تعذر تحميل مخزون الشقة من Supabase: ${message}`);
+    } finally {
+      setLoading(false);
     }
   }, []);
 
-  useEffect(() => {
-    const savedCategories = browserState.get(CATEGORIES_KEY);
-    if (savedCategories) {
-      try { setCategoryNames(JSON.parse(savedCategories)); } catch { setCategoryNames([]); }
-    }
-  }, []);
-
-  // حفظ البيانات في browserState كلما تغيرت
-  useEffect(() => {
-    browserState.set(STORAGE_KEY, JSON.stringify(items));
-  }, [items]);
-
-  useEffect(() => {
-    browserState.set(CATEGORIES_KEY, JSON.stringify(categoryNames));
-  }, [categoryNames]);
+  useEffect(() => { void refreshCloudData(); }, [refreshCloudData]);
 
   // حساب إجمالي القطع
   const calculateTotalPieces = (quantity: number, piecesPerUnit: number, extraPieces: number) => {
@@ -125,56 +117,110 @@ export default function ApartmentManagement() {
     return parseFloat((((wholesaleRetailPrice - piecePrice) / piecePrice) * 100).toFixed(2));
   };
 
+  // لا تتغير الواجهة إلا بعد تأكيد Supabase حفظ العملية.
+  const persistItemPatch = async (id: string, patch: Parameters<typeof updateCloudApartmentItem>[1]) => {
+    if (pendingItemIds.current.has(id)) return;
+    const currentItem = items.find(item => item.id === id);
+    if (!currentItem) return;
+    pendingItemIds.current.add(id);
+    setSavingItemIds(previous => [...previous, id]);
+    try {
+      const saved = await updateCloudApartmentItem(id, patch, currentItem.updatedAt);
+      setItems(previous => previous.map(item => item.id === id ? saved : item));
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حفظ تعديل الصنف: ${errorMessage(error)}`);
+    } finally {
+      pendingItemIds.current.delete(id);
+      setSavingItemIds(previous => previous.filter(itemId => itemId !== id));
+    }
+  };
+
   // إضافة منتج جديد
-  const handleAddProduct = () => {
-    if (!formData.name || !formData.category) {
+  const handleAddProduct = async () => {
+    if (!formData.name.trim() || !formData.category.trim()) {
       toast.error('الرجاء ملء الحقول المطلوبة (الاسم والفئة)');
       return;
     }
-
-    const newItem: InventoryItem = {
-      id: Date.now().toString(),
-      ...formData,
-      createdAt: new Date().toISOString(),
-    };
-
-    setItems([...items, newItem]);
-    setFormData({
-      name: '',
-      supplier: '',
-      location: '',
-      unit: '',
-      piecesPerUnit: 0,
-      quantity: 0,
-      extraPieces: 0,
-      wholesalePrice: 0,
-      retailPrice: 0,
-      wholesaleRetailPrice: 0,
-      category: '',
-    });
-    toast.success('✅ تم إضافة المنتج بنجاح');
-  };
-
-  // حذف منتج
-  const handleDeleteProduct = (id: string) => {
-    if (confirm('هل أنت متأكد من حذف هذا المنتج؟')) {
-      setItems(items.filter(item => item.id !== id));
-      toast.success('✅ تم حذف المنتج');
+    setSavingMutation(true);
+    try {
+      const [saved] = await createCloudApartmentItems([formData]);
+      setItems(previous => [...previous, saved]);
+      setFormData(createEmptyInventoryForm());
+      toast.success('تم حفظ المنتج سحابياً بنجاح');
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حفظ المنتج؛ لم تُحفظ بيانات محلية مؤقتة: ${errorMessage(error)}`);
+    } finally {
+      setSavingMutation(false);
     }
   };
 
-  // تحديث كمية المنتج
-  const handleQuantityChange = (id: string, newQuantity: number) => {
-    setItems(items.map(item =>
-      item.id === id ? { ...item, quantity: Math.max(0, newQuantity) } : item
-    ));
+  const openEditDialog = (item: InventoryItem) => {
+    setEditingItem(item);
+    setEditFormData({
+      name: item.name, supplier: item.supplier, location: item.location, unit: item.unit,
+      piecesPerUnit: item.piecesPerUnit, quantity: item.quantity, extraPieces: item.extraPieces,
+      wholesalePrice: item.wholesalePrice, retailPrice: item.retailPrice,
+      wholesaleRetailPrice: item.wholesaleRetailPrice, category: item.category,
+    });
   };
 
-  // تحديث القطع الإضافية
+  const handleSaveEditedItem = async () => {
+    if (!editingItem || !editFormData) return;
+    if (pendingItemIds.current.has(editingItem.id)) {
+      toast.error('يوجد تعديل جارٍ لهذا الصنف. انتظر اكتماله ثم أعد المحاولة.');
+      return;
+    }
+    pendingItemIds.current.add(editingItem.id);
+    setSavingItemIds(previous => [...previous, editingItem.id]);
+    setSavingEdit(true);
+    try {
+      const saved = await updateCloudApartmentItem(editingItem.id, editFormData, editingItem.updatedAt);
+      setItems(previous => previous.map(item => item.id === saved.id ? saved : item));
+      setEditingItem(null);
+      setEditFormData(null);
+      toast.success('تم حفظ تعديل الصنف في Supabase');
+    } catch (error) {
+      await refreshCloudData(true);
+      if (errorMessage(error).includes('تغيّر هذا الصنف')) {
+        setEditingItem(null);
+        setEditFormData(null);
+      }
+      toast.error(`لم يتم حفظ تعديل الصنف: ${errorMessage(error)}`);
+    } finally {
+      pendingItemIds.current.delete(editingItem.id);
+      setSavingItemIds(previous => previous.filter(itemId => itemId !== editingItem.id));
+      setSavingEdit(false);
+    }
+  };
+
+  // حذف منتج
+  const handleDeleteProduct = async (id: string) => {
+    if (!canDeleteItems) {
+      toast.error('حذف أصناف المخزن متاح للمدير أو المسؤول فقط.');
+      return;
+    }
+    if (!confirm('هل أنت متأكد من حذف هذا المنتج من المخزن السحابي؟')) return;
+    try {
+      const deletedIds = await deleteCloudApartmentItems([id]);
+      if (!deletedIds.includes(id)) throw new Error('لم يؤكد الخادم حذف الصنف.');
+      setItems(previous => previous.filter(item => item.id !== id));
+      setSelectedItemIds(previous => previous.filter(itemId => itemId !== id));
+      toast.success('تم حذف المنتج من Supabase');
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حذف المنتج: ${errorMessage(error)}`);
+    }
+  };
+
+  // تحديث كمية المنتج والقطع الإضافية في السحابة.
+  const handleQuantityChange = (id: string, newQuantity: number) => {
+    void persistItemPatch(id, { quantity: Math.max(0, newQuantity) });
+  };
+
   const handleExtraPiecesChange = (id: string, newExtraPieces: number) => {
-    setItems(items.map(item =>
-      item.id === id ? { ...item, extraPieces: Math.max(0, newExtraPieces) } : item
-    ));
+    void persistItemPatch(id, { extraPieces: Math.max(0, newExtraPieces) });
   };
 
   // البحث المتقدم
@@ -190,14 +236,23 @@ export default function ApartmentManagement() {
 
   const availableCategories = useMemo(() => Array.from(new Set([...categoryNames, ...items.map(item => item.category).filter(Boolean)])), [categoryNames, items]);
 
-  const addCategory = () => {
+  const addCategory = async () => {
     const category = newCategoryName.trim();
     if (!category) return;
-    if (!availableCategories.includes(category)) setCategoryNames(prev => [...prev, category]);
-    setFormData(prev => ({ ...prev, category }));
-    setBulkCategory(category);
-    setNewCategoryName('');
-    toast.success(`تمت إضافة الفئة: ${category}`);
+    setSavingMutation(true);
+    try {
+      const saved = availableCategories.includes(category) ? category : await createCloudApartmentCategory(category);
+      setCategoryNames(previous => previous.includes(saved) ? previous : [...previous, saved]);
+      setFormData(previous => ({ ...previous, category: saved }));
+      setBulkCategory(saved);
+      setNewCategoryName('');
+      toast.success(`تم حفظ الفئة سحابياً: ${saved}`);
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حفظ الفئة: ${errorMessage(error)}`);
+    } finally {
+      setSavingMutation(false);
+    }
   };
 
   const toggleItemSelection = (id: string) => setSelectedItemIds(prev => prev.includes(id) ? prev.filter(itemId => itemId !== id) : [...prev, id]);
@@ -206,39 +261,70 @@ export default function ApartmentManagement() {
     const allSelected = ids.every(id => selectedItemIds.includes(id));
     setSelectedItemIds(prev => allSelected ? prev.filter(id => !ids.includes(id)) : Array.from(new Set([...prev, ...ids])));
   };
-  const moveSelectedItems = () => {
+  const moveSelectedItems = async () => {
     const category = moveCategory.trim();
     if (!category || selectedItemIds.length === 0) return;
-    setItems(prev => prev.map(item => selectedItemIds.includes(item.id) ? { ...item, category } : item));
-    if (!availableCategories.includes(category)) setCategoryNames(prev => [...prev, category]);
-    setSelectedItemIds([]);
-    setMoveCategory('');
-    toast.success('تم نقل المنتجات المحددة إلى الفئة الجديدة');
+    setSavingMutation(true);
+    try {
+      const savedCategory = availableCategories.includes(category) ? category : await createCloudApartmentCategory(category);
+      if (!availableCategories.includes(category)) setCategoryNames(previous => [...previous, savedCategory]);
+      const updated = await updateCloudApartmentItemsCategory(selectedItemIds, savedCategory);
+      if (updated.length !== selectedItemIds.length) throw new Error('لم يؤكد الخادم نقل جميع الأصناف المحددة.');
+      const updatedById = new Map(updated.map(item => [item.id, item]));
+      setItems(previous => previous.map(item => updatedById.get(item.id) ?? item));
+      setSelectedItemIds([]);
+      setMoveCategory('');
+      toast.success('تم نقل المنتجات المحددة وحفظها سحابياً');
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم نقل الأصناف: ${errorMessage(error)}`);
+    } finally {
+      setSavingMutation(false);
+    }
   };
-  const deleteSelectedItems = () => {
+  const deleteSelectedItems = async () => {
+    if (!canDeleteItems) {
+      toast.error('حذف أصناف المخزن متاح للمدير أو المسؤول فقط.');
+      return;
+    }
     if (!selectedItemIds.length || !confirm(`حذف ${selectedItemIds.length} منتجًا محددًا؟`)) return;
-    setItems(prev => prev.filter(item => !selectedItemIds.includes(item.id)));
-    setSelectedItemIds([]);
-    toast.success('تم حذف المنتجات المحددة');
+    setSavingMutation(true);
+    try {
+      const deletedIds = await deleteCloudApartmentItems(selectedItemIds);
+      if (deletedIds.length !== selectedItemIds.length) throw new Error('لم يؤكد الخادم حذف جميع الأصناف المحددة.');
+      const deleted = new Set(deletedIds);
+      setItems(previous => previous.filter(item => !deleted.has(item.id)));
+      setSelectedItemIds([]);
+      toast.success('تم حذف المنتجات المحددة من Supabase');
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حذف المنتجات المحددة: ${errorMessage(error)}`);
+    } finally {
+      setSavingMutation(false);
+    }
   };
-  const importBulkItems = () => {
+  const importBulkItems = async () => {
     const category = bulkCategory.trim();
     const names = bulkText.split(/\r?\n/).map(line => line.split(/[,\t،]/)[0]?.trim()).filter(Boolean);
     if (!category || !names.length) {
       toast.error('اختر فئة والصق اسم منتج واحدًا على الأقل');
       return;
     }
-    const now = new Date().toISOString();
-    const imported: InventoryItem[] = names.map((name, index) => ({
-      id: `apartment_${Date.now()}_${index}_${Math.random().toString(36).slice(2, 7)}`,
-      name, supplier: '', location: '', unit: '', piecesPerUnit: 0, quantity: 0, extraPieces: 0,
-      wholesalePrice: 0, retailPrice: 0, wholesaleRetailPrice: 0, category, createdAt: now,
-    }));
-    setItems(prev => [...prev, ...imported]);
-    if (!availableCategories.includes(category)) setCategoryNames(prev => [...prev, category]);
-    setBulkText('');
-    setShowBulkImport(false);
-    toast.success(`تمت إضافة ${imported.length} منتجًا في فئة ${category}`);
+    setSavingMutation(true);
+    try {
+      const savedCategory = availableCategories.includes(category) ? category : await createCloudApartmentCategory(category);
+      if (!availableCategories.includes(category)) setCategoryNames(previous => [...previous, savedCategory]);
+      const imported = await createCloudApartmentItems(names.map(name => ({ ...createEmptyInventoryForm(), name, category: savedCategory })));
+      setItems(previous => [...previous, ...imported]);
+      setBulkText('');
+      setShowBulkImport(false);
+      toast.success(`تم حفظ ${imported.length} منتجاً سحابياً في فئة ${savedCategory}`);
+    } catch (error) {
+      await refreshCloudData(true);
+      toast.error(`لم يتم حفظ الإضافة الجماعية: ${errorMessage(error)}`);
+    } finally {
+      setSavingMutation(false);
+    }
   };
 
   // تجميع حسب الفئات
@@ -294,16 +380,25 @@ export default function ApartmentManagement() {
             </h1>
             <p className="text-slate-600 mt-2">إدارة شاملة للمنتجات والأسعار والكميات والتقارير</p>
           </div>
-          <Button
-            onClick={() => navigate('/')}
-            variant="outline"
-            className="gap-2"
-          >
-            ← العودة للرئيسية
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button type="button" onClick={() => void refreshCloudData()} variant="outline" className="gap-2" disabled={loading}>
+              <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+              {loading ? 'جار التحميل...' : 'تحديث من السحابة'}
+            </Button>
+            <Button onClick={() => navigate('/')} variant="outline" className="gap-2">
+              ← العودة للرئيسية
+            </Button>
+          </div>
         </div>
 
-
+        {loadError && (
+          <Card className="mb-6 border-red-300 bg-red-50">
+            <CardContent className="flex flex-wrap items-center justify-between gap-3 pt-6 text-right">
+              <p className="text-sm font-medium text-red-800">لم يتم تحميل المخزون السحابي: {loadError}</p>
+              <Button type="button" variant="outline" onClick={() => void refreshCloudData()} disabled={loading}>إعادة المحاولة</Button>
+            </CardContent>
+          </Card>
+        )}
 
         {/* شريط البحث */}
         <div className="mb-8">
@@ -327,12 +422,12 @@ export default function ApartmentManagement() {
           <CardContent className="space-y-4 pt-6">
             <div className="flex flex-col gap-2 md:flex-row">
               <Input value={newCategoryName} onChange={e => setNewCategoryName(e.target.value)} placeholder="اكتب اسم فئة جديدة" className="text-right" />
-              <Button type="button" onClick={addCategory} className="bg-indigo-600 hover:bg-indigo-700">إضافة الفئة</Button>
+              <Button type="button" onClick={addCategory} className="bg-indigo-600 hover:bg-indigo-700" disabled={savingMutation || loading}>إضافة الفئة</Button>
               <select value={formData.category} onChange={e => setFormData({ ...formData, category: e.target.value })} className="rounded-lg border border-slate-300 px-3 py-2 text-right">
                 <option value="">اختر فئة للمنتج</option>
                 {availableCategories.map(category => <option key={category} value={category}>{category}</option>)}
               </select>
-              <Button type="button" variant="outline" onClick={() => setShowBulkImport(value => !value)} className="gap-2"><ClipboardPaste className="h-4 w-4" /> نسخ ولصق جماعي</Button>
+              <Button type="button" variant="outline" onClick={() => setShowBulkImport(value => !value)} className="gap-2" disabled={savingMutation || loading}><ClipboardPaste className="h-4 w-4" /> نسخ ولصق جماعي</Button>
             </div>
             {showBulkImport && (
               <div className="rounded-xl border border-indigo-200 bg-white p-4 space-y-3">
@@ -345,8 +440,8 @@ export default function ApartmentManagement() {
                 </div>
                 <Textarea value={bulkText} onChange={e => setBulkText(e.target.value)} placeholder="الصق هنا: كل منتج في سطر مستقل" className="min-h-32 text-right" />
                 <div className="flex flex-wrap gap-2 justify-end">
-                  <Button type="button" onClick={addCategory} variant="outline">حفظ الفئة الجديدة</Button>
-                  <Button type="button" onClick={importBulkItems} className="bg-green-600 hover:bg-green-700">إضافة المنتجات للفئة</Button>
+                  <Button type="button" onClick={addCategory} variant="outline" disabled={savingMutation || loading}>حفظ الفئة الجديدة</Button>
+                  <Button type="button" onClick={importBulkItems} className="bg-green-600 hover:bg-green-700" disabled={savingMutation || loading}>{savingMutation ? 'جار الحفظ...' : 'إضافة المنتجات للفئة'}</Button>
                   <Button type="button" onClick={() => setBulkText('')} variant="ghost">مسح النص</Button>
                 </div>
               </div>
@@ -450,7 +545,7 @@ export default function ApartmentManagement() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">سعر جملة الوحدة</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">تكلفة الشراء / الوحدة</label>
                 <Input
                   type="number"
                   step="0.01"
@@ -462,7 +557,7 @@ export default function ApartmentManagement() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">سعر بيع التجزئة</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">سعر البيع (قطاعي / تجزئة)</label>
                 <Input
                   type="number"
                   step="0.01"
@@ -474,7 +569,7 @@ export default function ApartmentManagement() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">سعر بيع القطاعي</label>
+                <label className="block text-sm font-medium text-slate-700 mb-2 text-right">سعر البيع (جملة)</label>
                 <Input
                   type="number"
                   step="0.01"
@@ -487,29 +582,15 @@ export default function ApartmentManagement() {
             </div>
 
             <div className="flex gap-3 mt-6 justify-end">
-              <Button
-                onClick={() => setFormData({
-                  name: '',
-                  supplier: '',
-                  location: '',
-                  unit: '',
-                  piecesPerUnit: 0,
-                  quantity: 0,
-                  extraPieces: 0,
-                  wholesalePrice: 0,
-                  retailPrice: 0,
-                  wholesaleRetailPrice: 0,
-                  category: '',
-                })}
-                variant="outline"
-              >
+              <Button type="button" onClick={() => setFormData(createEmptyInventoryForm())} variant="outline" disabled={savingMutation || loading}>
                 🔄 إعادة تعيين
               </Button>
               <Button
                 onClick={handleAddProduct}
                 className="bg-green-600 hover:bg-green-700"
+                disabled={savingMutation || loading}
               >
-                💾 حفظ المنتج
+                {savingMutation ? 'جار الحفظ في Supabase...' : '💾 حفظ المنتج'}
               </Button>
             </div>
           </CardContent>
@@ -524,7 +605,11 @@ export default function ApartmentManagement() {
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-6">
-            {items.length === 0 ? (
+            {loading && items.length === 0 ? (
+              <div className="py-8 text-center text-slate-600">جار تحميل مخزون الشقة من Supabase...</div>
+            ) : loadError && items.length === 0 ? (
+              <div className="py-8 text-center text-red-700">تعذر تحميل الأصناف. استخدم زر «إعادة المحاولة» بالأعلى.</div>
+            ) : items.length === 0 ? (
               <div className="text-center py-8">
                 <p className="text-slate-600 text-lg">لا توجد منتجات مسجلة حتى الآن</p>
                 <p className="text-slate-500 text-sm mt-2">أضف منتجات جديدة من خلال النموذج أعلاه</p>
@@ -570,7 +655,7 @@ export default function ApartmentManagement() {
                               </div>
                             </div>
 
-                            <div className="grid grid-cols-2 md:grid-cols-5 gap-4 text-sm">
+                            <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-7 gap-4 text-sm">
                               <div className="text-right">
                                 <p className="text-slate-600 text-xs">الكراتين</p>
                                 <p className="font-bold text-slate-900">{item.quantity}</p>
@@ -580,12 +665,20 @@ export default function ApartmentManagement() {
                                 <p className="font-bold text-slate-900">{item.extraPieces}</p>
                               </div>
                               <div className="text-right">
-                                <p className="text-slate-600 text-xs">سعر الجملة</p>
+                                <p className="text-slate-600 text-xs">تكلفة الشراء</p>
                                 <p className="font-semibold text-slate-900">{item.wholesalePrice.toFixed(2)} ج.م</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-slate-600 text-xs">سعر القطعة</p>
                                 <p className="font-semibold text-slate-900">{piecePrice.toFixed(2)} ج.م</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-slate-600 text-xs">بيع قطاعي</p>
+                                <p className="font-semibold text-slate-900">{item.retailPrice.toFixed(2)} ج.م</p>
+                              </div>
+                              <div className="text-right">
+                                <p className="text-slate-600 text-xs">بيع جملة</p>
+                                <p className="font-semibold text-slate-900">{item.wholesaleRetailPrice.toFixed(2)} ج.م</p>
                               </div>
                               <div className="text-right">
                                 <p className="text-slate-600 text-xs">إجمالي القيمة</p>
@@ -594,14 +687,16 @@ export default function ApartmentManagement() {
                             </div>
                           </div>
                           
-                          <Button
-                            onClick={() => handleDeleteProduct(item.id)}
-                            variant="destructive"
-                            size="sm"
-                            className="mt-2"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </Button>
+                          <div className="mt-2 flex shrink-0 flex-col gap-2">
+                                <Button type="button" onClick={() => openEditDialog(item)} variant="outline" size="sm" className="gap-1" disabled={savingItemIds.includes(item.id) || savingMutation}>
+                              <Pencil className="h-4 w-4" /> تعديل
+                            </Button>
+                            {canDeleteItems && (
+                              <Button type="button" onClick={() => void handleDeleteProduct(item.id)} variant="destructive" size="sm" disabled={savingItemIds.includes(item.id)} aria-label={`حذف ${item.name}`}>
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     );
@@ -649,7 +744,11 @@ export default function ApartmentManagement() {
 
         {/* قائمة المنتجات مجمعة حسب الفئات */}
         <div className="space-y-6">
-          {Object.entries(categorizedItems).length === 0 ? (
+          {loading && items.length === 0 ? (
+            <Card><CardContent className="pt-6 text-center text-slate-600">جار تحميل مخزون الشقة من Supabase...</CardContent></Card>
+          ) : loadError && items.length === 0 ? (
+            <Card><CardContent className="pt-6 text-center text-red-700">تعذر تحميل الأصناف؛ أعد المحاولة قبل متابعة العمل.</CardContent></Card>
+          ) : Object.entries(categorizedItems).length === 0 ? (
             <Card>
               <CardContent className="pt-6 text-center text-slate-600">
                 لا توجد منتجات مطابقة للبحث
@@ -677,7 +776,7 @@ export default function ApartmentManagement() {
                       </div>
                     </div>
                     <div className="flex items-center gap-2" onClick={event => event.stopPropagation()}>
-                      <Button type="button" size="sm" variant="outline" onClick={() => toggleCategorySelection(categoryItems)}>تحديد الكل</Button>
+                        <Button type="button" size="sm" variant="outline" onClick={() => toggleCategorySelection(categoryItems)} disabled={savingMutation || loading}>تحديد الكل</Button>
                     </div>
                   </div>
                 </CardHeader>
@@ -691,9 +790,9 @@ export default function ApartmentManagement() {
                           <option value="">اختر فئة النقل</option>
                           {availableCategories.map(option => <option key={option} value={option}>{option}</option>)}
                         </select>
-                        <Button type="button" onClick={moveSelectedItems} className="gap-2 bg-indigo-600 hover:bg-indigo-700"><ArrowRightLeft className="h-4 w-4" /> نقل المحدد</Button>
-                        <Button type="button" onClick={deleteSelectedItems} variant="destructive" className="gap-2"><Trash2 className="h-4 w-4" /> حذف المحدد</Button>
-                        <Button type="button" onClick={() => setSelectedItemIds([])} variant="ghost">إلغاء التحديد</Button>
+                        <Button type="button" onClick={moveSelectedItems} className="gap-2 bg-indigo-600 hover:bg-indigo-700" disabled={savingMutation || loading}><ArrowRightLeft className="h-4 w-4" /> نقل المحدد</Button>
+                        {canDeleteItems && <Button type="button" onClick={deleteSelectedItems} variant="destructive" className="gap-2" disabled={savingMutation || loading}><Trash2 className="h-4 w-4" /> حذف المحدد</Button>}
+                        <Button type="button" onClick={() => setSelectedItemIds([])} variant="ghost" disabled={savingMutation}>إلغاء التحديد</Button>
                       </div>
                     )}
                     <div className="space-y-4">
@@ -714,7 +813,7 @@ export default function ApartmentManagement() {
                             }`}
                           >
                             <div className="flex items-start justify-between gap-4">
-                              <input type="checkbox" checked={selectedItemIds.includes(item.id)} onChange={() => toggleItemSelection(item.id)} className="mt-1 h-5 w-5 shrink-0 accent-indigo-600" aria-label={`تحديد ${item.name}`} />
+                              <input type="checkbox" checked={selectedItemIds.includes(item.id)} onChange={() => toggleItemSelection(item.id)} disabled={savingMutation || loading} className="mt-1 h-5 w-5 shrink-0 accent-indigo-600" aria-label={`تحديد ${item.name}`} />
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-2">
                                   <h3 className="text-lg font-semibold text-slate-900">{item.name}</h3>
@@ -742,9 +841,9 @@ export default function ApartmentManagement() {
                                   </div>
                                 </div>
 
-                                <div className="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm mb-3">
+                                <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3 text-sm mb-3">
                                   <div className="text-right">
-                                    <p className="text-slate-600">سعر الجملة</p>
+                                    <p className="text-slate-600">تكلفة الشراء / الوحدة</p>
                                     <p className="font-medium text-slate-900">{item.wholesalePrice.toFixed(2)} ج.م</p>
                                   </div>
                                   <div className="text-right">
@@ -752,8 +851,12 @@ export default function ApartmentManagement() {
                                     <p className="font-medium text-slate-900">{piecePrice.toFixed(2)} ج.م</p>
                                   </div>
                                   <div className="text-right">
-                                    <p className="text-slate-600">سعر القطاعي</p>
+                                    <p className="text-slate-600">سعر البيع بالجملة</p>
                                     <p className="font-medium text-slate-900">{item.wholesaleRetailPrice.toFixed(2)} ج.م</p>
+                                  </div>
+                                  <div className="text-right">
+                                    <p className="text-slate-600">سعر البيع القطاعي</p>
+                                    <p className="font-medium text-slate-900">{item.retailPrice.toFixed(2)} ج.م</p>
                                   </div>
                                   <div className="text-right">
                                     <p className="text-slate-600">نسبة الربح</p>
@@ -775,6 +878,7 @@ export default function ApartmentManagement() {
                                         onClick={() => handleQuantityChange(item.id, item.quantity + 1)}
                                         size="sm"
                                         className="bg-green-600 hover:bg-green-700"
+                                        disabled={savingItemIds.includes(item.id) || savingMutation}
                                       >
                                         +
                                       </Button>
@@ -783,6 +887,7 @@ export default function ApartmentManagement() {
                                         onClick={() => handleQuantityChange(item.id, item.quantity - 1)}
                                         size="sm"
                                         className="bg-red-600 hover:bg-red-700"
+                                        disabled={savingItemIds.includes(item.id) || savingMutation}
                                       >
                                         -
                                       </Button>
@@ -795,6 +900,7 @@ export default function ApartmentManagement() {
                                         onClick={() => handleExtraPiecesChange(item.id, item.extraPieces + 1)}
                                         size="sm"
                                         className="bg-green-600 hover:bg-green-700"
+                                        disabled={savingItemIds.includes(item.id) || savingMutation}
                                       >
                                         +
                                       </Button>
@@ -803,6 +909,7 @@ export default function ApartmentManagement() {
                                         onClick={() => handleExtraPiecesChange(item.id, item.extraPieces - 1)}
                                         size="sm"
                                         className="bg-red-600 hover:bg-red-700"
+                                        disabled={savingItemIds.includes(item.id) || savingMutation}
                                       >
                                         -
                                       </Button>
@@ -811,13 +918,16 @@ export default function ApartmentManagement() {
                                 </div>
                               </div>
 
-                              <Button
-                                onClick={() => handleDeleteProduct(item.id)}
-                                variant="destructive"
-                                size="sm"
-                              >
-                                <Trash2 className="w-4 h-4" />
-                              </Button>
+                              <div className="flex shrink-0 flex-col gap-2">
+                                <Button type="button" onClick={() => openEditDialog(item)} variant="outline" size="sm" className="gap-1" disabled={savingItemIds.includes(item.id) || savingMutation}>
+                                  <Pencil className="h-4 w-4" /> تعديل
+                                </Button>
+                                {canDeleteItems && (
+                                  <Button type="button" onClick={() => void handleDeleteProduct(item.id)} variant="destructive" size="sm" disabled={savingItemIds.includes(item.id)} aria-label={`حذف ${item.name}`}>
+                                    <Trash2 className="w-4 h-4" />
+                                  </Button>
+                                )}
+                              </div>
                             </div>
                           </div>
                         );
@@ -830,6 +940,58 @@ export default function ApartmentManagement() {
           )}
         </div>
       </div>
+      <Dialog
+        open={Boolean(editingItem)}
+        onOpenChange={open => {
+          if (!open && !savingEdit) {
+            setEditingItem(null);
+            setEditFormData(null);
+          }
+        }}
+      >
+        <DialogContent dir="rtl" className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>تعديل بيانات صنف المخزن</DialogTitle>
+            <DialogDescription>
+              تُحفظ القيم مباشرة في مخزن Supabase الخاص بمتجرك، ولا تُعرض رسالة نجاح قبل تأكيد الخادم.
+            </DialogDescription>
+          </DialogHeader>
+          {editFormData && (
+            <div className="grid grid-cols-1 gap-4 py-2 sm:grid-cols-2">
+              <div className="sm:col-span-2">
+                <label className="mb-1 block text-sm font-medium">اسم المنتج</label>
+                <Input value={editFormData.name} onChange={e => setEditFormData(previous => previous ? { ...previous, name: e.target.value } : previous)} disabled={savingEdit} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">الكمية المخزنة (الوحدات)</label>
+                <Input type="number" min="0" step="0.001" value={editFormData.quantity} onChange={e => setEditFormData(previous => previous ? { ...previous, quantity: Number(e.target.value) || 0 } : previous)} disabled={savingEdit} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">القطع الإضافية</label>
+                <Input type="number" min="0" step="0.001" value={editFormData.extraPieces} onChange={e => setEditFormData(previous => previous ? { ...previous, extraPieces: Number(e.target.value) || 0 } : previous)} disabled={savingEdit} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">تكلفة الشراء / الوحدة</label>
+                <Input type="number" min="0" step="0.01" value={editFormData.wholesalePrice} onChange={e => setEditFormData(previous => previous ? { ...previous, wholesalePrice: Number(e.target.value) || 0 } : previous)} disabled={savingEdit} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">سعر البيع (قطاعي)</label>
+                <Input type="number" min="0" step="0.01" value={editFormData.retailPrice} onChange={e => setEditFormData(previous => previous ? { ...previous, retailPrice: Number(e.target.value) || 0 } : previous)} disabled={savingEdit} />
+              </div>
+              <div>
+                <label className="mb-1 block text-sm font-medium">سعر البيع (جملة)</label>
+                <Input type="number" min="0" step="0.01" value={editFormData.wholesaleRetailPrice} onChange={e => setEditFormData(previous => previous ? { ...previous, wholesaleRetailPrice: Number(e.target.value) || 0 } : previous)} disabled={savingEdit} />
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => { setEditingItem(null); setEditFormData(null); }} disabled={savingEdit}>إلغاء</Button>
+            <Button type="button" onClick={() => void handleSaveEditedItem()} disabled={savingEdit || !editFormData?.name.trim()}>
+              {savingEdit ? 'جار الحفظ...' : 'حفظ التعديلات'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
