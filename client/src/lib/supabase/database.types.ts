@@ -68,7 +68,7 @@ export type Database = {
       products: Table<ProductRow>;
       product_images: Table<{ id: string; shop_id: string; product_id: string; storage_path: string; content_type: string; size_bytes: number; created_by: string | null; created_at: string }>;
       invoices: Table<{ id: string; shop_id: string; invoice_number: string; idempotency_key: string; status: string; sale_type: string; payment_method: string; customer_name: string; customer_phone: string; subtotal: number; discount_type: string; discount_value: number; discount_amount: number; total: number; loyalty_customer_id: string | null; loyalty_points_awarded: number; created_by: string | null; created_at: string }>;
-      invoice_items: Table<{ id: string; invoice_id: string; shop_id: string; product_id: string | null; product_name_snapshot: string; product_code_snapshot: string | null; selected_unit_snapshot: string; sale_mode_snapshot: "unit" | "weight"; quantity: number; stock_quantity_delta: number; unit_price_snapshot: number; unit_cost_snapshot: number; line_total: number; loyalty_points_snapshot: number; created_at: string }>;
+	      invoice_items: Table<{ id: string; invoice_id: string; shop_id: string; product_id: string | null; formulation_id: string | null; product_name_snapshot: string; product_code_snapshot: string | null; selected_unit_snapshot: string; sale_mode_snapshot: "unit" | "weight"; quantity: number; stock_quantity_delta: number; unit_price_snapshot: number; unit_cost_snapshot: number; line_total: number; loyalty_points_snapshot: number; created_at: string }>;
       stock_movements: Table<{ id: string; shop_id: string; product_id: string; invoice_id: string | null; return_id: string | null; kind: string; quantity_delta: number; reason: string; created_by: string | null; created_at: string }>;
       invoice_loyalty_points: Table<{ id: string; shop_id: string; invoice_id: string; customer_id: string | null; points_earned: number; created_at: string }>;
       invoice_returns: Table<{ id: string; shop_id: string; invoice_id: string; customer_id: string | null; idempotency_key: string; status: "completed"; refund_total: number; points_reversed: number; reason: string; created_by: string | null; created_at: string }>;
@@ -100,6 +100,7 @@ export type Database = {
 	      manager_invoice_items: { Row: Database["public"]["Tables"]["invoice_items"]["Row"]; Relationships: [] };
 	      loyalty_customer_balances: { Row: { id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number }; Relationships: [] };
 	      formulations: { Row: Database["public"]["Tables"]["recipes"]["Row"]; Relationships: [] };
+	      pos_formulations: { Row: { id: string; shop_id: string; name: string; retail_price: number; production_unit: string; loyalty_points: number; image_url: string | null; updated_at: string }; Relationships: [] };
     };
     Functions: {
       search_products_by_barcode: { Args: { p_shop_id: string; p_barcode: string }; Returns: Json };
