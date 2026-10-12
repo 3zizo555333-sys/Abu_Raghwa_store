@@ -8,6 +8,7 @@ import superjson from "superjson";
 import App from "./App";
 import "./index.css";
 import { syncPwaInstallability } from "./lib/pwaInstallability";
+import { validatedTrpcFetch } from "./lib/validatedTrpcFetch";
 
 // Purge obsolete browser-held credentials and plaintext section passwords.
 // Business collections are deliberately not touched by this migration cleanup.
@@ -80,12 +81,7 @@ const trpcClient = trpc.createClient({
       // The dashboard mounts many sync queries. Split long GET batches so
       // mobile browsers and proxies never reject one oversized request.
       maxURLLength: 1800,
-      fetch(input, init) {
-        return globalThis.fetch(input, {
-          ...(init ?? {}),
-          credentials: "include",
-        });
-      },
+      fetch: validatedTrpcFetch,
     }),
   ],
 });
