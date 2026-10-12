@@ -309,10 +309,6 @@ export default function UserManagement() {
           </CardContent>
         </Card>
 
-        <aside className="rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-          <p className="font-bold">إدارة بطاقات الرواتب غير متاحة حاليًا.</p>
-          <p className="mt-1">ستُتاح إدارة بطاقات الرواتب بعد ترحيلها إلى Supabase.</p>
-        </aside>
       </main>
     </div>
   );
