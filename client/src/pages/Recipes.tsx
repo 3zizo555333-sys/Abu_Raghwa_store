@@ -289,7 +289,7 @@ function RecipesContent() {
   }
 
   return (
-    <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-gray-50 p-3 sm:p-4" dir="rtl">
+    <div className="min-h-dvh w-full max-w-full overflow-x-hidden bg-gray-50 p-3 sm:p-4" dir="rtl">
       <div className="mx-auto w-full min-w-0 max-w-7xl overflow-x-hidden">
         <div className="mb-6 flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
