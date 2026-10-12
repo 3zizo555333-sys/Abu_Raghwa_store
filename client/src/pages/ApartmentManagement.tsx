@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { useLocation } from 'wouter';
-import { Plus, Trash2, ChevronDown, ChevronUp, AlertCircle, Search, TrendingUp, BarChart3, Eye, X, ClipboardPaste, ArrowRightLeft, CheckSquare, Pencil, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, ChevronDown, ChevronUp, AlertCircle, Search, TrendingUp, BarChart3, Eye, X, ClipboardPaste, ArrowRightLeft, CheckSquare, Pencil, RefreshCw, ImagePlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
@@ -14,6 +14,7 @@ import {
   listCloudApartmentInventory,
   updateCloudApartmentItem,
   updateCloudApartmentItemsCategory,
+  uploadCloudApartmentInventoryImage,
   type ApartmentInventoryInput,
   type ApartmentInventoryItem,
 } from '@/lib/supabase/apartmentInventory';
@@ -134,6 +135,17 @@ export default function ApartmentManagement() {
       pendingItemIds.current.delete(id);
       setSavingItemIds(previous => previous.filter(itemId => itemId !== id));
     }
+  };
+
+  const handleUploadItemImage = async (itemId: string, file?: File) => {
+    if (!file) return;
+    setSavingItemIds(previous => previous.includes(itemId) ? previous : [...previous, itemId]);
+    try {
+      const uploaded = await uploadCloudApartmentInventoryImage(itemId, file);
+      setItems(previous => previous.map(item => item.id === itemId ? { ...item, imageUrl: uploaded.imageUrl } : item));
+      toast.success('تم حفظ الصورة الخاصة وإنشاء رابط عرض مؤقت');
+    } catch (error) { toast.error(`تعذر رفع الصورة: ${errorMessage(error)}`); }
+    finally { setSavingItemIds(previous => previous.filter(id => id !== itemId)); }
   };
 
   // إضافة منتج جديد
@@ -268,7 +280,9 @@ export default function ApartmentManagement() {
     try {
       const savedCategory = availableCategories.includes(category) ? category : await createCloudApartmentCategory(category);
       if (!availableCategories.includes(category)) setCategoryNames(previous => [...previous, savedCategory]);
-      const updated = await updateCloudApartmentItemsCategory(selectedItemIds, savedCategory);
+      const expected = selectedItemIds.map(id => items.find(item => item.id === id)).filter((item): item is InventoryItem => Boolean(item)).map(item => ({ id: item.id, updatedAt: item.updatedAt }));
+      if (expected.length !== selectedItemIds.length) throw new Error('تغيرت قائمة الأصناف؛ حدّث البيانات ثم أعد المحاولة.');
+      const updated = await updateCloudApartmentItemsCategory(expected, savedCategory);
       if (updated.length !== selectedItemIds.length) throw new Error('لم يؤكد الخادم نقل جميع الأصناف المحددة.');
       const updatedById = new Map(updated.map(item => [item.id, item]));
       setItems(previous => previous.map(item => updatedById.get(item.id) ?? item));
@@ -630,6 +644,7 @@ export default function ApartmentManagement() {
                         className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 border border-green-200 rounded-lg hover:shadow-md transition-all"
                       >
                         <div className="flex items-start justify-between gap-4">
+                          {item.imageUrl && <img src={item.imageUrl} alt={item.name} className="h-16 w-16 shrink-0 rounded-lg border object-cover" />}
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <h3 className="text-lg font-bold text-slate-900">{item.name}</h3>
@@ -688,6 +703,10 @@ export default function ApartmentManagement() {
                           </div>
                           
                           <div className="mt-2 flex shrink-0 flex-col gap-2">
+                            <label className="inline-flex cursor-pointer items-center justify-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-50" aria-label={`رفع صورة ${item.name}`}>
+                              <ImagePlus className="h-4 w-4" /> صورة
+                              <input type="file" accept="image/*" className="hidden" disabled={savingItemIds.includes(item.id)} onChange={event => { void handleUploadItemImage(item.id, event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                            </label>
                                 <Button type="button" onClick={() => openEditDialog(item)} variant="outline" size="sm" className="gap-1" disabled={savingItemIds.includes(item.id) || savingMutation}>
                               <Pencil className="h-4 w-4" /> تعديل
                             </Button>
@@ -814,6 +833,7 @@ export default function ApartmentManagement() {
                           >
                             <div className="flex items-start justify-between gap-4">
                               <input type="checkbox" checked={selectedItemIds.includes(item.id)} onChange={() => toggleItemSelection(item.id)} disabled={savingMutation || loading} className="mt-1 h-5 w-5 shrink-0 accent-indigo-600" aria-label={`تحديد ${item.name}`} />
+                              {item.imageUrl && <img src={item.imageUrl} alt={item.name} className="h-16 w-16 shrink-0 rounded-lg border object-cover" />}
                               <div className="flex-1">
                                 <div className="flex items-center gap-2 mb-2">
                                   <h3 className="text-lg font-semibold text-slate-900">{item.name}</h3>
@@ -919,6 +939,10 @@ export default function ApartmentManagement() {
                               </div>
 
                               <div className="flex shrink-0 flex-col gap-2">
+                                <label className="inline-flex cursor-pointer items-center justify-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-slate-50" aria-label={`رفع صورة ${item.name}`}>
+                                  <ImagePlus className="h-4 w-4" /> صورة
+                                  <input type="file" accept="image/*" className="hidden" disabled={savingItemIds.includes(item.id)} onChange={event => { void handleUploadItemImage(item.id, event.target.files?.[0]); event.currentTarget.value = ''; }} />
+                                </label>
                                 <Button type="button" onClick={() => openEditDialog(item)} variant="outline" size="sm" className="gap-1" disabled={savingItemIds.includes(item.id) || savingMutation}>
                                   <Pencil className="h-4 w-4" /> تعديل
                                 </Button>

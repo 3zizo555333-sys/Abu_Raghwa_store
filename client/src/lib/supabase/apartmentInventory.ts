@@ -1,6 +1,7 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
 import type { Database } from "./database.types";
+import { prepareCloudProductImage } from "./prepareProductImage";
 
 type InventoryItemRow = Database["public"]["Tables"]["apartment_inventory_items"]["Row"];
 type InventoryCategoryRow = Database["public"]["Tables"]["apartment_inventory_categories"]["Row"];
@@ -21,6 +22,7 @@ export type ApartmentInventoryItem = {
   category: string;
   createdAt: string;
   updatedAt: string;
+  imageUrl?: string;
 };
 
 export type ApartmentInventoryInput = Omit<ApartmentInventoryItem, "id" | "createdAt" | "updatedAt">;
@@ -33,7 +35,7 @@ export type ApartmentInventorySnapshot = {
 };
 
 const PAGE_SIZE = 500;
-const INSERT_BATCH_SIZE = 250;
+let pendingBulkRequest: { signature: string; requestId: string } | null = null;
 const numericFields = ["piecesPerUnit", "quantity", "extraPieces", "wholesalePrice", "retailPrice", "wholesaleRetailPrice"] as const;
 type NumericField = typeof numericFields[number];
 
@@ -143,8 +145,21 @@ async function fetchAllCategories(shopId: string): Promise<string[]> {
 export async function listCloudApartmentInventory(): Promise<ApartmentInventorySnapshot> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  const [items, categories] = await Promise.all([fetchAllItems(shopId), fetchAllCategories(shopId)]);
-  return { items, categories: Array.from(new Set(categories)), shopId, role };
+  const [items, categories, imagesResult] = await Promise.all([
+    fetchAllItems(shopId), fetchAllCategories(shopId),
+    getSupabaseClient().from("apartment_inventory_images").select("id,shop_id,item_id,storage_path,content_type,size_bytes,created_by,created_at").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(5000),
+  ]);
+  const images = requireCloudResult(imagesResult) as Array<{ item_id: string; storage_path: string }>;
+  const latest = new Map<string, string>();
+  for (const image of images) if (!latest.has(image.item_id)) latest.set(image.item_id, image.storage_path);
+  const withImages = await Promise.all(items.map(async item => {
+    const path = latest.get(item.id);
+    if (!path) return item;
+    const { data, error } = await getSupabaseClient().storage.from("product-images").createSignedUrl(path, 900);
+    if (error || !data?.signedUrl) return item;
+    return { ...item, imageUrl: data.signedUrl };
+  }));
+  return { items: withImages, categories: Array.from(new Set(categories)), shopId, role };
 }
 
 export async function createCloudApartmentCategory(name: string): Promise<string> {
@@ -174,27 +189,15 @@ export async function createCloudApartmentItems(inputs: ApartmentInventoryInput[
   if (inputs.length === 0) return [];
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
-  const supabase = getSupabaseClient();
-  const savedItems: ApartmentInventoryItem[] = [];
-  for (let offset = 0; offset < inputs.length; offset += INSERT_BATCH_SIZE) {
-    const chunk = inputs.slice(offset, offset + INSERT_BATCH_SIZE);
-    const rows = chunk.map(input => ({ shop_id: shopId, ...toApartmentInventoryPayload(input) }));
-    const result = await supabase
-      .from("apartment_inventory_items")
-      .insert(rows)
-      .select("id, shop_id, name, supplier, location, unit, pieces_per_unit, quantity, extra_pieces, wholesale_price, retail_price, wholesale_retail_price, category_name, created_at, updated_at");
-    try {
-      const saved = requireCloudResult(result) as InventoryItemRow[];
-      if (saved.length !== chunk.length) throw new Error("لم يؤكد الخادم حفظ جميع أصناف هذه الدفعة.");
-      savedItems.push(...saved.map(mapApartmentInventoryItem));
-    } catch (error) {
-      if (savedItems.length > 0) {
-        throw new Error(`تم حفظ ${savedItems.length} من أصل ${inputs.length} صنفاً. أعد تحميل القائمة قبل استكمال الباقي. ${error instanceof Error ? error.message : ""}`);
-      }
-      throw error;
-    }
-  }
-  return savedItems;
+  const rows = inputs.map(input => toApartmentInventoryPayload(input));
+  const signature = JSON.stringify(rows);
+  if (!pendingBulkRequest || pendingBulkRequest.signature !== signature) pendingBulkRequest = { signature, requestId: globalThis.crypto.randomUUID() };
+  const result = await getSupabaseClient().rpc("create_apartment_inventory_items_bulk", {
+    p_shop_id: shopId, p_request_id: pendingBulkRequest.requestId, p_items: rows as unknown as Database["public"]["Functions"]["create_apartment_inventory_items_bulk"]["Args"]["p_items"],
+  });
+  const saved = (requireCloudResult(result) as unknown as InventoryItemRow[]).map(mapApartmentInventoryItem);
+  pendingBulkRequest = null;
+  return saved;
 }
 
 export async function updateCloudApartmentItem(id: string, patch: ApartmentInventoryPatch, expectedUpdatedAt: string): Promise<ApartmentInventoryItem> {
@@ -216,19 +219,43 @@ export async function updateCloudApartmentItem(id: string, patch: ApartmentInven
   return mapApartmentInventoryItem(requireCloudResult(result) as InventoryItemRow);
 }
 
-export async function updateCloudApartmentItemsCategory(ids: string[], category: string): Promise<ApartmentInventoryItem[]> {
-  if (ids.length === 0) return [];
+export async function updateCloudApartmentItemsCategory(expectedItems: Array<Pick<ApartmentInventoryItem, "id" | "updatedAt">>, category: string): Promise<ApartmentInventoryItem[]> {
+  if (expectedItems.length === 0) return [];
+  const ids = expectedItems.map(item => item.id);
+  if (new Set(ids).size !== ids.length) throw new Error("قائمة الأصناف تحتوي على معرفات مكررة.");
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
   const normalized = normalizeText(category, "الفئة", 120);
   if (!normalized) throw new Error("اسم الفئة مطلوب.");
-  const result = await getSupabaseClient()
-    .from("apartment_inventory_items")
-    .update({ category_name: normalized })
-    .eq("shop_id", shopId)
-    .in("id", ids)
-    .select("id, shop_id, name, supplier, location, unit, pieces_per_unit, quantity, extra_pieces, wholesale_price, retail_price, wholesale_retail_price, category_name, created_at, updated_at");
-  return (requireCloudResult(result) as InventoryItemRow[]).map(mapApartmentInventoryItem);
+  const result = await getSupabaseClient().rpc("move_apartment_inventory_items_category", {
+    p_shop_id: shopId,
+    p_expected_items: expectedItems.map(item => ({ id: item.id, updated_at: item.updatedAt })) as unknown as Database["public"]["Functions"]["move_apartment_inventory_items_category"]["Args"]["p_expected_items"],
+    p_category: normalized,
+  });
+  return (requireCloudResult(result) as unknown as InventoryItemRow[]).map(mapApartmentInventoryItem);
+}
+
+export async function uploadCloudApartmentInventoryImage(itemId: string, file: File): Promise<{ imageUrl: string; storagePath: string }> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext();
+  if (!( ["manager", "admin", "supervisor"] as string[]).includes(role)) throw new Error("رفع صور المخزن متاح للإدارة فقط.");
+  const image = await prepareCloudProductImage(file);
+  const imageId = globalThis.crypto.randomUUID();
+  const storagePath = `${shopId}/apartment-inventory/${itemId}/${imageId}.webp`;
+  const bucket = getSupabaseClient().storage.from("product-images");
+  const upload = await bucket.upload(storagePath, image, { contentType: "image/webp", cacheControl: "3600", upsert: false });
+  if (upload.error) throw new Error(upload.error.message);
+  const registered = await getSupabaseClient().rpc("register_apartment_inventory_image", {
+    p_shop_id: shopId, p_item_id: itemId, p_image_id: imageId, p_storage_path: storagePath, p_content_type: "image/webp", p_size_bytes: image.size,
+  });
+  if (registered.error || !registered.data) {
+    const cleanup = await bucket.remove([storagePath]);
+    if (cleanup.error) console.error("Apartment inventory image cleanup failed", cleanup.error.message);
+    throw new Error(registered.error?.message ?? "لم يؤكد الخادم ربط الصورة بالصنف.");
+  }
+  const { data, error } = await bucket.createSignedUrl(storagePath, 900);
+  if (error || !data?.signedUrl) throw new Error(error?.message ?? "تعذر إنشاء رابط مؤقت للصورة.");
+  return { imageUrl: data.signedUrl, storagePath };
 }
 
 export async function deleteCloudApartmentItems(ids: string[]): Promise<string[]> {

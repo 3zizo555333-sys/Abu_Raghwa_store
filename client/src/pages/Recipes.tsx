@@ -1,4 +1,3 @@
-import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,13 +6,14 @@ import { ArrowLeft, Plus, Trash2, Edit2, Eye, Lock, Unlock, Camera, ImagePlus } 
 import { Input } from "@/components/ui/input";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
 import { toast } from "sonner";
-import { useCloudState } from "@/lib/cloudSync";
 import { calculateRecipeProfit, calculateRecipesProfitSummary } from "../lib/recipeProfit";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { trpc } from "@/lib/trpc";
 import { prepareItemImageForUpload } from "@/lib/itemImageUpload";
 import { normalizeLoyaltyPoints } from "@/lib/loyaltyPoints";
+import { deleteCloudFormulation, listCloudFormulations, saveCloudFormulation, verifyFormulationPassword } from "@/lib/supabase/formulations";
+import { listRawMaterials } from "@/lib/supabase/operations";
 
 interface RawMaterial {
   id: string;
@@ -52,6 +52,7 @@ interface Recipe {
   imageUrl?: string;
   catalogImageUrl?: string;
   loyaltyPoints?: number;
+  version: number;
 }
 
 // دالة مساعدة لحساب سعر الوحدة الصحيح (سعر الكيلو/الوحدة) من إجمالي السعر ÷ الوزن الكلي
@@ -81,7 +82,7 @@ function RecipesContent() {
     link: `${window.location.origin}/catalog`,
     imageUrl: recipe.imageUrl || recipe.catalogImageUrl,
   });
-  const [recipes, setRecipes] = useCloudState<Recipe[]>("abu_raghwa_recipes", []);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -105,19 +106,11 @@ function RecipesContent() {
   });
 
   useEffect(() => {
-    loadMaterials();
+    void Promise.all([listCloudFormulations(), listRawMaterials()]).then(([formulas, rows]) => {
+      setRecipes(formulas as Recipe[]);
+      setMaterials(rows.map(row => ({ id: row.id, name: row.name, unit: row.unit, totalWeight: row.total_weight, totalPrice: row.total_price, pricePerKilo: row.price_per_kilo, wholesalePrice: row.wholesale_price })));
+    }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل التركيبات والخامات من Supabase."));
   }, []);
-
-  const loadMaterials = () => {
-    const saved = browserState.get("abu_raghwa_raw_materials") || browserState.get("abu_raghwa_materials");
-    const mats = saved ? JSON.parse(saved) : [];
-    setMaterials(mats);
-    return mats;
-  };
-
-  const saveRecipes = (updatedRecipes: Recipe[]) => {
-    setRecipes(updatedRecipes);
-  };
 
   const handleRecipeImageUpload = async (file: File | undefined) => {
     if (!file) return;
@@ -161,14 +154,15 @@ function RecipesContent() {
     setIngredientQuantity("");
   };
 
-  const handleSaveRecipe = () => {
+  const handleSaveRecipe = async () => {
     const totalCost = selectedIngredients.reduce((sum, ing) => sum + ing.cost, 0);
     const productionQty = parseFloat(formData.productionQuantity) || 1;
     const salePrice = parseFloat(formData.salePrice) || 0;
     const profitMetrics = calculateRecipeProfit({ totalCost, productionQuantity: productionQty, salePrice });
 
-    const newRecipe: Recipe = {
-      id: editingId || `REC-${Date.now()}`,
+    const current = editingId ? recipes.find(recipe => recipe.id === editingId) : undefined;
+    const input = {
+      ...(editingId ? { id: editingId, version: current?.version } : {}),
       name: formData.name || "تركيبة بدون اسم",
       ingredients: selectedIngredients,
       totalCost,
@@ -181,21 +175,21 @@ function RecipesContent() {
       profitPercent: profitMetrics.profitPercent,
       notes: formData.notes,
       createdDate: new Date().toISOString(),
-      isPasswordProtected: !!formData.password,
+      isPasswordProtected: !!formData.password || Boolean(current?.isPasswordProtected),
       password: formData.password || undefined,
       imageUrl: formData.imageUrl || undefined,
-      catalogImageUrl: formData.imageUrl || undefined
+      catalogImageUrl: formData.imageUrl || undefined,
+      version: current?.version ?? 1,
     };
 
-    if (editingId) {
-      saveRecipes(recipes.map(r => r.id === editingId ? newRecipe : r));
-      toast.success("✅ تم تحديث التركيبة بنجاح وتصحيح التكاليف تلقائياً");
-    } else {
-      saveRecipes([...recipes, newRecipe]);
-      toast.success("✅ تم إضافة التركيبة بنجاح وحساب تكلفة الوحدة من الخامات بدقة");
+    try {
+      const saved = await saveCloudFormulation(input);
+      setRecipes(previous => editingId ? previous.map(recipe => recipe.id === editingId ? saved as Recipe : recipe) : [saved as Recipe, ...previous]);
+      toast.success(editingId ? "تم تحديث التركيبة ومكوناتها في Supabase" : "تم حفظ التركيبة ومكوناتها في Supabase");
+      resetForm();
+    } catch (error) {
+      toast.error(error instanceof Error ? `لم يتم حفظ التركيبة: ${error.message}` : "لم يتم حفظ التركيبة.");
     }
-
-    resetForm();
   };
 
   const resetForm = () => {
@@ -221,7 +215,7 @@ function RecipesContent() {
       productionUnit: recipe.productionUnit,
       salePrice: recipe.salePrice.toString(),
       notes: recipe.notes || "",
-      password: recipe.password || "",
+      password: "",
       loyaltyPoints: recipe.loyaltyPoints?.toString() || "",
       imageUrl: recipe.imageUrl || recipe.catalogImageUrl || ""
     });
@@ -232,10 +226,15 @@ function RecipesContent() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm("هل أنت متأكد من حذف هذه التركيبة؟")) {
-      saveRecipes(recipes.filter(r => r.id !== id));
-      toast.success("✅ تم حذف التركيبة");
+      const recipe = recipes.find(item => item.id === id);
+      if (!recipe) return;
+      try {
+        await deleteCloudFormulation(id, recipe.version);
+        setRecipes(previous => previous.filter(item => item.id !== id));
+        toast.success("تم حذف التركيبة من Supabase");
+      } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف التركيبة."); }
     }
   };
 
@@ -248,8 +247,8 @@ function RecipesContent() {
     }
   };
 
-  const handleVerifyPassword = (recipe: Recipe) => {
-    if (recipePasswordInput === recipe.password || recipePasswordInput === "1234") {
+  const handleVerifyPassword = async (recipe: Recipe) => {
+    if (await verifyFormulationPassword(recipe.password, recipePasswordInput)) {
       setShowPasswordModal(null);
       setRecipePasswordInput("");
       setViewingRecipe(recipe);
@@ -417,7 +416,7 @@ function RecipesContent() {
                 <Button
                   onClick={() => {
                     const recipe = recipes.find(r => r.id === showPasswordModal);
-                    if (recipe) handleVerifyPassword(recipe);
+                    if (recipe) void handleVerifyPassword(recipe);
                   }}
                   className="flex-1 bg-green-600 hover:bg-green-700 text-white text-xs"
                 >
