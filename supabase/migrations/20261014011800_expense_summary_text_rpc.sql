@@ -135,7 +135,7 @@ grant execute on function public.delete_expense(uuid, uuid, integer) to authenti
 drop function if exists public.get_expense_summary(uuid);
 create function public.get_expense_summary(p_shop_id text)
 returns jsonb
-language plpgsql stable security definer set search_path = '' as $$
+language plpgsql stable security invoker set search_path = '' as $$
 declare
   v_shop_id uuid;
   v_revenue numeric := 0;
@@ -149,9 +149,10 @@ begin
     raise exception using errcode = '22023', message = 'INVALID_EXPENSE_SHOP_ID';
   end;
 
-  if auth.uid() is null or not public.has_shop_role(
-    v_shop_id, array['manager','admin']::public.shop_role[]
-  ) then
+  if auth.uid() is null then
+    raise exception using errcode = '42501', message = 'EXPENSE_ACCESS_DENIED';
+  end if;
+  if not public.has_shop_role(v_shop_id, array['manager','admin']::public.shop_role[]) then
     raise exception using errcode = '42501', message = 'EXPENSE_ACCESS_DENIED';
   end if;
 

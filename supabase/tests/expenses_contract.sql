@@ -39,8 +39,9 @@ select ok(to_regprocedure('public.get_expense_summary(uuid)') is null, 'summary 
 select ok(has_function_privilege('anon', 'public.get_expense_summary(text)', 'EXECUTE'), 'anonymous role has the requested function grant');
 select ok(
   pg_get_functiondef('public.get_expense_summary(text)'::regprocedure) ilike '%auth.uid()%' and
-  pg_get_functiondef('public.get_expense_summary(text)'::regprocedure) ilike '%has_shop_role%',
-  'the granted summary RPC still rejects anonymous and non-member callers'
+  pg_get_functiondef('public.get_expense_summary(text)'::regprocedure) ilike '%has_shop_role%' and
+  (select not prosecdef from pg_proc where oid='public.get_expense_summary(text)'::regprocedure),
+  'the granted summary RPC uses invoker RLS and rejects anonymous and non-member callers'
 );
 select ok(
   pg_get_functiondef('public.get_expense_summary(text)'::regprocedure) ilike '%total_expenses%' and
