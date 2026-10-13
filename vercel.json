@@ -9,8 +9,16 @@
   },
   "routes": [
     {
-      "src": "^/manus-storage/(.*)$",
-      "dest": "/api/manus-storage/$1"
+      "src": "^/manus-storage(?:/(?<path>.*))?$",
+      "dest": "/api/index.ts?__vercel_path=manus-storage/$path"
+    },
+    {
+      "src": "^/api/health$",
+      "dest": "/api/health.ts"
+    },
+    {
+      "src": "^/api(?:/(?<path>.*))?$",
+      "dest": "/api/index.ts?__vercel_path=$path"
     },
     {
       "handle": "filesystem"
