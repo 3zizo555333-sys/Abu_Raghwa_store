@@ -2,10 +2,12 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, Plus, Trash2, Edit2, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, Plus, Trash2, Edit2, ChevronDown, ChevronUp, Image as ImageIcon } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
+import { toast } from "sonner";
 import { deleteRawMaterial, listRawMaterials, saveRawMaterial } from "@/lib/supabase/operations";
+import { deleteShopFeatureImage, listShopFeatureImages, listShopFeatureImagesForOwners, signShopFeatureImages, uploadShopFeatureImage } from "@/lib/supabase/featureImages";
 
 interface RawMaterial {
   id: string;
@@ -26,6 +28,7 @@ interface RawMaterial {
 function RawMaterialsContent() {
   const [, navigate] = useLocation();
   const [materials, setMaterials] = useState<RawMaterial[]>([]);
+  const [materialImageUrls, setMaterialImageUrls] = useState<Record<string, string>>({});
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -51,7 +54,22 @@ function RawMaterialsContent() {
 
   const loadMaterials = async () => {
     const rows = await listRawMaterials();
-    setMaterials(rows.map(row => ({ id: row.id, name: row.name, supplier: row.supplier, unit: row.unit, totalWeight: row.total_weight, quantity: row.quantity, totalPrice: row.total_price, wholesalePrice: row.wholesale_price, pricePerKilo: row.price_per_kilo, createdDate: row.created_at, description: row.description, usage: row.usage, ratio: row.ratio })));
+    const materialRows = rows.map(row => ({ id: row.id, name: row.name, supplier: row.supplier, unit: row.unit, totalWeight: row.total_weight, quantity: row.quantity, totalPrice: row.total_price, wholesalePrice: row.wholesale_price, pricePerKilo: row.price_per_kilo, createdDate: row.created_at, description: row.description, usage: row.usage, ratio: row.ratio }));
+    setMaterials(materialRows);
+    const images = await listShopFeatureImagesForOwners("raw_material", materialRows.map(row => row.id));
+    const urls = await signShopFeatureImages(images.map(image => image.storage_path));
+    const next: Record<string, string> = {};
+    for (const image of images) if (!next[image.owner_id]) next[image.owner_id] = urls[image.storage_path] || "";
+    setMaterialImageUrls(next);
+  };
+
+  const handleUploadMaterialImage = async (materialId: string, file?: File) => {
+    if (!file) return;
+    try {
+      const uploaded = await uploadShopFeatureImage({ featureType: "raw_material", ownerId: materialId, file, fileName: file.name });
+      setMaterialImageUrls(current => ({ ...current, [materialId]: uploaded.signedUrl }));
+      toast.success("تم ضغط صورة الخامة ورفعها سحابيًا.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفع صورة الخامة."); }
   };
 
   const saveMaterials = async (updated: RawMaterial[]) => {
@@ -141,6 +159,10 @@ function RawMaterialsContent() {
   const handleDelete = async (id: string) => {
     if (confirm("هل أنت متأكد من حذف هذه الخامة؟")) {
       await deleteRawMaterial(id);
+      try {
+        const images = await listShopFeatureImages("raw_material", id);
+        await Promise.all(images.map(image => deleteShopFeatureImage(image)));
+      } catch (error) { toast.error(error instanceof Error ? `حُذفت الخامة لكن تعذر تنظيف صورها: ${error.message}` : "حُذفت الخامة لكن تعذر تنظيف صورها."); }
       setMaterials(materials.filter(m => m.id !== id));
     }
   };
@@ -360,6 +382,13 @@ function RawMaterialsContent() {
                     </div>
                   </CardHeader>
                   <CardContent>
+                    <div className="mb-4 flex items-center gap-3">
+                      {materialImageUrls[material.id] && <img src={materialImageUrls[material.id]} alt={`صورة ${material.name}`} loading="lazy" className="h-20 w-20 rounded-lg border object-cover" />}
+                      <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm font-semibold hover:bg-slate-50">
+                        <ImageIcon className="h-4 w-4" /> صورة الخامة (أقل من 300KB)
+                        <input type="file" accept="image/*" className="sr-only" onChange={event => { void handleUploadMaterialImage(material.id, event.target.files?.[0]); event.target.value = ""; }} />
+                      </label>
+                    </div>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                       <div className="bg-blue-50 p-3 rounded-lg">
                         <p className="text-sm text-gray-600">الوزن الكلي</p>

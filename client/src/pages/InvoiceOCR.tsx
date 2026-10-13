@@ -1,10 +1,12 @@
-import { browserState } from "@/lib/browserState";
 import { useState, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { ArrowLeft, Camera, Upload, Check, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
+import { toast } from "sonner";
+import { prepareCloudProductImage } from "@/lib/supabase/prepareProductImage";
+import { listRawMaterials, saveRawMaterial } from "@/lib/supabase/operations";
 
 interface ParsedItem {
   name: string;
@@ -25,13 +27,20 @@ export default function InvoiceOCR() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleImageUpload = async (file: File) => {
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const imageData = e.target?.result as string;
-      setInvoiceImage(imageData);
-      processInvoice(imageData);
-    };
-    reader.readAsDataURL(file);
+    try {
+      const compressed = await prepareCloudProductImage(file, { allowJpegFallback: true });
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const imageData = e.target?.result as string;
+        if (!imageData) return;
+        setInvoiceImage(imageData);
+        processInvoice(imageData);
+      };
+      reader.onerror = () => toast.error("تعذرت قراءة صورة الفاتورة.");
+      reader.readAsDataURL(compressed);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر ضغط صورة الفاتورة.");
+    }
   };
 
   const processInvoice = async (imageData: string) => {
@@ -52,38 +61,29 @@ export default function InvoiceOCR() {
     }, 2000);
   };
 
-  const handleConfirmItems = () => {
+  const handleConfirmItems = async () => {
     if (!supplier || parsedItems.length === 0) {
       alert("يرجى ملء اسم المورد والتأكد من العناصر");
       return;
     }
 
-    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
-    
-    parsedItems.forEach((item) => {
-      const existingMaterial = materials.find((m: any) => m.name === item.name);
-      
-      if (existingMaterial) {
-        existingMaterial.quantity += item.quantity;
-        existingMaterial.price = item.price;
-        existingMaterial.pricePerKilo = item.price / item.quantity;
-      } else {
-        materials.push({
-          id: Date.now().toString() + Math.random(),
-          name: item.name,
-          unit: item.unit,
-          quantity: item.quantity,
-          price: item.price * item.quantity,
-          wholesalePrice: item.price * item.quantity,
-          pricePerKilo: item.price,
-          createdDate: new Date().toLocaleDateString("ar-EG"),
-          supplier: supplier,
-          invoiceDate: invoiceDate
-        });
+    try {
+      const materials = await listRawMaterials();
+      for (const item of parsedItems) {
+        const existing = materials.find(material => material.name.trim().toLocaleLowerCase() === item.name.trim().toLocaleLowerCase());
+        if (existing) {
+          const newQuantity = existing.quantity + item.quantity;
+          const newWeight = existing.total_weight + item.quantity;
+          const newTotal = existing.total_price + item.price * item.quantity;
+          await saveRawMaterial({ ...existing, quantity: newQuantity, total_weight: newWeight, total_price: newTotal, wholesale_price: existing.wholesale_price + item.price * item.quantity, price_per_kilo: newWeight ? newTotal / newWeight : item.price, supplier });
+        } else {
+          await saveRawMaterial({ name: item.name, supplier, unit: item.unit, quantity: item.quantity, total_weight: item.quantity, total_price: item.price * item.quantity, wholesale_price: item.price * item.quantity, price_per_kilo: item.price, description: "", usage: "", ratio: "" });
+        }
       }
-    });
-
-    browserState.set("abu_raghwa_raw_materials", JSON.stringify(materials));
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ مواد الفاتورة سحابياً.");
+      return;
+    }
     alert("تم استيراد الفاتورة بنجاح!");
     
     setInvoiceImage(null);

@@ -6,6 +6,7 @@ import { Plus, Trash2, Edit2, TrendingDown, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { deleteCloudExpense, getCloudExpenseSummary, listCloudExpenses, saveCloudExpense, subscribeToExpenseChanges, type CloudExpense, type ExpenseSummary } from "@/lib/supabase/expenses";
+import { deleteShopFeatureImage, listShopFeatureImagesForOwners, signShopFeatureImages, uploadShopFeatureImage } from "@/lib/supabase/featureImages";
 
 const EXPENSE_CATEGORIES = [
   "الإيجار",
@@ -25,6 +26,8 @@ export default function Expenses() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
+  const [receiptFile, setReceiptFile] = useState<File | null>(null);
+  const [receiptUrls, setReceiptUrls] = useState<Record<string, string>>({});
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [filterType, setFilterType] = useState<"daily" | "monthly" | "all">("all");
@@ -43,6 +46,11 @@ export default function Expenses() {
       const [nextExpenses, nextSummary] = await Promise.all([listCloudExpenses(), getCloudExpenseSummary()]);
       setExpenses(nextExpenses);
       setSummary(nextSummary);
+      const receiptRows = await listShopFeatureImagesForOwners("expense", nextExpenses.map(expense => expense.id));
+      const urls = await signShopFeatureImages(receiptRows.map(row => row.storage_path));
+      const byOwner: Record<string, string> = {};
+      for (const row of receiptRows) if (!byOwner[row.owner_id]) byOwner[row.owner_id] = urls[row.storage_path] || "";
+      setReceiptUrls(byOwner);
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذر تحميل المصروفات من Supabase.";
       setLoadError(message);
@@ -76,7 +84,7 @@ export default function Expenses() {
     }
     setIsSaving(true);
     try {
-      await saveCloudExpense({
+      const savedExpense = await saveCloudExpense({
         name: formData.name,
         amount,
         category: formData.category,
@@ -84,6 +92,16 @@ export default function Expenses() {
         type: formData.type,
         notes: formData.notes,
       }, current ? { id: current.id, version: current.version } : undefined);
+      if (receiptFile) {
+        try {
+          const oldImages = current ? await listShopFeatureImagesForOwners("expense", [savedExpense.id]) : [];
+          await uploadShopFeatureImage({ featureType: "expense", ownerId: savedExpense.id, file: receiptFile, fileName: receiptFile.name });
+          await Promise.all(oldImages.map(image => deleteShopFeatureImage(image)));
+          setReceiptFile(null);
+        } catch (imageError) {
+          toast.error(imageError instanceof Error ? `المصروفة حُفظت لكن تعذر رفع الإيصال: ${imageError.message}` : "المصروفة حُفظت لكن تعذر رفع الإيصال.");
+        }
+      }
       toast.success(editingId ? "تم تحديث المصروفة في Supabase." : "تم حفظ المصروفة في Supabase.");
       setEditingId(null);
       resetForm();
@@ -104,6 +122,7 @@ export default function Expenses() {
       type: "daily",
       notes: ""
     });
+    setReceiptFile(null);
     setEditingId(null);
     setShowForm(false);
   };
@@ -117,6 +136,7 @@ export default function Expenses() {
       type: expense.type,
       notes: expense.notes
     });
+    setReceiptFile(null);
     setEditingId(expense.id);
     setShowForm(true);
   };
@@ -127,6 +147,12 @@ export default function Expenses() {
     setIsSaving(true);
     try {
       await deleteCloudExpense({ id: expense.id, version: expense.version });
+      try {
+        const attachments = await listShopFeatureImagesForOwners("expense", [expense.id]);
+        await Promise.all(attachments.map(image => deleteShopFeatureImage(image)));
+      } catch (attachmentError) {
+        toast.error(attachmentError instanceof Error ? `حُذفت المصروفة لكن تعذر حذف الإيصال: ${attachmentError.message}` : "حُذفت المصروفة لكن تعذر حذف الإيصال.");
+      }
       toast.success("تم حذف المصروفة من Supabase.");
       await loadCloudData();
     } catch (error) {
@@ -329,6 +355,11 @@ export default function Expenses() {
                     placeholder="ملاحظات إضافية (اختياري)"
                   />
                 </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">إيصال المصروف (اختياري، WebP/JPEG أقل من 300KB)</label>
+                  <Input disabled={isSaving} type="file" accept="image/*" onChange={event => setReceiptFile(event.target.files?.[0] ?? null)} />
+                  {editingId && receiptUrls[editingId] && !receiptFile && <a className="mt-1 inline-block text-sm text-blue-700 underline" href={receiptUrls[editingId]} target="_blank" rel="noreferrer">عرض الإيصال الحالي</a>}
+                </div>
               </div>
 
               <div className="flex gap-2">
@@ -394,6 +425,7 @@ export default function Expenses() {
                       <th className="text-right px-4 py-3 font-bold">المبلغ</th>
                       <th className="text-right px-4 py-3 font-bold">النوع</th>
                       <th className="text-right px-4 py-3 font-bold">التاريخ</th>
+                      <th className="text-right px-4 py-3 font-bold">الإيصال</th>
                       <th className="text-center px-4 py-3 font-bold">الإجراءات</th>
                     </tr>
                   </thead>
@@ -413,6 +445,7 @@ export default function Expenses() {
                           </span>
                         </td>
                         <td className="px-4 py-3 text-gray-600">{expense.date}</td>
+                        <td className="px-4 py-3">{receiptUrls[expense.id] ? <a href={receiptUrls[expense.id]} target="_blank" rel="noreferrer" className="text-blue-700 underline">عرض الإيصال</a> : <span className="text-gray-400">—</span>}</td>
                         <td className="px-4 py-3 text-center">
                           <div className="flex gap-2 justify-center">
                             <Button

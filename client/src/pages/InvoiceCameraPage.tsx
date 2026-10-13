@@ -1,4 +1,3 @@
-import { browserState } from "@/lib/browserState";
 import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -7,12 +6,15 @@ import { ArrowLeft, Camera, Plus, Trash2, Image as ImageIcon, Folder, Save, Down
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { withPasswordProtection } from "@/components/withPasswordProtection";
-import { trpc } from "@/lib/trpc";
-import { useCloudState } from "@/lib/cloudSync";
+import { useShopFeatureState } from "@/lib/supabase/featureState";
+import { deleteShopFeatureImage, signShopFeatureImages, uploadShopFeatureImage } from "@/lib/supabase/featureImages";
+import { listShopSuppliersForInvoices } from "@/lib/supabase/shopCredits";
 
 interface InvoiceImage {
   id: string;
   url: string;
+  storagePath?: string;
+  supplierAccountId?: string | null;
   uploadedDate: string;
   uploadedTime: string;
   fileName: string;
@@ -28,12 +30,15 @@ interface InvoiceCategory {
 
 function InvoiceCameraPageContent() {
   const [, navigate] = useLocation();
-  const [categories, setCategories] = useCloudState<InvoiceCategory[]>("abu_raghwa_invoice_categories_v2", [], { skipInitialSeed: true });
+  const [categories, setCategories, isFeatureLoading, flushFeatureState] = useShopFeatureState<InvoiceCategory[]>("abu_raghwa_invoice_categories_v2", []);
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [newCategoryName, setNewCategoryName] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [supplierOptions, setSupplierOptions] = useState<Array<{ id: string; name: string }>>([]);
+  const [selectedSupplierId, setSelectedSupplierId] = useState("");
+  const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
   
   // معرض الصور الاحترافي
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
@@ -44,51 +49,33 @@ function InvoiceCameraPageContent() {
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const legacyMigrationStarted = useRef(false);
-  const uploadImageMutation = trpc.invoices.uploadImage.useMutation();
-  const invoiceCloudQuery = trpc.sync.get.useQuery({ key: "abu_raghwa_invoice_categories_v2" });
+  useEffect(() => {
+    let active = true;
+    void listShopSuppliersForInvoices().then(rows => { if (active) setSupplierOptions(rows); }).catch(error => {
+      if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل الموردين.");
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
-    if (legacyMigrationStarted.current || categories.length > 0 || invoiceCloudQuery.data === undefined) return;
-    // عند وجود معرض محفوظ بالفعل على السحابة، يقرأه useCloudState ولا ننقل نسخة محلية فوقه.
-    if (invoiceCloudQuery.data !== null) return;
-    legacyMigrationStarted.current = true;
-
-    const migrateLegacyInvoices = async () => {
-      try {
-        const rawLegacy = browserState.get("abu_raghwa_invoice_categories") || browserState.get("invoice_categories");
-        const legacyCategories = rawLegacy ? JSON.parse(rawLegacy) as InvoiceCategory[] : [];
-        if (!Array.isArray(legacyCategories) || legacyCategories.length === 0) return;
-
-        setIsSaving(true);
-        const migrated = await Promise.all(legacyCategories.map(async category => ({
-          ...category,
-          invoices: await Promise.all((category.invoices || []).map(async invoice => {
-            if (!invoice.url?.startsWith("data:image/")) return invoice;
-            const uploaded = await uploadImageMutation.mutateAsync({ dataUrl: invoice.url, fileName: invoice.fileName || `invoice-${invoice.id}.jpg` });
-            return { ...invoice, url: uploaded.url };
-          })),
-        })));
-        setCategories(migrated);
-        browserState.set("abu_raghwa_invoice_categories", JSON.stringify(migrated));
-        setHasUnsavedChanges(false);
-        toast.success("✅ تم نقل معرض الفواتير والصور إلى السحابة بنجاح");
-      } catch (error) {
-        console.error("خطأ في نقل صور الفواتير إلى السحابة:", error);
-        toast.error("تعذر نقل بعض صور الفواتير تلقائياً؛ ستظل ظاهرة على هذا الجهاز ويمكن إعادة حفظها.");
-      } finally {
-        setIsSaving(false);
-      }
-    };
-
-    void migrateLegacyInvoices();
-  }, [categories.length, invoiceCloudQuery.data, setCategories, uploadImageMutation]);
+    let active = true;
+    const paths = categories.flatMap(category => category.invoices.map(invoice => invoice.storagePath).filter((path): path is string => Boolean(path)));
+    if (!paths.length) { setSignedImageUrls({}); return; }
+    void signShopFeatureImages(paths).then(urls => { if (active) setSignedImageUrls(urls); }).catch(error => {
+      if (active) toast.error(error instanceof Error ? error.message : "تعذر فتح روابط صور الفواتير.");
+    });
+    return () => { active = false; };
+  }, [categories]);
 
   const saveCategories = async (updated: InvoiceCategory[]) => {
     setIsSaving(true);
     try {
+      if (isFeatureLoading) throw new Error("انتظر تحميل بيانات المعرض من Supabase.");
       setCategories(updated);
+      const saved = await flushFeatureState();
+      if (!saved) return false;
       setHasUnsavedChanges(false);
-      toast.success('✅ تم حفظ البيانات بنجاح');
+      toast.success('تم حفظ بيانات المعرض سحابيًا.');
       return true;
     } catch (error) {
       console.error('خطأ في حفظ البيانات:', error);
@@ -139,52 +126,41 @@ function InvoiceCameraPageContent() {
     if (!files || files.length === 0 || !selectedCategory) return;
 
     const file = files[0];
-    const reader = new FileReader();
-
-    reader.onload = async (event) => {
-      const result = event.target?.result as string;
-      if (!result) return;
-
+    void (async () => {
       try {
         setIsSaving(true);
-        const uploaded = await uploadImageMutation.mutateAsync({ dataUrl: result, fileName: file.name || `فاتورة_${Date.now()}` });
+        const uploaded = await uploadShopFeatureImage({ featureType: "invoice", ownerId: selectedCategory, file, fileName: file.name || `invoice-${Date.now()}.jpg`, supplierAccountId: selectedSupplierId || null });
         const now = new Date();
         const newInvoice: InvoiceImage = {
-          id: Date.now().toString(),
-          url: uploaded.url,
+          id: uploaded.row.id,
+          url: "",
+          storagePath: uploaded.row.storage_path,
+          supplierAccountId: uploaded.row.supplier_account_id,
           uploadedDate: now.toLocaleDateString('ar-EG'),
           uploadedTime: now.toLocaleTimeString('ar-EG', { hour: '2-digit', minute: '2-digit' }),
-          fileName: file.name || `فاتورة_${Date.now()}`
+          fileName: uploaded.row.file_name,
         };
-
-        const updated = categories.map(cat => {
-          if (cat.id === selectedCategory) {
-            return {
-              ...cat,
-              invoices: [newInvoice, ...cat.invoices],
-              updatedDate: now.toLocaleDateString('ar-EG')
-            };
-          }
-          return cat;
-        });
-
-        await saveCategories(updated);
-        toast.success('📸 تمت إضافة الفاتورة بنجاح للمعرض والسحابة');
+        const updated = categories.map(cat => cat.id === selectedCategory
+          ? { ...cat, invoices: [newInvoice, ...cat.invoices], updatedDate: now.toLocaleDateString('ar-EG') }
+          : cat);
+        if (!await saveCategories(updated)) {
+          await deleteShopFeatureImage(uploaded.row);
+          return;
+        }
+        setSignedImageUrls(current => ({ ...current, [uploaded.row.storage_path]: uploaded.signedUrl }));
+        toast.success('تم ضغط الفاتورة ورفعها وربطها بالمعرض السحابي.');
       } catch (error) {
         console.error("خطأ في رفع صورة الفاتورة:", error);
-        toast.error("تعذر رفع صورة الفاتورة إلى السحابة. تحقق من الاتصال وحاول مرة أخرى.");
-      } finally {
-        setIsSaving(false);
-      }
-    };
-
-    reader.readAsDataURL(file);
+        toast.error(error instanceof Error ? error.message : "تعذر رفع صورة الفاتورة إلى السحابة.");
+      } finally { setIsSaving(false); }
+    })();
     e.target.value = '';
   };
 
   const handleDeleteInvoice = async (catId: string, invoiceId: string) => {
     if (!confirm("هل أنت متأكد من حذف هذه الفاتورة نهائياً؟")) return;
 
+    const removedInvoice = categories.find(cat => cat.id === catId)?.invoices.find(inv => inv.id === invoiceId);
     const updated = categories.map(cat => {
       if (cat.id === catId) {
         return {
@@ -196,7 +172,15 @@ function InvoiceCameraPageContent() {
       return cat;
     });
 
-    await saveCategories(updated);
+    const saved = await saveCategories(updated);
+    if (saved && removedInvoice?.storagePath) {
+      try {
+        const { listShopFeatureImages } = await import("@/lib/supabase/featureImages");
+        const rows = await listShopFeatureImages("invoice", catId);
+        const imageRow = rows.find(row => row.storage_path === removedInvoice.storagePath);
+        if (imageRow) await deleteShopFeatureImage(imageRow);
+      } catch (error) { console.error("Invoice image cleanup failed after removal.", error); }
+    }
     // إغلاق المعرض أو تعديل المؤشر إن تم الحذف أثناء العرض
     if (currentIndex !== null) {
       setCurrentIndex(null);
@@ -207,11 +191,12 @@ function InvoiceCameraPageContent() {
   const selectedCategoryData = categories.find(c => c.id === selectedCategory);
   const currentInvoices = selectedCategoryData?.invoices || [];
   const activeInvoice = currentIndex !== null && currentInvoices[currentIndex] ? currentInvoices[currentIndex] : null;
+  const getInvoiceUrl = (invoice: InvoiceImage) => invoice.storagePath ? signedImageUrls[invoice.storagePath] || "" : invoice.url;
 
   useEffect(() => {
     currentInvoices.forEach(invoice => {
       const image = new Image();
-      image.src = invoice.url;
+      image.src = getInvoiceUrl(invoice);
     });
   }, [selectedCategory, categories]);
 
@@ -355,6 +340,13 @@ function InvoiceCameraPageContent() {
                         🖼️ رفع من معرض الصور
                       </Button>
                     </div>
+                    <div className="mt-4">
+                      <label className="mb-1 block text-sm font-semibold text-gray-700">المورد المرتبط بالفاتورة (اختياري)</label>
+                      <select value={selectedSupplierId} onChange={event => setSelectedSupplierId(event.target.value)} className="w-full rounded-lg border bg-white px-3 py-2">
+                        <option value="">بدون مورد</option>
+                        {supplierOptions.map(supplier => <option key={supplier.id} value={supplier.id}>{supplier.name}</option>)}
+                      </select>
+                    </div>
                   </CardContent>
                 </Card>
 
@@ -379,7 +371,7 @@ function InvoiceCameraPageContent() {
                           <div key={invoice.id} className="relative group">
                             <div className="relative overflow-hidden rounded-xl border-2 border-gray-200 hover:border-blue-500 shadow-sm transition bg-white">
                               <img
-                                src={invoice.url}
+                                src={getInvoiceUrl(invoice)}
                                 alt={invoice.fileName}
                                 className="w-full h-48 object-cover cursor-pointer hover:scale-105 transition duration-300"
                                 loading="eager"
@@ -408,6 +400,7 @@ function InvoiceCameraPageContent() {
                             <div className="mt-2 text-xs text-gray-600 bg-gray-50 p-2.5 rounded-lg border border-gray-200">
                               <p className="font-bold truncate text-gray-800">{invoice.fileName}</p>
                               <p className="text-gray-500 mt-0.5">📅 {invoice.uploadedDate} - {invoice.uploadedTime}</p>
+                              {invoice.supplierAccountId && <p className="mt-1 text-indigo-700">المورد: {supplierOptions.find(supplier => supplier.id === invoice.supplierAccountId)?.name || "مورد مرتبط"}</p>}
                               <Button
                                 type="button"
                                 size="sm"
@@ -500,7 +493,7 @@ function InvoiceCameraPageContent() {
                 size="sm"
                 onClick={() => {
                   const link = document.createElement('a');
-                  link.href = activeInvoice.url;
+                  link.href = getInvoiceUrl(activeInvoice);
                   link.download = `${activeInvoice.fileName}.jpg`;
                   link.click();
                   toast.success("📥 تم تنزيل الفاتورة بنجاح");
@@ -554,13 +547,13 @@ function InvoiceCameraPageContent() {
               {viewerImageError && (
                 <div className="absolute z-10 max-w-sm rounded-2xl bg-red-950/95 p-5 text-center shadow-2xl">
                   <p className="text-sm font-bold">تعذر تحميل الصورة الآن.</p>
-                  <Button type="button" size="sm" onClick={() => window.open(activeInvoice.url, "_blank", "noopener,noreferrer")} className="mt-3 bg-white text-red-800 hover:bg-red-100">
+                  <Button type="button" size="sm" onClick={() => window.open(getInvoiceUrl(activeInvoice), "_blank", "noopener,noreferrer")} className="mt-3 bg-white text-red-800 hover:bg-red-100">
                     فتح الصورة في نافذة مستقلة
                   </Button>
                 </div>
               )}
               <img
-                src={activeInvoice.url}
+                src={getInvoiceUrl(activeInvoice)}
                 alt={activeInvoice.fileName}
                 className={`max-h-[70vh] object-contain rounded-xl shadow-2xl transition-transform duration-200 cursor-zoom-in ${isViewerImageLoading || viewerImageError ? "opacity-0" : "opacity-100"}`}
                 style={{ transform: `scale(${zoom / 100})` }}

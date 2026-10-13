@@ -8,10 +8,11 @@ export async function uploadCloudProductImage(input: { productId: string; expect
   const { shopId, role } = await getActiveShopContext();
   if (!(["manager", "admin", "supervisor"] as string[]).includes(role)) throw new Error("رفع صور المنتجات متاح للإدارة فقط.");
   const imageId = globalThis.crypto.randomUUID();
-  const image = await prepareCloudProductImage(input.file);
-  const storagePath = `${shopId}/products/${input.productId}/${imageId}.webp`;
+  const image = await prepareCloudProductImage(input.file, { allowJpegFallback: true });
+  const extension = image.type === "image/webp" ? "webp" : "jpg";
+  const storagePath = `${shopId}/products/${input.productId}/${imageId}.${extension}`;
   const bucket = supabase.storage.from("product-images");
-  const uploaded = await bucket.upload(storagePath, image, { contentType: "image/webp", cacheControl: "3600", upsert: false });
+  const uploaded = await bucket.upload(storagePath, image, { contentType: image.type, cacheControl: "3600", upsert: false });
   if (uploaded.error) throw new Error(uploaded.error.message);
 
   const registered = await supabase.rpc("register_product_image", {
@@ -20,7 +21,7 @@ export async function uploadCloudProductImage(input: { productId: string; expect
     p_expected_version: input.expectedVersion,
     p_image_id: imageId,
     p_storage_path: storagePath,
-    p_content_type: "image/webp",
+    p_content_type: image.type,
     p_size_bytes: image.size,
   });
   if (registered.error || !registered.data) {

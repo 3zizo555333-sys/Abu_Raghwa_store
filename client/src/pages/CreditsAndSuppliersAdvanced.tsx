@@ -1,4 +1,3 @@
-import { browserState } from "@/lib/browserState";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
@@ -6,6 +5,8 @@ import { ArrowLeft, Plus, Trash2, DollarSign, Users, Edit2, Check, Package, Tren
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import React, { useState, useEffect } from "react";
+import { appendShopCreditTransaction, createShopCreditAccount, importLegacyShopCreditAccounts, listShopCreditAccounts, softDeleteShopCreditAccount, subscribeToShopCredits, type ShopCreditAccount } from "@/lib/supabase/shopCredits";
+import { browserState } from "@/lib/browserState";
 
 interface Transaction {
   id: string;
@@ -54,188 +55,116 @@ export default function CreditsAndSuppliersAdvanced() {
     notes: ""
   });
 
-  // Load data from browserState
+  const [isLoading, setIsLoading] = useState(true);
+  const toView = (account: ShopCreditAccount): Customer | Supplier => {
+    let runningBalance = 0;
+    const transactions = [...account.transactions].sort((a, b) => a.occurred_at.localeCompare(b.occurred_at)).map(entry => {
+      runningBalance += Number(entry.balance_delta);
+      const type: Transaction["type"] = entry.entry_type === "payment" ? "payment" : entry.entry_type === "return" || (entry.entry_type === "adjustment" && Number(entry.balance_delta) < 0) ? "return" : "add";
+      return { id: entry.id, type, amount: Number(entry.amount), description: entry.description, date: entry.occurred_at, notes: entry.notes, balance: runningBalance };
+    }).reverse();
+    return { id: account.id, name: account.name, balance: account.balance, transactions, createdDate: account.created_at };
+  };
+  const reloadAccounts = async () => {
+    const [cloudCustomers, cloudSuppliers] = await Promise.all([listShopCreditAccounts("customer"), listShopCreditAccounts("supplier")]);
+    setCustomers(cloudCustomers.map(account => toView(account) as Customer));
+    setSuppliers(cloudSuppliers.map(account => toView(account) as Supplier));
+    return { cloudCustomers, cloudSuppliers };
+  };
+
   useEffect(() => {
-    const savedCustomers = browserState.get("abu_raghwa_customers_advanced");
-    const savedSuppliers = browserState.get("abu_raghwa_suppliers_advanced");
-    if (savedCustomers) setCustomers(JSON.parse(savedCustomers));
-    if (savedSuppliers) setSuppliers(JSON.parse(savedSuppliers));
+    let active = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    const initialize = async () => {
+      try {
+        await reloadAccounts();
+        const legacyCustomersRaw = browserState.get("abu_raghwa_customers_advanced");
+        const legacySuppliersRaw = browserState.get("abu_raghwa_suppliers_advanced");
+        let legacyCustomers: unknown[] = [];
+        let legacySuppliers: unknown[] = [];
+        try { legacyCustomers = JSON.parse(legacyCustomersRaw || "[]"); legacySuppliers = JSON.parse(legacySuppliersRaw || "[]"); } catch { toast.error("تعذر قراءة بيانات الآجل القديمة؛ لم تُمسح من هذا الجهاز."); }
+        if (Array.isArray(legacyCustomers) && Array.isArray(legacySuppliers) && (legacyCustomers.length || legacySuppliers.length)) {
+          try {
+            const migration = await importLegacyShopCreditAccounts(legacyCustomers, legacySuppliers);
+            if (migration.imported) {
+              await reloadAccounts();
+              browserState.remove("abu_raghwa_customers_advanced");
+              browserState.remove("abu_raghwa_suppliers_advanced");
+              toast.success("تم دمج سجل الآجل القديم في الدفتر السحابي.");
+            }
+          } catch (error) { toast.error(error instanceof Error ? `بقيت بيانات الآجل القديمة محفوظة محليًا: ${error.message}` : "تعذر نقل بيانات الآجل القديمة."); }
+        }
+        if (!active) return;
+        unsubscribe = await subscribeToShopCredits(() => { void reloadAccounts().catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحديث الحسابات.")); });
+      } catch (error) {
+        if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل الآجل والموردين من Supabase.");
+      } finally { if (active) setIsLoading(false); }
+    };
+    void initialize();
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
   }, []);
 
-  // Save to browserState
-  useEffect(() => {
-    browserState.set("abu_raghwa_customers_advanced", JSON.stringify(customers));
-  }, [customers]);
-
-  useEffect(() => {
-    browserState.set("abu_raghwa_suppliers_advanced", JSON.stringify(suppliers));
-  }, [suppliers]);
-
-  const handleAddCustomer = () => {
+  const handleAddAccount = async (partyType: "customer" | "supplier") => {
     if (!formData.name.trim()) {
       toast.error("❌ يرجى إدخال اسم العميل");
       return;
     }
 
-    const initialBalance = parseFloat(formData.initialBalance) || 0;
+    const initialBalance = Number(formData.initialBalance) || 0;
+    if (!Number.isFinite(initialBalance) || Math.abs(initialBalance) > 999999999999) {
+      toast.error("قيمة الرصيد الأولي غير صالحة.");
+      return;
+    }
     if (initialBalance !== 0 && !formData.initialDetails.trim()) {
       toast.error("اكتب ما الذي أخذه العميل أو سبب الرصيد الأولي");
       return;
     }
-    const now = new Date().toISOString();
-    const openingTransaction: Transaction[] = initialBalance === 0 ? [] : [{
-      id: `opening-${Date.now()}`,
-      type: "add",
-      amount: initialBalance,
-      description: formData.initialDetails.trim(),
-      date: now,
-      notes: formData.initialNotes.trim(),
-      balance: initialBalance
-    }];
-    const newCustomer: Customer = {
-      id: Date.now().toString(),
-      name: formData.name,
-      balance: initialBalance,
-      transactions: openingTransaction,
-      createdDate: now
-    };
-
-    setCustomers([...customers, newCustomer]);
-    setFormData({ name: "", initialBalance: "", initialDetails: "", initialNotes: "" });
-    setShowForm(false);
-    toast.success("✅ تم إضافة العميل بنجاح");
+    try {
+      await createShopCreditAccount({ partyType, name: formData.name, initialBalance, initialDescription: formData.initialDetails || "رصيد افتتاحي", notes: formData.initialNotes });
+      await reloadAccounts();
+      setFormData({ name: "", initialBalance: "", initialDetails: "", initialNotes: "" });
+      setShowForm(false);
+      toast.success(partyType === "customer" ? "تم حفظ حساب العميل سحابيًا." : "تم حفظ حساب المورد سحابيًا.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الحساب."); }
   };
 
-  const handleAddSupplier = () => {
-    if (!formData.name.trim()) {
-      toast.error("❌ يرجى إدخال اسم المورد");
-      return;
-    }
+  const handleAddCustomer = () => handleAddAccount("customer");
+  const handleAddSupplier = () => handleAddAccount("supplier");
 
-    const initialBalance = parseFloat(formData.initialBalance) || 0;
-    if (initialBalance !== 0 && !formData.initialDetails.trim()) {
-      toast.error("اكتب ما الذي أخذته من المورد أو سبب الرصيد الأولي");
-      return;
-    }
-    const now = new Date().toISOString();
-    const openingTransaction: Transaction[] = initialBalance === 0 ? [] : [{
-      id: `opening-${Date.now()}`,
-      type: "add",
-      amount: initialBalance,
-      description: formData.initialDetails.trim(),
-      date: now,
-      notes: formData.initialNotes.trim(),
-      balance: initialBalance
-    }];
-    const newSupplier: Supplier = {
-      id: Date.now().toString(),
-      name: formData.name,
-      balance: initialBalance,
-      transactions: openingTransaction,
-      createdDate: now
-    };
-
-    setSuppliers([...suppliers, newSupplier]);
-    setFormData({ name: "", initialBalance: "", initialDetails: "", initialNotes: "" });
-    setShowForm(false);
-    toast.success("✅ تم إضافة المورد بنجاح");
-  };
-
-  const handleAddTransaction = () => {
+  const handleAddTransaction = async () => {
     if (!selectedId || !transactionData.amount || !transactionData.description.trim()) {
       toast.error("❌ يرجى ملء جميع الحقول المطلوبة");
       return;
     }
 
-    const amount = parseFloat(transactionData.amount);
-
-    if (activeTab === "customers") {
-      const updatedCustomers = customers.map(customer => {
-        if (customer.id === selectedId) {
-          let newBalance = customer.balance;
-
-          if (transactionData.type === "payment") {
-            newBalance -= amount; // خصم من الرصيد (قبض مبلغ)
-          } else if (transactionData.type === "add") {
-            newBalance += amount; // إضافة للرصيد (إضافة بضاعة)
-          } else if (transactionData.type === "return") {
-            newBalance -= amount; // خصم من الرصيد (استرجاع)
-          }
-
-          const newTransaction: Transaction = {
-            id: Date.now().toString(),
-            type: transactionData.type,
-            amount,
-            description: transactionData.description,
-            date: new Date().toISOString(),
-            notes: transactionData.notes,
-            balance: newBalance
-          };
-
-          return {
-            ...customer,
-            balance: newBalance,
-            transactions: [newTransaction, ...customer.transactions]
-          };
-        }
-        return customer;
+    const amount = Number(transactionData.amount);
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 999999999999) { toast.error("أدخل مبلغًا موجبًا صالحًا."); return; }
+    try {
+      await appendShopCreditTransaction({
+        accountId: selectedId,
+        type: transactionData.type === "add" ? "purchase" : transactionData.type,
+        amount,
+        balanceDelta: transactionData.type === "add" ? amount : -amount,
+        description: transactionData.description,
+        notes: transactionData.notes,
       });
-
-      setCustomers(updatedCustomers);
-    } else {
-      const updatedSuppliers = suppliers.map(supplier => {
-        if (supplier.id === selectedId) {
-          let newBalance = supplier.balance;
-
-          if (transactionData.type === "payment") {
-            newBalance -= amount; // خصم من الرصيد (دفع للمورد)
-          } else if (transactionData.type === "add") {
-            newBalance += amount; // إضافة للرصيد (شراء من المورد)
-          } else if (transactionData.type === "return") {
-            newBalance -= amount; // خصم من الرصيد (استرجاع للمورد)
-          }
-
-          const newTransaction: Transaction = {
-            id: Date.now().toString(),
-            type: transactionData.type,
-            amount,
-            description: transactionData.description,
-            date: new Date().toISOString(),
-            notes: transactionData.notes,
-            balance: newBalance
-          };
-
-          return {
-            ...supplier,
-            balance: newBalance,
-            transactions: [newTransaction, ...supplier.transactions]
-          };
-        }
-        return supplier;
-      });
-
-      setSuppliers(updatedSuppliers);
-    }
-
-    setTransactionData({ type: "payment", amount: "", description: "", notes: "" });
-    setShowTransactionForm(false);
-    setSelectedId(null);
-    toast.success("✅ تم إضافة الحركة بنجاح");
+      await reloadAccounts();
+      setTransactionData({ type: "payment", amount: "", description: "", notes: "" });
+      setShowTransactionForm(false);
+      setSelectedId(null);
+      toast.success("تم حفظ الحركة السحابية.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الحركة."); }
   };
 
-  const handleDeleteCustomer = (id: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا العميل؟")) {
-      setCustomers(customers.filter(c => c.id !== id));
-      toast.success("✅ تم حذف العميل");
+  const handleDeleteAccount = async (id: string, partyType: "customer" | "supplier") => {
+      if (confirm("هل أنت متأكد من حذف هذا العميل؟")) {
+      try { await softDeleteShopCreditAccount(id); await reloadAccounts(); toast.success(partyType === "customer" ? "تم أرشفة حساب العميل." : "تم أرشفة حساب المورد."); }
+      catch (error) { toast.error(error instanceof Error ? error.message : "تعذر أرشفة الحساب."); }
     }
   };
 
-  const handleDeleteSupplier = (id: string) => {
-    if (confirm("هل أنت متأكد من حذف هذا المورد؟")) {
-      setSuppliers(suppliers.filter(s => s.id !== id));
-      toast.success("✅ تم حذف المورد");
-    }
-  };
+  const handleDeleteCustomer = (id: string) => handleDeleteAccount(id, "customer");
+  const handleDeleteSupplier = (id: string) => handleDeleteAccount(id, "supplier");
 
   const currentList = activeTab === "customers" ? customers : suppliers;
   const totalBalance = currentList.reduce((sum, item) => sum + item.balance, 0);

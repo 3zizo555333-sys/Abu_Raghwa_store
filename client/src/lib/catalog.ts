@@ -14,6 +14,9 @@ export interface CatalogProduct {
   catalogOldPrice?: number;
   catalogDescription?: string;
   catalogImageUrl?: string;
+  catalogImageStoragePath?: string;
+  imageStoragePath?: string;
+  version?: number;
   catalogDetailsUrl?: string;
   loyaltyPoints?: number;
 }
