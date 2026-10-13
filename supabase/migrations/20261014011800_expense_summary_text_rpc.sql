@@ -2,6 +2,14 @@ begin;
 
 -- `shop_id` is the canonical store identifier in this schema. Keep every read
 -- tenant-scoped and manager-only; financial aggregates are never public data.
+-- Some production databases only have the base table because the older
+-- expenses-cloud migration was not recorded there.
+alter table public.expenses
+  add column if not exists expense_type text not null default 'daily'
+    check (expense_type in ('daily', 'monthly')),
+  add column if not exists notes text not null default '',
+  add column if not exists version integer not null default 1 check (version > 0);
+
 alter table public.expenses enable row level security;
 alter table public.expenses force row level security;
 drop policy if exists expenses_manager_read on public.expenses;
@@ -175,6 +183,23 @@ revoke all on function public.get_expense_summary(text) from public, anon;
 -- The anon grant is required by the client schema contract; the function body
 -- still rejects anonymous calls because auth.uid() is null and role membership fails.
 grant execute on function public.get_expense_summary(text) to authenticated, anon;
+
+drop trigger if exists expenses_emit_event on public.expenses;
+create trigger expenses_emit_event
+after insert or update or delete on public.expenses
+for each row execute function public.emit_shop_change_event();
+
+do $$
+begin
+  if exists (select 1 from pg_catalog.pg_publication where pubname = 'supabase_realtime')
+     and not exists (
+       select 1 from pg_catalog.pg_publication_tables
+       where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'expenses'
+     ) then
+    execute 'alter publication supabase_realtime add table public.expenses';
+  end if;
+end;
+$$;
 
 notify pgrst, 'reload schema';
 commit;

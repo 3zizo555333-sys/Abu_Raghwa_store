@@ -1,9 +1,15 @@
 begin;
-select plan(15);
+select plan(16);
 
 select ok(
   (select relrowsecurity and relforcerowsecurity from pg_class where oid = 'public.expenses'::regclass),
   'expenses enforces row-level security'
+);
+select ok(
+  exists (select 1 from information_schema.columns where table_schema='public' and table_name='expenses' and column_name='expense_type') and
+  exists (select 1 from information_schema.columns where table_schema='public' and table_name='expenses' and column_name='notes') and
+  exists (select 1 from information_schema.columns where table_schema='public' and table_name='expenses' and column_name='version'),
+  'expense sync columns required by the UI are present'
 );
 select ok(
   exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'expenses' and policyname = 'expenses_manager_read' and cmd = 'SELECT'),
