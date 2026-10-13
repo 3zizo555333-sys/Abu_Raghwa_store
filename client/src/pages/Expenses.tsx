@@ -5,7 +5,7 @@ import { useLocation } from "wouter";
 import { Plus, Trash2, Edit2, TrendingDown, Calendar } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { deleteCloudExpense, getCloudExpenseSummary, listCloudExpenses, saveCloudExpense, subscribeToExpenseChanges, type CloudExpense, type ExpenseSummary } from "@/lib/supabase/expenses";
+import { deleteCloudExpense, getCloudExpenseSummary, getCloudExpenseSummaryFallback, listCloudExpenses, saveCloudExpense, subscribeToExpenseChanges, type CloudExpense, type ExpenseSummary } from "@/lib/supabase/expenses";
 import { deleteShopFeatureImage, listShopFeatureImagesForOwners, signShopFeatureImages, uploadShopFeatureImage } from "@/lib/supabase/featureImages";
 
 const EXPENSE_CATEGORIES = [
@@ -22,7 +22,8 @@ const EXPENSE_CATEGORIES = [
 export default function Expenses() {
   const [, navigate] = useLocation();
   const [expenses, setExpenses] = useState<CloudExpense[]>([]);
-  const [summary, setSummary] = useState<ExpenseSummary>({ totalRevenue: 0, totalProfit: 0 });
+  const [summary, setSummary] = useState<ExpenseSummary>({ totalRevenue: 0, totalExpenses: 0, totalProfit: 0, netProfit: 0 });
+  const [summaryNotice, setSummaryNotice] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [loadError, setLoadError] = useState("");
@@ -43,8 +44,22 @@ export default function Expenses() {
   const loadCloudData = useCallback(async () => {
     setLoadError("");
     try {
-      const [nextExpenses, nextSummary] = await Promise.all([listCloudExpenses(), getCloudExpenseSummary()]);
+      const nextExpenses = await listCloudExpenses();
       setExpenses(nextExpenses);
+      let nextSummary: ExpenseSummary;
+      try {
+        nextSummary = await getCloudExpenseSummary();
+        setSummaryNotice("");
+      } catch {
+        try {
+          nextSummary = await getCloudExpenseSummaryFallback(nextExpenses);
+          setSummaryNotice("تعذر تحديث الملخص عبر RPC؛ حُسبت الإيرادات والمصاريف والأرباح من بيانات المتجر السحابية.");
+        } catch {
+          const totalExpenses = nextExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+          nextSummary = { totalRevenue: 0, totalExpenses, totalProfit: 0, netProfit: -totalExpenses };
+          setSummaryNotice("تعذر الوصول إلى ملخص الإيرادات مؤقتًا؛ إجمالي المصاريف محسوب من السجلات السحابية، والإيرادات والأرباح غير متاحة حتى استعادة الخدمة.");
+        }
+      }
       setSummary(nextSummary);
       const receiptRows = await listShopFeatureImagesForOwners("expense", nextExpenses.map(expense => expense.id));
       const urls = await signShopFeatureImages(receiptRows.map(row => row.storage_path));
@@ -168,17 +183,11 @@ export default function Expenses() {
     : expenses.filter(e => e.type === filterType);
 
   const totalExpenses = filteredExpenses.reduce((sum, e) => sum + e.amount, 0);
-  const dailyExpenses = expenses
-    .filter(e => e.type === "daily")
-    .reduce((sum, e) => sum + e.amount, 0);
-  const monthlyExpenses = expenses
-    .filter(e => e.type === "monthly")
-    .reduce((sum, e) => sum + e.amount, 0);
 
-  // حساب الإيرادات والأرباح
+  // The RPC and its cloud-row fallback share the same accounting definition.
   const totalRevenue = summary.totalRevenue;
   const totalProfit = summary.totalProfit;
-  const netProfit = totalProfit - (dailyExpenses + monthlyExpenses);
+  const netProfit = summary.netProfit;
   const netProfitPercent = totalRevenue > 0 ? (netProfit / totalRevenue) * 100 : 0;
 
   // إحصائيات حسب الفئة
@@ -220,6 +229,7 @@ export default function Expenses() {
 
       <main className="max-w-7xl mx-auto px-4 py-8">
         {loadError && <div role="alert" className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{loadError}<Button variant="outline" disabled={isSaving} className="mr-3" onClick={() => void loadCloudData()}>إعادة المحاولة</Button></div>}
+        {summaryNotice && <div role="status" className="mb-4 rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{summaryNotice}</div>}
         {isLoading && <p className="mb-4 text-sm text-slate-600">جاري تحميل المصروفات والملخص المالي من Supabase...</p>}
         {/* بطاقات الإحصائيات */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -242,7 +252,7 @@ export default function Expenses() {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">إجمالي المصاريف</p>
-                  <p className="text-2xl font-bold text-red-600">{(dailyExpenses + monthlyExpenses).toFixed(2)} ج.م</p>
+                  <p className="text-2xl font-bold text-red-600">{summary.totalExpenses.toFixed(2)} ج.م</p>
                 </div>
                 <div className="text-4xl text-red-200">📉</div>
               </div>
@@ -357,7 +367,7 @@ export default function Expenses() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium mb-2">إيصال المصروف (اختياري، WebP/JPEG أقل من 300KB)</label>
-                  <Input disabled={isSaving} type="file" accept="image/*" onChange={event => setReceiptFile(event.target.files?.[0] ?? null)} />
+                  <Input disabled={isSaving} type="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp" onChange={event => setReceiptFile(event.target.files?.[0] ?? null)} />
                   {editingId && receiptUrls[editingId] && !receiptFile && <a className="mt-1 inline-block text-sm text-blue-700 underline" href={receiptUrls[editingId]} target="_blank" rel="noreferrer">عرض الإيصال الحالي</a>}
                 </div>
               </div>
