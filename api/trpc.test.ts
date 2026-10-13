@@ -15,6 +15,18 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
     expect(await response.json()).toMatchObject({ "0": { result: { data: { json: null } } } });
   });
 
+  it("catches dynamic module-load failures and returns only sanitized diagnostics", async () => {
+    const response = await handleTrpcRequest(new Request(authMeUrl), async setPhase => {
+      setPhase("app-router");
+      throw new Error("do-not-expose-environment-or-stack");
+    });
+    expect(response.status).toBe(503);
+    expect(response.headers.get("cache-control")).toContain("no-store");
+    const body = await response.json();
+    expect(body).toEqual({ error: "API_TEMPORARILY_UNAVAILABLE", phase: "app-router", name: "Error" });
+    expect(JSON.stringify(body)).not.toContain("do-not-expose-environment-or-stack");
+  });
+
   it("accepts Web Headers and treats invalid optional cookies as unauthenticated", async () => {
     for (const headers of [new Headers(), new Headers({ cookie: "app_session_id=not-a-valid-session" })]) {
       const response = await handleTrpcRequest(new Request(authMeUrl, { headers }));
