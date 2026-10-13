@@ -16,7 +16,7 @@ select ok(
   'only managers/admins may upload catalog images'
 );
 select ok(
-  exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='catalog_manual_images_storage_insert' and with_check ilike '%catalog_manual_image_upload_allowed%' and with_check ilike '%300000%'),
+  exists (select 1 from pg_policies where schemaname='storage' and tablename='objects' and policyname='catalog_manual_images_storage_insert' and with_check ilike '%catalog_manual_image_upload_allowed%' and with_check ilike '%299999%'),
   'storage insert policy scopes uploads to an authorized shop/product and size bound'
 );
 select ok(
