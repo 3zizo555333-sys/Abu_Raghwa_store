@@ -2,7 +2,7 @@ import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./clie
 import { getActiveShopContext } from "./products";
 import { prepareCloudProductImage } from "./prepareProductImage";
 
-const FORMULATION_IMAGE_PATH = /^[0-9a-fA-F-]{36}\/formulations\/[0-9a-fA-F-]{36}\/[0-9a-fA-F-]{36}\.webp$/;
+const FORMULATION_IMAGE_PATH = /^[0-9a-fA-F-]{36}\/formulations\/[0-9a-fA-F-]{36}\/[0-9a-fA-F-]{36}\.(?:webp|jpe?g)$/;
 
 export function isFormulationImageStoragePath(value: unknown): value is string {
   return typeof value === "string" && FORMULATION_IMAGE_PATH.test(value);
@@ -29,13 +29,16 @@ export async function uploadCloudFormulationImage(input: { formulationId: string
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
   if (!( ["manager", "admin", "supervisor"] as string[]).includes(role)) throw new Error("رفع صور التركيبات متاح للإدارة فقط.");
-  const image = await prepareCloudProductImage(input.file);
+  const image = await prepareCloudProductImage(input.file, { allowJpegFallback: true });
   if (image.size < 1 || image.size > 5 * 1024 * 1024) throw new Error("يجب ألا يتجاوز حجم الصورة المضغوطة 5 ميجابايت.");
   const supabase = getSupabaseClient();
   const imageId = globalThis.crypto.randomUUID();
-  const storagePath = `${shopId}/formulations/${input.formulationId}/${imageId}.webp`;
+  const contentType = image.type === "image/webp" ? "image/webp" : image.type === "image/jpeg" ? "image/jpeg" : null;
+  if (!contentType) throw new Error("صيغة الصورة المضغوطة غير مدعومة.");
+  const extension = contentType === "image/webp" ? "webp" : "jpg";
+  const storagePath = `${shopId}/formulations/${input.formulationId}/${imageId}.${extension}`;
   const bucket = supabase.storage.from("product-images");
-  const uploaded = await bucket.upload(storagePath, image, { contentType: "image/webp", cacheControl: "3600", upsert: false });
+  const uploaded = await bucket.upload(storagePath, image, { contentType, cacheControl: "3600", upsert: false });
   if (uploaded.error) throw new Error(uploaded.error.message);
 
   const registered = await supabase.rpc("register_formulation_image", {
@@ -44,7 +47,7 @@ export async function uploadCloudFormulationImage(input: { formulationId: string
     p_expected_version: input.expectedVersion,
     p_image_id: imageId,
     p_storage_path: storagePath,
-    p_content_type: "image/webp",
+    p_content_type: contentType,
     p_size_bytes: image.size,
   });
   if (registered.error || !registered.data) {

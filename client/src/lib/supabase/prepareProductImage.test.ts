@@ -30,4 +30,30 @@ describe("prepareCloudProductImage", () => {
     expect(result.size).toBeLessThan(300_000);
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it("falls back to JPEG when Canvas does not support WebP for a formulation image", async () => {
+    const close = vi.fn();
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ width: 1200, height: 800, close }));
+    const requestedTypes: string[] = [];
+    class FakeOffscreenCanvas {
+      constructor(_width: number, _height: number) {}
+      getContext() {
+        return { drawImage: vi.fn() } as unknown as OffscreenCanvasRenderingContext2D;
+      }
+      async convertToBlob(options: { type: string }) {
+        requestedTypes.push(options.type);
+        if (options.type === "image/webp") return new Blob([new Uint8Array(10)], { type: "image/png" });
+        return new Blob([new Uint8Array(299_999)], { type: "image/jpeg" });
+      }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+
+    const file = new File([new Uint8Array([1])], "formulation.png", { type: "image/png" });
+    const result = await prepareCloudProductImage(file, { allowJpegFallback: true });
+
+    expect(requestedTypes).toEqual(["image/webp", "image/jpeg"]);
+    expect(result.type).toBe("image/jpeg");
+    expect(result.size).toBeLessThan(300_000);
+    expect(close).toHaveBeenCalledTimes(1);
+  });
 });
