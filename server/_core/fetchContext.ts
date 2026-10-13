@@ -31,7 +31,10 @@ function serializeCookie(name: string, value: string, options: Record<string, un
   return attributes.join("; ");
 }
 
-export async function createFetchContext(input: { req: Request; resHeaders: Headers }): Promise<TrpcContext> {
+export async function createFetchContext(
+  input: { req: Request; resHeaders: Headers },
+  contextFactory: typeof createContext = createContext,
+): Promise<TrpcContext> {
   const request = input.req;
   const headers = normalizedHeaders(request.headers);
   const url = new URL(request.url);
@@ -56,5 +59,12 @@ export async function createFetchContext(input: { req: Request; resHeaders: Head
       return this;
     },
   } as unknown as ExpressResponse;
-  return createContext({ req, res } as Parameters<typeof createContext>[0]);
+  try {
+    return await contextFactory({ req, res } as Parameters<typeof createContext>[0]);
+  } catch {
+    // Fail closed: a broken optional auth/session context must never become an
+    // authenticated user. Public procedures can still respond; protected
+    // procedures will serialize the missing user as UNAUTHORIZED.
+    return { req, res, user: null };
+  }
 }
