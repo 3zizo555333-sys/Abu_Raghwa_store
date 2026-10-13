@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { handleTrpcRequest } from "./trpc";
+import { GET, handleTrpcRequest } from "./trpc";
 import { createFetchContext } from "../server/_core/fetchContext";
 import { createContext } from "../server/_core/context";
 
@@ -12,6 +12,13 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
     const response = await handleTrpcRequest(new Request(authMeUrl));
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toMatch(/application\/json/i);
+    expect(await response.json()).toMatchObject({ "0": { result: { data: { json: null } } } });
+  });
+
+  it("ignores Vercel's second platform argument instead of treating it as a module loader", async () => {
+    const vercelInvoke = GET as unknown as (request: Request, platformArgument: unknown) => Promise<Response>;
+    const response = await vercelInvoke(new Request(authMeUrl), { platform: "vercel" });
+    expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ "0": { result: { data: { json: null } } } });
   });
 

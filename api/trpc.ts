@@ -97,6 +97,13 @@ export async function handleTrpcRequest(
   }
 }
 
-export const GET = handleTrpcRequest;
-export const POST = handleTrpcRequest;
-export const OPTIONS = handleTrpcRequest;
+function vercelHandler(request: Request): Promise<Response> {
+  // Vercel may supply a second platform argument to function exports. Keep the
+  // exported HTTP handlers one-argument wrappers so it cannot be mistaken for
+  // the internal test-only module loader accepted by handleTrpcRequest.
+  return handleTrpcRequest(request);
+}
+
+export const GET = vercelHandler;
+export const POST = vercelHandler;
+export const OPTIONS = vercelHandler;
