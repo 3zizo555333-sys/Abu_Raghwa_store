@@ -17,6 +17,10 @@
       "dest": "/api/health.ts"
     },
     {
+      "src": "^/api/trpc(?:/(?<path>.*))?$",
+      "dest": "/api/trpc.ts?__vercel_path=api/trpc/$path"
+    },
+    {
       "src": "^/api(?:/(?<path>.*))?$",
       "dest": "/api/index.ts?__vercel_path=$path"
     },
