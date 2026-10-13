@@ -24,6 +24,14 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
     }
   });
 
+  it("fails closed when optional context initialization throws", async () => {
+    const context = await createFetchContext(
+      { req: new Request(authMeUrl), resHeaders: new Headers() },
+      async () => { throw new Error("context initialization failure"); },
+    );
+    expect(context.user).toBeNull();
+  });
+
   it("returns a tRPC JSON authorization error for an unauthenticated staff-session login", async () => {
     const response = await handleTrpcRequest(new Request("http://localhost/api/trpc/catalog.loginWithStaffSession?batch=1", {
       method: "POST",
