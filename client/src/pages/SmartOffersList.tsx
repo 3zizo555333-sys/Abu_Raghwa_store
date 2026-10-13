@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { useCloudState } from "@/lib/cloudSync";
+import { useShopFeatureState } from "@/lib/supabase/featureState";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 
 interface SmartOffer {
@@ -30,7 +30,7 @@ type OffersTab = "active" | "expired";
 
 export default function SmartOffersList() {
   const [, navigate] = useLocation();
-  const [legacySavedOffers, setLegacySavedOffers] = useCloudState<SmartOffer[]>("abu_raghwa_saved_offers", []);
+  const [legacySavedOffers, setLegacySavedOffers] = useShopFeatureState<SmartOffer[]>("abu_raghwa_saved_offers", []);
   const savedOffersQuery = trpc.offers.list.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", refetchInterval: 30_000, retry: false });
   const savedOffers = (savedOffersQuery.data as SmartOffer[] | null | undefined) ?? legacySavedOffers;
   const [activeTab, setActiveTab] = useState<OffersTab>("active");

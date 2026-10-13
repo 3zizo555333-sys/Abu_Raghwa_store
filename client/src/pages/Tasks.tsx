@@ -1,12 +1,13 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Trash2, Award, Zap, Dices, ShieldAlert, MinusCircle, History } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
-import { useCloudState } from "@/lib/cloudSync";
+import { useShopFeatureState } from "@/lib/supabase/featureState";
 import { adjustEmployeePoints, findPointsEmployee } from "@/lib/pointsLedger";
+import { listTaskStaffDirectory } from "@/lib/supabase/operations";
 
 interface PointsEmployee {
   id: string;
@@ -63,11 +64,11 @@ interface PenaltyLog {
 
 export default function Tasks() {
   const [, navigate] = useLocation();
-  const [tasks, setTasks] = useCloudState<Task[]>("abu_raghwa_tasks", []);
-  const [employees] = useCloudState<Employee[]>("abu_raghwa_employees", []);
-  const [pointsEmployees, setPointsEmployees] = useCloudState<PointsEmployee[]>("points_system_employees", []);
-  const [penaltyRules, setPenaltyRules] = useCloudState<PenaltyRule[]>("abu_raghwa_penalty_rules", []);
-  const [penaltyLogs, setPenaltyLogs] = useCloudState<PenaltyLog[]>("abu_raghwa_penalty_logs", []);
+  const [tasks, setTasks] = useShopFeatureState<Task[]>("abu_raghwa_tasks", []);
+  const [employees, setEmployees] = useState<Employee[]>([]);
+  const [pointsEmployees, setPointsEmployees] = useShopFeatureState<PointsEmployee[]>("points_system_employees", []);
+  const [penaltyRules, setPenaltyRules] = useShopFeatureState<PenaltyRule[]>("abu_raghwa_penalty_rules", []);
+  const [penaltyLogs, setPenaltyLogs] = useShopFeatureState<PenaltyLog[]>("abu_raghwa_penalty_logs", []);
   const [showForm, setShowForm] = useState(false);
   const [showPenaltyForm, setShowPenaltyForm] = useState(false);
   const [filterStatus, setFilterStatus] = useState<"all" | "pending" | "in-progress" | "completed">("all");
@@ -79,6 +80,13 @@ export default function Tasks() {
   const [penaltyEmployeeId, setPenaltyEmployeeId] = useState("");
   const [newPenaltyName, setNewPenaltyName] = useState("");
   const [newPenaltyPoints, setNewPenaltyPoints] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    void listTaskStaffDirectory().then(rows => { if (active) setEmployees(rows.map(row => ({ id: row.id, name: row.name }))); })
+      .catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل دليل موظفي المهام."); });
+    return () => { active = false; };
+  }, []);
   
   const [formData, setFormData] = useState({
     title: "",

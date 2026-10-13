@@ -13,6 +13,9 @@ import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
+import { uploadCloudProductImage } from "@/lib/supabase/productImages";
+import { getSignedProductImageUrl } from "@/lib/supabase/products";
+import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 
 type CatalogOrder = {
   id: string;
@@ -66,14 +69,13 @@ export default function CatalogManager() {
   const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("حسابك غير مخول لمتابعة طلبات الكتالوج") });
   const { data: orders = [], isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, refetchInterval: catalogSessionReady ? 10_000 : false, retry: false });
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => refetchOrders() });
-  const uploadProductImage = trpc.catalog.uploadProductImage.useMutation();
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
 
   useEffect(() => {
     listCatalogDisplayData().then(data => {
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;
-      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
+      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl, imageStoragePath: product.imageStoragePath || undefined, version: product.version })));
       setRecipes((data.recipes as any[]).map(recipe => ({
         id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""),
         salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"),
@@ -87,7 +89,7 @@ export default function CatalogManager() {
       })));
       setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name })));
       setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name })));
-      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points })));
+      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
       setPricingConfig(pricing);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
   }, []);
@@ -206,9 +208,11 @@ export default function CatalogManager() {
 
   const updateProduct = async (id: string, patch: Partial<CatalogProduct>) => {
     if (safeManualProducts.some(product => product.id === id)) {
-      setManualProducts(current => (Array.isArray(current) ? current : []).map(product => product.id === id ? { ...product, ...patch } : product));
       const product = safeManualProducts.find(item => item.id === id);
-      if (product) await saveCatalogManualProduct({ id, name: String(patch.name ?? product.name), unit: String(patch.unit ?? product.unit), price: Number(patch.catalogPrice ?? product.catalogPrice ?? product.wholesaleRetailPrice ?? 0), description: String(patch.catalogDescription ?? product.catalogDescription ?? ""), details_url: String(patch.catalogDetailsUrl ?? product.catalogDetailsUrl ?? ""), loyalty_points: Number(patch.loyaltyPoints ?? product.loyaltyPoints ?? 0), is_visible: Boolean(patch.catalogVisible ?? product.catalogVisible), category_id: null, company_id: null });
+      if (product) {
+        await saveCatalogManualProduct({ id, name: String(patch.name ?? product.name), unit: String(patch.unit ?? product.unit), price: Number(patch.catalogPrice ?? product.catalogPrice ?? product.wholesaleRetailPrice ?? 0), description: String(patch.catalogDescription ?? product.catalogDescription ?? ""), details_url: String(patch.catalogDetailsUrl ?? product.catalogDetailsUrl ?? ""), loyalty_points: Number(patch.loyaltyPoints ?? product.loyaltyPoints ?? 0), is_visible: Boolean(patch.catalogVisible ?? product.catalogVisible), catalog_image_url: String(patch.catalogImageUrl ?? product.catalogImageUrl ?? ""), catalog_image_storage_path: patch.catalogImageStoragePath ?? product.catalogImageStoragePath ?? null, category_id: null, company_id: null });
+        setManualProducts(current => (Array.isArray(current) ? current : []).map(item => item.id === id ? { ...item, ...patch } : item));
+      }
       return;
     }
     setProducts(current => (Array.isArray(current) ? current : []).map(product => product.id === id ? { ...product, ...patch } : product));
@@ -270,21 +274,27 @@ export default function CatalogManager() {
 
   const handleProductImage = async (file: File | undefined, productId: string) => {
     if (!file) return;
-    if (!(["image/jpeg", "image/png", "image/webp"] as string[]).includes(file.type)) return toast.error("اختر صورة بصيغة JPG أو PNG أو WEBP");
-    if (file.size > 6 * 1024 * 1024) return toast.error("حجم الصورة يجب ألا يزيد عن 6 ميجابايت");
     setUploadingProductId(productId);
     try {
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("invalid image"));
-        reader.onerror = () => reject(reader.error || new Error("image read failed"));
-        reader.readAsDataURL(file);
-      });
-      const result = await uploadProductImage.mutateAsync({ productId, fileName: file.name || "product-image", mimeType: file.type as "image/jpeg" | "image/png" | "image/webp", base64: dataUrl });
-      updateProduct(productId, { catalogImageUrl: result.url });
-      toast.success("تم رفع صورة المنتج وحفظها سحابياً");
-    } catch {
-      toast.error("تعذر رفع الصورة، حاول مرة أخرى");
+      const manual = safeManualProducts.find(product => product.id === productId);
+      if (manual) {
+        const uploaded = await uploadCatalogManualProductImage(productId, file);
+        try { await updateProduct(productId, { catalogImageUrl: uploaded.publicUrl, catalogImageStoragePath: uploaded.storagePath }); }
+        catch (error) { await removeCatalogManualProductImage(uploaded.storagePath).catch(() => undefined); throw error; }
+        if (uploaded.previousStoragePath && uploaded.previousStoragePath !== uploaded.storagePath) {
+          try { await removeCatalogManualProductImage(uploaded.previousStoragePath); }
+          catch (error) { toast.error(error instanceof Error ? `تم تحديث صورة المنتج لكن تعذر تنظيف الصورة السابقة: ${error.message}` : "تم تحديث الصورة لكن تعذر تنظيف السابقة."); }
+        }
+      } else {
+        const product = safeProducts.find(item => item.id === productId);
+        if (!product || typeof product.version !== "number") throw new Error("تعذر تحديد إصدار المنتج؛ حدّث القائمة ثم أعد المحاولة.");
+        const uploaded = await uploadCloudProductImage({ productId, expectedVersion: product.version, file });
+        const signedUrl = await getSignedProductImageUrl(uploaded.storagePath);
+        setProducts(current => current.map(item => item.id === productId ? { ...item, catalogImageUrl: signedUrl, imageStoragePath: uploaded.storagePath, version: product.version! + 1 } : item));
+      }
+      toast.success("تم ضغط صورة المنتج ورفعها وربطها ببيانات Supabase.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر رفع الصورة، حاول مرة أخرى.");
     } finally {
       setUploadingProductId(null);
     }

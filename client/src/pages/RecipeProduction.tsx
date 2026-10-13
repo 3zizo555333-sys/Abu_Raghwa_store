@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { useLocation } from "wouter";
 import { ArrowLeft, Plus, Check, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { createProductionRun, listProductionRuns } from "@/lib/supabase/operations";
+import { createProductionRun, listProductionRuns, listRawMaterials, saveRawMaterial } from "@/lib/supabase/operations";
 
 interface Recipe {
   id: string;
@@ -34,6 +34,7 @@ export default function RecipeProduction() {
   const [, navigate] = useLocation();
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [productions, setProductions] = useState<Production[]>([]);
+  const [materials, setMaterials] = useState<Awaited<ReturnType<typeof listRawMaterials>>>([]);
   const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
   const [productionQty, setProductionQty] = useState(1);
   const [showForm, setShowForm] = useState(false);
@@ -41,6 +42,7 @@ export default function RecipeProduction() {
   useEffect(() => {
     loadRecipes();
     loadProductions().catch(() => setProductions([]));
+    listRawMaterials().then(setMaterials).catch(() => setMaterials([]));
   }, []);
 
   const loadRecipes = () => {
@@ -60,16 +62,17 @@ export default function RecipeProduction() {
     }
 
     // تحديث المخزون
-    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
-    
-    selectedRecipe.ingredients.forEach((ingredient) => {
-      const material = materials.find((m: any) => m.id === ingredient.rawId);
-      if (material) {
-        material.quantity -= ingredient.quantity * productionQty;
-      }
+    const updatedMaterials = materials.map(material => {
+      const used = selectedRecipe.ingredients.find(ingredient => ingredient.rawId === material.id);
+      return used ? { ...material, quantity: Math.max(0, material.quantity - used.quantity * productionQty) } : material;
     });
-
-    browserState.set("abu_raghwa_raw_materials", JSON.stringify(materials));
+    try {
+      await Promise.all(updatedMaterials.filter(material => material.quantity !== materials.find(current => current.id === material.id)?.quantity).map(material => saveRawMaterial({ ...material })));
+      setMaterials(updatedMaterials);
+    } catch (error) {
+      alert(error instanceof Error ? error.message : "تعذر تحديث مخزون الخامات سحابياً");
+      return;
+    }
 
     // إضافة منتج جديد أو تحديث الكمية
     const products = JSON.parse(browserState.get("abu_raghwa_products") || "[]");
@@ -92,16 +95,6 @@ export default function RecipeProduction() {
     browserState.set("abu_raghwa_products", JSON.stringify(products));
 
     // تسجيل الإنتاج
-    const newProduction: Production = {
-      id: `prod_${Date.now()}`,
-      recipeId: selectedRecipe.id,
-      recipeName: selectedRecipe.name,
-      quantity: productionQty,
-      date: new Date().toISOString(),
-      status: "completed"
-    };
-
-    const updatedProductions = [...productions, newProduction];
     const saved = await createProductionRun({ recipe_id: selectedRecipe.id, recipe_name: selectedRecipe.name, quantity: productionQty, status: "completed", produced_at: new Date().toISOString(), notes: "" });
     setProductions(current => [...current, { id: saved.id, recipeId: saved.recipe_id || "", recipeName: saved.recipe_name, quantity: saved.quantity, date: saved.produced_at, status: "completed" }]);
 
@@ -112,20 +105,17 @@ export default function RecipeProduction() {
   };
 
   const canProduce = (recipe: Recipe): boolean => {
-    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
-    
     return recipe.ingredients.every((ingredient) => {
-      const material = materials.find((m: any) => m.id === ingredient.rawId);
+      const material = materials.find((m) => m.id === ingredient.rawId);
       return material && material.quantity >= ingredient.quantity * productionQty;
     });
   };
 
   const getMissingMaterials = (recipe: Recipe): Array<{name: string; needed: number; available: number; unit: string}> => {
-    const materials = JSON.parse(browserState.get("abu_raghwa_raw_materials") || "[]");
     const missing: Array<{name: string; needed: number; available: number; unit: string}> = [];
 
     recipe.ingredients.forEach((ingredient) => {
-      const material = materials.find((m: any) => m.id === ingredient.rawId);
+      const material = materials.find((m) => m.id === ingredient.rawId);
       if (!material || material.quantity < ingredient.quantity * productionQty) {
         missing.push({
           name: ingredient.name,

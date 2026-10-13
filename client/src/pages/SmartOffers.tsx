@@ -9,7 +9,8 @@ import { toast } from "sonner";
 import QRCode from "qrcode";
 import { getPieceCost, getPieceSalePrice } from "@/lib/profit";
 import { trpc } from "@/lib/trpc";
-import { useCloudState } from "@/lib/cloudSync";
+import { useShopFeatureState } from "@/lib/supabase/featureState";
+import { listCatalogDisplayData } from "@/lib/supabase/operations";
 import { createOfferForStrategy, type OfferCandidate } from "@/lib/offerStrategy";
 import { createOfferId } from "@/lib/offerIds";
 import { updateLoyaltyRewardPoints, upsertLoyaltyRewardLevel } from "@/lib/loyaltyRewards";
@@ -156,11 +157,12 @@ function buildOfferCandidates(products: Product[], recipes: Recipe[]): OfferCand
 export default function SmartOffers() {
   const [, navigate] = useLocation();
   const { isSeller } = useStaffAccess();
-  const [products] = useCloudState<Product[]>("abu_raghwa_products", []);
-  const [recipes] = useCloudState<Recipe[]>("abu_raghwa_recipes", []);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [currentOffer, setCurrentOffer] = useState<SmartOffer | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("daily");
-  const [strategies, setStrategies] = useState<OfferStrategy[]>(DEFAULT_STRATEGIES);
+  const [customStrategies, setCustomStrategies] = useShopFeatureState<OfferStrategy[]>("abu_raghwa_custom_strategies", []);
+  const strategies = useMemo(() => [...DEFAULT_STRATEGIES, ...customStrategies.filter(strategy => strategy.id.startsWith("custom_"))], [customStrategies]);
   const [selectedStrategyId, setSelectedStrategyId] = useState<string>("s1");
   const [creationMode, setCreationMode] = useState<"automatic" | "manual">("automatic");
   const [manualItemKey, setManualItemKey] = useState("");
@@ -173,7 +175,7 @@ export default function SmartOffers() {
   
   const [validityDays, setValidityDays] = useState<string>("7");
   const [offerLoyaltyPoints, setOfferLoyaltyPoints] = useState<string>("");
-  const [legacySavedOffersList, setLegacySavedOffersList] = useCloudState<SmartOffer[]>("abu_raghwa_saved_offers", []);
+  const [legacySavedOffersList, setLegacySavedOffersList] = useShopFeatureState<SmartOffer[]>("abu_raghwa_saved_offers", []);
   const publishedOffersQuery = trpc.offers.list.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", retry: false });
   const savedOffersList = (publishedOffersQuery.data as SmartOffer[] | null | undefined) ?? legacySavedOffersList;
   const [now, setNow] = useState(() => Date.now());
@@ -181,8 +183,8 @@ export default function SmartOffers() {
 
   const [customersList, setCustomersList] = useState<CustomerLoyalty[]>([]);
   const [showCustomers, setShowCustomers] = useState(false);
-  const [rewardLevels, setRewardLevels] = useCloudState<RewardLevel[]>("abu_reward_levels", DEFAULT_REWARDS);
-  const [deliveryLogs, setDeliveryLogs] = useState<GiftDeliveryLog[]>([]);
+  const [rewardLevels, setRewardLevels] = useShopFeatureState<RewardLevel[]>("abu_reward_levels", DEFAULT_REWARDS);
+  const [deliveryLogs, setDeliveryLogs, , flushDeliveryLogs] = useShopFeatureState<GiftDeliveryLog[]>("abu_gift_delivery_logs", []);
   const [newRewardPoints, setNewRewardPoints] = useState("");
   const [rewardPointDrafts, setRewardPointDrafts] = useState<Record<number, string>>({});
   const [newRewardGift, setNewRewardGift] = useState("");
@@ -226,33 +228,30 @@ export default function SmartOffers() {
   }, [isSeller]);
 
   useEffect(() => {
-    if (!loyaltyCustomersQuery.data || loyaltyCustomersQuery.data.length === 0) return;
-    setCustomersList(loyaltyCustomersQuery.data as CustomerLoyalty[]);
-  }, [loyaltyCustomersQuery.data]);
+    let active = true;
+    void listCatalogDisplayData({ includeProductImages: false }).then(data => {
+      if (!active) return;
+      setProducts(data.registeredProducts.map(product => ({
+        id: product.id, code: String(product.code || ""), name: product.name, unit: product.unit,
+        unitsPerPackage: product.unitsPerPackage,
+        wholesalePricePerUnit: Number(product.wholesalePricePerUnit ?? product.wholesaleRetailPrice ?? product.retailPrice ?? 0),
+        wholesalePricePerPiece: Number(product.wholesalePricePerPiece ?? product.wholesaleRetailPrice ?? product.retailPrice ?? 0),
+        wholesalePrice: product.wholesaleRetailPrice,
+        retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, bulkPrice: product.bulkPrice,
+      })));
+      setRecipes((data.recipes as any[]).map(recipe => ({
+        id: String(recipe.id), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0),
+        totalCost: Number(recipe.total_cost || 0), costPerUnit: recipe.cost_per_unit == null ? undefined : Number(recipe.cost_per_unit),
+        productionQuantity: recipe.production_quantity == null ? undefined : Number(recipe.production_quantity),
+      })));
+    }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل بيانات العروض من Supabase."));
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
-    const savedCustomStrategies = browserState.get("abu_raghwa_custom_strategies");
-    if (savedCustomStrategies) {
-      try {
-        const parsed = JSON.parse(savedCustomStrategies);
-        setStrategies([...DEFAULT_STRATEGIES, ...parsed]);
-      } catch (e) {}
-    }
-
-    const savedCustomers = browserState.get("abu_raghwa_customers");
-    if (savedCustomers) {
-      try {
-        setCustomersList(JSON.parse(savedCustomers));
-      } catch (e) {}
-    }
-
-    const savedLogs = browserState.get("abu_gift_delivery_logs");
-    if (savedLogs) {
-      try {
-        setDeliveryLogs(JSON.parse(savedLogs));
-      } catch (e) {}
-    }
-  }, []);
+    if (!loyaltyCustomersQuery.data) return;
+    setCustomersList(loyaltyCustomersQuery.data as CustomerLoyalty[]);
+  }, [loyaltyCustomersQuery.data]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -344,7 +343,6 @@ export default function SmartOffers() {
         ? customersList.map(customer => customer.phone === profile.phone ? profile as CustomerLoyalty : customer)
         : [profile as CustomerLoyalty, ...customersList];
       setCustomersList(updatedCustomers);
-      browserState.set("abu_raghwa_customers", JSON.stringify(updatedCustomers));
       void loyaltyCustomersQuery.refetch();
       const newLog: GiftDeliveryLog = {
         customerCode: profile.customerCode,
@@ -357,7 +355,7 @@ export default function SmartOffers() {
       };
       const updatedLogs = [newLog, ...deliveryLogs];
       setDeliveryLogs(updatedLogs);
-      browserState.set("abu_gift_delivery_logs", JSON.stringify(updatedLogs));
+      if (!await flushDeliveryLogs()) toast.error("تم تحديث نقاط العميل، لكن تعذر حفظ سجل الهدية السحابي.");
       toast.success(`🎁 تم تأكيد تسليم الهدية "${rewardItem.giftName}" وتحديث الرصيد الموحد.`);
     } catch {
       toast.error("تعذر تحديث رصيد العميل. افتح إدارة الكتالوج أولًا أو حاول مرة أخرى.");
@@ -405,10 +403,7 @@ export default function SmartOffers() {
       description: newStrategyDesc.trim() || "استراتيجية مخصصة تم إضافتها بواسطة المدير"
     };
 
-    const updatedStrategies = [...strategies, customObj];
-    setStrategies(updatedStrategies);
-    const customOnly = updatedStrategies.filter(s => s.id.startsWith("custom_"));
-    browserState.set("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
+    setCustomStrategies(current => [...current, customObj]);
 
     setNewStrategyName("");
     setNewStrategyDesc("");
@@ -421,10 +416,7 @@ export default function SmartOffers() {
       toast.error("⚠️ لا يمكن حذف الاستراتيجيات الأساسية الافتراضية");
       return;
     }
-    const updated = strategies.filter(s => s.id !== id);
-    setStrategies(updated);
-    const customOnly = updated.filter(s => s.id.startsWith("custom_"));
-    browserState.set("abu_raghwa_custom_strategies", JSON.stringify(customOnly));
+    setCustomStrategies(current => current.filter(strategy => strategy.id !== id));
     toast.success("🗑️ تم حذف الاستراتيجية بنجاح");
   };
 

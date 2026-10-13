@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { ArrowLeft, Plus, Trash2, Award, TrendingUp, Gift, Zap } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { useCloudState } from '@/lib/cloudSync';
+import { useShopFeatureState } from '@/lib/supabase/featureState';
 import { resetEmployeePoints } from '@/lib/pointsLedger';
 
 interface Reward {
@@ -23,7 +23,7 @@ interface Employee {
 
 export default function PointsSystem() {
   const [, navigate] = useLocation();
-  const [employees, setEmployees] = useCloudState<Employee[]>('points_system_employees', []);
+  const [employees, setEmployees] = useShopFeatureState<Employee[]>('points_system_employees', []);
   const [selectedEmployeeId, setSelectedEmployeeId] = useState<string>('');
   const [showAddEmployee, setShowAddEmployee] = useState(false);
   const [showAddReward, setShowAddReward] = useState(false);

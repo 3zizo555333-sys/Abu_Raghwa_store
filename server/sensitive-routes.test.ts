@@ -8,19 +8,25 @@ const paymentSource = readFileSync(resolve(import.meta.dirname, "../client/src/p
 const publicOfferSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/PublicOfferPage.tsx"), "utf8");
 
 describe("حماية المسارات المالية والحساسة", () => {
-  it("يحصر الشقق والنواقص والمصروفات والشيكات والائتمان بالمشرف والمدير", () => {
+  it("يحصر العمليات التشغيلية بالمشرف، والبيانات المالية والإدارية بالمدير", () => {
     expect(appSource).toContain('path={"/apartment-management"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/shortages"} component={withSupervisorRole(Shortages)}');
-    expect(appSource).toContain('path={"/expenses"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/checks"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/checks-page"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/credits-suppliers"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/smart-offers"} component={withSupervisorRole(');
+    expect(appSource).toContain('path={"/expenses"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/checks"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/checks-page"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/credits-suppliers"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/smart-offers"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/suppliers"} component={withManagerRole(');
     expect(appSource).toContain('path={"/recipes"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/invoice-ocr"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/invoice-scanner"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/email-notifications"} component={withSupervisorRole(');
+    expect(appSource).toContain('path={"/email-notifications"} component={withManagerRole(');
     expect(appSource).toContain('path={"/tasks-page"} component={withSupervisorRole(');
+    expect(appSource).toContain('path={"/employees"} component={withManagerRole(Employees)}');
+    expect(appSource).toContain('path={"/products"} component={withSupervisorRole(');
+    expect(appSource).toContain('path={"/sales"} component={withPasswordProtection(');
+    expect(appSource).toContain('path={"/cashier"} component={withPasswordProtection(');
+    expect(appSource).toContain('path={"/loyalty"} component={LoyaltyPage}');
   });
 
   it("يعرض المستخدم والدور من عضوية Supabase لا من Web Storage", () => {
@@ -29,8 +35,14 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(homeSource).not.toMatch(/localStorage|sessionStorage/);
   });
 
+  it("يقصر حساب البائع على البيع والكاشير ونقاط العملاء", () => {
+    expect(appSource).toContain('new Set(["/sales", "/cashier", "/loyalty"])');
+    expect(appSource).toContain('user?.role === "seller"');
+    expect(appSource).toContain('navigate("/cashier")');
+  });
+
   it("لا يخزن مفاتيح مزود الدفع في العميل ويقيد الشاشة بالدور الإداري", () => {
-    expect(appSource).toContain('path={"/payment-gateway"} component={withSupervisorRole(PaymentGateway)}');
+    expect(appSource).toContain('path={"/payment-gateway"} component={withManagerRole(PaymentGateway)}');
     expect(paymentSource).not.toMatch(/localStorage|sessionStorage|apiKey|secretKey/);
     expect(paymentSource).toContain("الدفع الإلكتروني غير مهيأ");
   });

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { ArrowLeft, Trophy, TrendingUp, Zap, Award, Target, Medal } from 'lucide-react';
 import { useLocation } from 'wouter';
-import { useCloudState } from '@/lib/cloudSync';
+import { useShopFeatureState } from '@/lib/supabase/featureState';
 
 interface Reward {
   id: string;
@@ -34,7 +34,7 @@ interface EmployeeStats {
 
 export default function Leaderboard() {
   const [, navigate] = useLocation();
-  const [employees] = useCloudState<Employee[]>('points_system_employees', []);
+  const [employees] = useShopFeatureState<Employee[]>('points_system_employees', []);
   const [stats, setStats] = useState<EmployeeStats[]>([]);
   const [filterPeriod, setFilterPeriod] = useState<'all' | 'month' | 'week'>('all');
 

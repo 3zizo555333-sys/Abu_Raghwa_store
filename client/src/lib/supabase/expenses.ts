@@ -103,7 +103,7 @@ export async function subscribeToExpenseChanges(onChange: () => void): Promise<(
     .channel(`expense-changes-${shopId}-${crypto.randomUUID()}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "shop_change_events", filter: `shop_id=eq.${shopId}` }, payload => {
       const row = payload.new;
-      if (row && (row.entity_type === "expenses" || row.entity_type === "invoices" || row.entity_type === "invoice_items")) onChange();
+      if (row && (row.entity_type === "expenses" || row.entity_type === "invoices" || row.entity_type === "invoice_items" || row.entity_type === "shop_feature_images")) onChange();
     })
     .subscribe();
   return async () => { await supabase.removeChannel(channel); };

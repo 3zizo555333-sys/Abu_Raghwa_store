@@ -15,6 +15,6 @@ describe("عارض صور الفواتير", () => {
     expect(page).toContain("فتح الصورة في نافذة مستقلة");
     expect(page).toContain("تكبير");
     expect(page).toContain("تصغير");
-    expect(page).toContain('image.src = invoice.url');
+    expect(page).toContain('image.src = getInvoiceUrl(invoice)');
   });
 });

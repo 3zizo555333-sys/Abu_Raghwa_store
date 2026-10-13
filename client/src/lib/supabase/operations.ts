@@ -16,6 +16,10 @@ export async function listStaffEmployees() {
   const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("staff_employees").select("*").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000)) as Row<"staff_employees">[];
 }
+export async function listTaskStaffDirectory() {
+  const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().rpc("list_task_staff_directory", { p_shop_id: id })) as Array<{ id: string; name: string; role: string }>;
+}
 export async function saveStaffEmployee(input: Omit<Insert<"staff_employees">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient();
   const payload = { ...input, shop_id: id } as Insert<"staff_employees">;
@@ -112,9 +116,9 @@ export async function saveCatalogFormulation(input: {
   return row;
 }
 
-export async function listCatalogDisplayData() {
+export async function listCatalogDisplayData(options: { includeProductImages?: boolean } = {}) {
   const [productsPage, taxonomy, pricing, recipes] = await Promise.all([
-    listProductsPage({ limit: 50 }),
+    listProductsPage({ limit: 50, includeImages: options.includeProductImages }),
     listCatalogTaxonomy(),
     getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
     (async () => { const id = await shopId(); return requireCloudResult(await getSupabaseClient().from("recipes").select("*").eq("shop_id", id).is("deleted_at", null).limit(1000)); })(),
