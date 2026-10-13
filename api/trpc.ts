@@ -14,10 +14,10 @@ async function loadRuntimeModules(setPhase: (phase: InitializationPhase) => void
   const { fetchRequestHandler } = await import("@trpc/server/adapters/fetch");
 
   setPhase("app-router");
-  const { appRouter } = await import("../server/routers");
+  const { appRouter } = await import("../server/routers.js");
 
   setPhase("fetch-context");
-  const { createFetchContext } = await import("../server/_core/fetchContext");
+  const { createFetchContext } = await import("../server/_core/fetchContext.js");
 
   return { fetchRequestHandler, appRouter, createFetchContext };
 }
