@@ -1,15 +1,17 @@
-type RuntimeModules = {
-  fetchRequestHandler: typeof import("@trpc/server/adapters/fetch").fetchRequestHandler;
-  appRouter: typeof import("../server/routers").appRouter;
-  createFetchContext: typeof import("../server/_core/fetchContext").createFetchContext;
-};
+type RuntimeModules = typeof import("../server/_core/vercelTrpcRuntime");
 
-type InitializationPhase = "fetch-adapter" | "app-router" | "fetch-context" | "request-handler";
+type InitializationPhase = "runtime-bundle" | "fetch-adapter" | "app-router" | "fetch-context" | "request-handler";
 type RuntimeModuleLoader = (setPhase: (phase: InitializationPhase) => void) => Promise<RuntimeModules>;
 
 const endpoint = "/api/trpc";
 
 async function loadRuntimeModules(setPhase: (phase: InitializationPhase) => void): Promise<RuntimeModules> {
+  if (process.env.VERCEL) {
+    setPhase("runtime-bundle");
+    const runtimeBundlePath = "../dist/trpc-runtime.mjs";
+    return await import(runtimeBundlePath) as RuntimeModules;
+  }
+
   setPhase("fetch-adapter");
   const { fetchRequestHandler } = await import("@trpc/server/adapters/fetch");
 

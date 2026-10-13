@@ -106,7 +106,11 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
   });
 
   it("routes nested tRPC paths before the API catch-all and preserves the SPA fallback", () => {
-    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8")) as { routes: Array<Record<string, string>> };
+    const config = JSON.parse(readFileSync(resolve(process.cwd(), "vercel.json"), "utf8")) as {
+      buildCommand: string;
+      functions: Record<string, { includeFiles?: string }>;
+      routes: Array<Record<string, string>>;
+    };
     const trpc = config.routes.findIndex(route => route.src?.includes("/api/trpc"));
     const catchAll = config.routes.findIndex(route => route.src === "^/api(?:/(?<path>.*))?$" );
     const spa = config.routes.findIndex(route => route.dest === "/index.html");
@@ -115,6 +119,8 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
     expect(catchAll).toBeLessThan(spa);
     expect(config.routes[trpc].src).toContain("(?<path>.*)");
     expect(config.routes[spa].src).toContain("api(?:/|$)");
+    expect(config.buildCommand).toContain("build:trpc-runtime");
+    expect(config.functions["api/trpc.ts"].includeFiles).toBe("dist/trpc-runtime.mjs");
     expect(new URL("http://localhost/employees").pathname).toBe("/employees");
   });
 

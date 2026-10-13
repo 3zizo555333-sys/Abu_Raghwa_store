@@ -25,6 +25,8 @@ jobs:
       - run: pnpm check
       - run: pnpm test:cloud
       - run: pnpm build:web
+      - run: pnpm build:trpc-runtime
+      - run: VERCEL=1 pnpm exec vitest run api/trpc.test.ts
       - run: python3 -m pip install --quiet pglast
       - run: pnpm supabase:check-sql
       - run: pnpm storage:check
