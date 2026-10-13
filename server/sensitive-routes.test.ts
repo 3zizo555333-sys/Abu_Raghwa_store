@@ -22,11 +22,21 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(appSource).toContain('path={"/invoice-scanner"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/email-notifications"} component={withManagerRole(');
     expect(appSource).toContain('path={"/tasks-page"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/employees"} component={withManagerRole(Employees)}');
+    expect(appSource).toContain('path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, \'employees\'');
     expect(appSource).toContain('path={"/products"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/sales"} component={withPasswordProtection(');
     expect(appSource).toContain('path={"/cashier"} component={withPasswordProtection(');
     expect(appSource).toContain('path={"/loyalty"} component={LoyaltyPage}');
+  });
+
+  it("يربط أقفال PIN السحابية بالأقسام السبعة المطلوبة", () => {
+    expect(appSource).toContain("'financial_reports', 'التقارير المالية والأرباح'");
+    expect(appSource).toContain("'settings', 'الإعدادات'");
+    expect(appSource).toContain("'employees', 'إدارة الموظفين'");
+    expect(appSource).toContain("'materials', 'قائمة التركيبات وتكاليفها'");
+    expect(appSource).toContain("'suppliers', 'الموردين والخامات'");
+    expect(appSource).toContain("'backup', 'النسخ الاحتياطي وتصدير البيانات'");
+    expect(appSource).toContain("'expenses', 'إدارة المصاريف'");
   });
 
   it("يعرض المستخدم والدور من عضوية Supabase لا من Web Storage", () => {
@@ -42,7 +52,7 @@ describe("حماية المسارات المالية والحساسة", () => {
   });
 
   it("لا يخزن مفاتيح مزود الدفع في العميل ويقيد الشاشة بالدور الإداري", () => {
-    expect(appSource).toContain('path={"/payment-gateway"} component={withManagerRole(PaymentGateway)}');
+    expect(appSource).toContain('path={"/payment-gateway"} component={withManagerRole(withPasswordProtection(PaymentGateway, \'settings\'');
     expect(paymentSource).not.toMatch(/localStorage|sessionStorage|apiKey|secretKey/);
     expect(paymentSource).toContain("الدفع الإلكتروني غير مهيأ");
   });

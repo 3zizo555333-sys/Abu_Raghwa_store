@@ -1,0 +1,23 @@
+begin;
+create extension if not exists pgtap with schema extensions;
+select plan(17);
+
+select has_table('public', 'shop_feature_locks', 'per-feature lock status table exists');
+select has_table('public', 'shop_feature_lock_secrets', 'PIN hashes are stored in a separate table');
+select has_table('public', 'shop_feature_lock_attempts', 'server-side PIN attempt limits are stored');
+select ok((select relrowsecurity from pg_class where oid='public.shop_feature_locks'::regclass), 'feature lock status has RLS enabled');
+select ok((select relforcerowsecurity from pg_class where oid='public.shop_feature_locks'::regclass), 'feature lock status forces RLS');
+select ok((select relrowsecurity and relforcerowsecurity from pg_class where oid='public.shop_feature_lock_secrets'::regclass), 'PIN hash table forces RLS');
+select ok(has_table_privilege('authenticated','public.shop_feature_locks','SELECT'), 'authenticated staff can read safe lock status');
+select ok(not has_table_privilege('authenticated','public.shop_feature_locks','INSERT') and not has_table_privilege('authenticated','public.shop_feature_locks','UPDATE') and not has_table_privilege('authenticated','public.shop_feature_locks','DELETE'), 'clients cannot write or delete lock status directly');
+select ok(not has_table_privilege('authenticated','public.shop_feature_lock_secrets','SELECT') and not has_table_privilege('authenticated','public.shop_feature_lock_secrets','INSERT') and not has_table_privilege('authenticated','public.shop_feature_lock_secrets','UPDATE'), 'authenticated clients cannot read or write PIN hashes directly');
+select ok(not exists (select 1 from information_schema.columns where table_schema='public' and table_name='shop_feature_locks' and column_name ilike '%hash%'), 'realtime-readable lock status contains no PIN hash');
+select ok(exists (select 1 from pg_policies where schemaname='public' and tablename='shop_feature_locks' and policyname='shop_feature_locks_member_read' and cmd='SELECT' and qual ilike '%has_shop_role%'), 'lock status reads are restricted to active shop members');
+select ok(to_regprocedure('public.set_shop_feature_lock_pin(uuid,text,text)') is not null, 'manager PIN update RPC exists');
+select ok(to_regprocedure('public.set_shop_feature_lock(uuid,text,boolean,text)') is not null, 'manager feature toggle RPC exists');
+select ok(to_regprocedure('public.verify_shop_feature_lock_pin(uuid,text,text)') is not null, 'server-side PIN verification RPC exists');
+select ok(has_function_privilege('authenticated','public.set_shop_feature_lock_pin(uuid,text,text)','EXECUTE') and not has_function_privilege('anon','public.set_shop_feature_lock_pin(uuid,text,text)','EXECUTE'), 'PIN update is authenticated-only');
+select ok(pg_get_functiondef('public.set_shop_feature_lock_pin(uuid,text,text)'::regprocedure) ilike '%has_shop_role%' and pg_get_functiondef('public.set_shop_feature_lock_pin(uuid,text,text)'::regprocedure) ilike '%manager%', 'PIN updates verify manager role');
+select ok(pg_get_functiondef('public.verify_shop_feature_lock_pin(uuid,text,text)'::regprocedure) ilike '%crypt%' and pg_get_functiondef('public.verify_shop_feature_lock_pin(uuid,text,text)'::regprocedure) ilike '%blocked_until%' and pg_get_functiondef('public.verify_shop_feature_lock_pin(uuid,text,text)'::regprocedure) ilike '%pg_advisory_xact_lock%', 'verification uses server-side hash comparison and rate limiting');
+select * from finish();
+rollback;

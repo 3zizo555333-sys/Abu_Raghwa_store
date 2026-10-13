@@ -187,9 +187,9 @@ function Router() {
 
       <Route path={"/sales"} component={withPasswordProtection(Sales, 'newsale', 'تسجيل مبيعة جديدة')} />
       <Route path={"/cashier"} component={withPasswordProtection(Cashier, 'newsale', 'كاشير الكمبيوتر')} />
-      <Route path={"/reports"} component={withManagerRole(withPasswordProtection(Reports, 'viewreports', 'عرض التقارير'))} />
-      <Route path={"/advanced-reports"} component={withManagerRole(withPasswordProtection(SalesInventory, 'viewreports', 'جرد المبيعات والأرباح'))} />
-      <Route path={"/employees"} component={withManagerRole(Employees)} />
+      <Route path={"/reports"} component={withManagerRole(withPasswordProtection(Reports, 'financial_reports', 'التقارير المالية والأرباح'))} />
+      <Route path={"/advanced-reports"} component={withManagerRole(withPasswordProtection(SalesInventory, 'financial_reports', 'جرد المبيعات والأرباح'))} />
+      <Route path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, 'employees', 'إدارة الموظفين'))} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'tasks', 'إدارة المهام'))} />
       <Route path={"/points-system"} component={withManagerRole(withPasswordProtection(PointsSystem, 'points', 'نظام النقط'))} />
       <Route path={"/offers"} component={withManagerRole(withPasswordProtection(Offers, 'offers', 'العروض'))} />
@@ -204,7 +204,7 @@ function Router() {
       <Route path={"/led-display"} component={LedDisplay} />
       <Route path={"/voice"} component={withSupervisorRole(withPasswordProtection(VoiceAssistant, 'voice', 'المساعد الصوتي'))} />
       <Route path={"/materials"} component={withSupervisorRole(withPasswordProtection(RawMaterials, 'materials', 'قائمة الخامات'))} />
-      <Route path={"/recipes"} component={withSupervisorRole(withPasswordProtection(Recipes, 'compositions', 'قائمة التركيبات'))} />
+      <Route path={"/recipes"} component={withSupervisorRole(withPasswordProtection(Recipes, 'materials', 'قائمة التركيبات وتكاليفها'))} />
       <Route path={"/calculator"} component={Calculator} />
       <Route path={"/invoice-ocr"} component={withSupervisorRole(InvoiceOCR)} />
       <Route path={"/invoice"} component={Invoice} />
@@ -212,14 +212,14 @@ function Router() {
       <Route path={"/audit-log"} component={withSupervisorRole(AuditLog)} />
 
       <Route path={"/inventory-alerts"} component={withSupervisorRole(InventoryAlerts)} />
-      <Route path={"/recipe-production"} component={withSupervisorRole(RecipeProduction)} />
-      <Route path={"/data-export-import"} component={withManagerRole(DataExportImport)} />
+      <Route path={"/recipe-production"} component={withSupervisorRole(withPasswordProtection(RecipeProduction, 'materials', 'إنتاج التركيبات وتكاليفها'))} />
+      <Route path={"/data-export-import"} component={withManagerRole(withPasswordProtection(DataExportImport, 'backup', 'النسخ الاحتياطي وتصدير البيانات'))} />
       <Route path={"/recipes-display"} component={withSupervisorRole(RecipesDisplay)} />
       <Route path={"/advanced-search"} component={withSupervisorRole(AdvancedSearch)} />
-      <Route path={"/settings"} component={withManagerRole(Settings)} />
-      <Route path={"/email-notifications"} component={withManagerRole(EmailNotifications)} />
-      <Route path={"/payment-gateway"} component={withManagerRole(PaymentGateway)} />
-      <Route path={"/user-management"} component={withManagerRole(UserManagement)} />
+      <Route path={"/settings"} component={withManagerRole(withPasswordProtection(Settings, 'settings', 'الإعدادات'))} />
+      <Route path={"/email-notifications"} component={withManagerRole(withPasswordProtection(EmailNotifications, 'settings', 'إعدادات الإشعارات'))} />
+      <Route path={"/payment-gateway"} component={withManagerRole(withPasswordProtection(PaymentGateway, 'settings', 'إعدادات الدفع'))} />
+      <Route path={"/user-management"} component={withManagerRole(withPasswordProtection(UserManagement, 'employees', 'إدارة الموظفين والعضويات'))} />
       <Route path={"/expenses"} component={withManagerRole(withPasswordProtection(Expenses, 'expenses', 'إدارة المصاريف'))} />
       <Route path={"/checks"} component={withManagerRole(withPasswordProtection(Checks, 'checks', 'الشيكات'))} />
 
@@ -227,7 +227,7 @@ function Router() {
       <Route path={"/suppliers"} component={withManagerRole(withPasswordProtection(SuppliersPage, 'suppliers', 'الموردين'))} />
       <Route path={"/tasks-page"} component={withSupervisorRole(withPasswordProtection(TasksPage, 'tasks', 'المهام'))} />
       <Route path={"/inventory"} component={withSupervisorRole(withPasswordProtection(InventoryPage, 'inventory', 'إدارة المخزن'))} />
-      <Route path={"/material-details/:id"} component={withSupervisorRole(RawMaterialDetails)} />
+      <Route path={"/material-details/:id"} component={withSupervisorRole(withPasswordProtection(RawMaterialDetails, 'materials', 'تفاصيل الخامات'))} />
       <Route path={"/invoice-camera"} component={withSupervisorRole(withPasswordProtection(InvoiceCameraPage, 'invoices', 'تصوير الفواتير'))} />
       <Route path={"/invoice-scanner"} component={withSupervisorRole(withPasswordProtection(InvoiceScanner, 'invoices', 'تصوير الفواتير'))} />
       <Route path={"/advanced-invoices"} component={withSupervisorRole(withPasswordProtection(AdvancedInvoices, 'invoices', 'تصوير الفواتير'))} />

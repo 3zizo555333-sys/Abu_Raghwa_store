@@ -33,8 +33,8 @@ describe("صلاحيات عرض البائع", () => {
     expect(products).toContain("if (!canViewSensitiveFinancials) return;");
     expect(dashboard).toContain("canViewSensitiveFinancials");
     expect(app).toContain("withManagerRole(withPasswordProtection(Reports");
-    expect(app).toContain('component={withManagerRole(UserManagement)}');
+    expect(app).toContain('component={withManagerRole(withPasswordProtection(UserManagement');
     expect(app).toContain('component={withManagerRole(SecuritySettings)}');
-    expect(app).toContain('path={"/employees"} component={withManagerRole(Employees)}');
+    expect(app).toContain('path={"/employees"} component={withManagerRole(withPasswordProtection(Employees');
   });
 });
