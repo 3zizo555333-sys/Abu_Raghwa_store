@@ -98,7 +98,7 @@ export type Database = {
 	      shop_credit_accounts: Table<{ id: string; shop_id: string; party_type: "customer" | "supplier"; name: string; phone: string; notes: string; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null; legacy_source_id: string | null }>;
 	      shop_credit_transactions: Table<{ id: string; shop_id: string; account_id: string; entry_type: "opening" | "purchase" | "payment" | "return" | "adjustment"; amount: number; balance_delta: number; description: string; notes: string; occurred_at: string; created_by: string | null; created_at: string; legacy_source_id: string | null }>;
 	      shop_feature_images: Table<{ id: string; shop_id: string; feature_type: "invoice" | "expense" | "raw_material"; owner_id: string; supplier_account_id: string | null; storage_path: string; content_type: "image/webp" | "image/jpeg"; size_bytes: number; file_name: string; created_by: string | null; created_at: string }>;
-	      shop_feature_locks: Table<{ shop_id: string; feature_key: "expenses" | "settings" | "employees" | "materials" | "suppliers" | "backup" | "financial_reports"; enabled: boolean; pin_scope: "shared" | "custom"; pin_configured: boolean; shared_pin_configured: boolean; updated_by: string | null; created_at: string; updated_at: string }>;
+	      shop_feature_locks: Table<{ shop_id: string; feature_key: string; enabled: boolean; pin_configured: boolean; updated_by: string | null; created_at: string; updated_at: string }>;
     };
     Views: {
       seller_invoice_items: { Row: Omit<Database["public"]["Tables"]["invoice_items"]["Row"], "unit_cost_snapshot">; Relationships: [] };
@@ -143,8 +143,9 @@ create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idem
 	      register_apartment_inventory_image: { Args: { p_shop_id: string; p_item_id: string; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
       save_formulation_with_ingredients: { Args: { p_shop_id: string; p_formulation_id: string | null; p_expected_version: number | null; p_formulation: Json; p_ingredients: Json }; Returns: Json };
 	      register_formulation_image: { Args: { p_shop_id: string; p_formulation_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: Json };
-	      set_shop_feature_lock_pin: { Args: { p_shop_id: string; p_pin_scope: string; p_pin: string }; Returns: boolean };
-	      set_shop_feature_lock: { Args: { p_shop_id: string; p_feature_key: Database["public"]["Tables"]["shop_feature_locks"]["Row"]["feature_key"]; p_enabled: boolean; p_pin_scope?: "shared" | "custom" }; Returns: Database["public"]["Tables"]["shop_feature_locks"]["Row"] };
+	      set_shop_feature_lock_pin: { Args: { p_shop_id: string; p_feature_key: string; p_pin: string }; Returns: boolean };
+	      set_shop_feature_lock: { Args: { p_shop_id: string; p_feature_key: string; p_enabled: boolean }; Returns: Database["public"]["Tables"]["shop_feature_locks"]["Row"] };
+	      set_all_shop_feature_locks: { Args: { p_shop_id: string; p_enabled: boolean }; Returns: Json };
 	      verify_shop_feature_lock_pin: { Args: { p_shop_id: string; p_feature_key: Database["public"]["Tables"]["shop_feature_locks"]["Row"]["feature_key"]; p_pin: string }; Returns: boolean };
     };
     Enums: {

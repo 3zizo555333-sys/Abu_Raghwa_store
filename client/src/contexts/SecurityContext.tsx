@@ -1,16 +1,17 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import {
-  FEATURE_LOCKS,
   isFeatureLockKey,
   listShopFeatureLocks,
+  setAllShopFeatureLocks,
   setShopFeatureLock,
   setShopFeatureLockPin,
   subscribeShopFeatureLocks,
   verifyShopFeatureLockPin,
+  SCREEN_PIN_LOCKS,
+  type BulkFeatureLockResult,
   type FeatureLockKey,
   type FeatureLockRow,
-  type FeaturePinScope,
 } from "@/lib/supabase/featureLocks";
 
 export interface SecurityContextType {
@@ -27,8 +28,9 @@ export interface SecurityContextType {
   checkPassword: (section: string, pin: string) => Promise<boolean>;
   setPassword: (section: string, pin: string) => Promise<void>;
   isPasswordEnabled: (section: string) => boolean;
-  setFeatureLockEnabled: (section: FeatureLockKey, enabled: boolean, pinScope: "shared" | "custom") => Promise<void>;
-  setFeatureLockPin: (scope: FeaturePinScope, pin: string) => Promise<void>;
+  setFeatureLockEnabled: (section: FeatureLockKey, enabled: boolean) => Promise<void>;
+  setFeatureLockPin: (section: FeatureLockKey, pin: string) => Promise<void>;
+  setAllFeatureLocks: (enabled: boolean) => Promise<BulkFeatureLockResult>;
   refreshFeatureLocks: () => Promise<void>;
 }
 
@@ -36,6 +38,25 @@ const SecurityContext = createContext<SecurityContextType | undefined>(undefined
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "تعذر تحميل إعدادات قفل الميزات من السحابة.";
+}
+
+function withDefaults(shopId: string, rows: FeatureLockRow[]): FeatureLockRow[] {
+  const byKey = new Map(rows.map(row => [row.feature_key, row]));
+  const now = new Date().toISOString();
+  for (const feature of SCREEN_PIN_LOCKS) {
+    if (!byKey.has(feature.key)) {
+      byKey.set(feature.key, {
+        shop_id: shopId,
+        feature_key: feature.key,
+        enabled: false,
+        pin_configured: false,
+        updated_by: null,
+        created_at: now,
+        updated_at: now,
+      });
+    }
+  }
+  return Array.from(byKey.values());
 }
 
 export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -48,12 +69,8 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 
   const loadLocks = useCallback(async (expectedShopId: string, expectedScope: string) => {
     const rows = await listShopFeatureLocks(expectedShopId);
-    const keys = new Set(rows.map(row => row.feature_key));
-    if (FEATURE_LOCKS.some(feature => !keys.has(feature.key))) {
-      throw new Error("إعدادات أقفال المتجر غير مكتملة في السحابة؛ تم إيقاف فتح الصفحات حتى اكتمال المزامنة.");
-    }
     if (expectedScope !== scopeKey) return;
-    setFeatureLocks(rows);
+    setFeatureLocks(withDefaults(expectedShopId, rows));
     setLoadedScope(expectedScope);
     setLockSettingsError(null);
   }, [scopeKey]);
@@ -89,12 +106,8 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     const reload = async () => {
       try {
         const rows = await listShopFeatureLocks(shopId);
-        const keys = new Set(rows.map(row => row.feature_key));
-        if (FEATURE_LOCKS.some(feature => !keys.has(feature.key))) {
-          throw new Error("إعدادات أقفال المتجر غير مكتملة في السحابة؛ تم إيقاف فتح الصفحات حتى اكتمال المزامنة.");
-        }
         if (active) {
-          setFeatureLocks(rows);
+          setFeatureLocks(withDefaults(shopId, rows));
           setLoadedScope(scopeKey);
           setLockSettingsError(null);
         }
@@ -115,16 +128,23 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     };
   }, [shopId, scopeKey, staffLoading, user]);
 
-  const setFeatureLockEnabled = useCallback(async (section: FeatureLockKey, enabled: boolean, pinScope: "shared" | "custom") => {
+  const setFeatureLockEnabled = useCallback(async (section: FeatureLockKey, enabled: boolean) => {
     if (!shopId) throw new Error("لم يتم تحديد المتجر النشط.");
-    await setShopFeatureLock(shopId, section, enabled, pinScope);
+    await setShopFeatureLock(shopId, section, enabled);
     await refreshFeatureLocks();
   }, [refreshFeatureLocks, shopId]);
 
-  const setFeatureLockPin = useCallback(async (scope: FeaturePinScope, pin: string) => {
+  const setFeatureLockPin = useCallback(async (section: FeatureLockKey, pin: string) => {
     if (!shopId) throw new Error("لم يتم تحديد المتجر النشط.");
-    await setShopFeatureLockPin(shopId, scope, pin);
+    await setShopFeatureLockPin(shopId, section, pin);
     await refreshFeatureLocks();
+  }, [refreshFeatureLocks, shopId]);
+
+  const setAllFeatureLocks = useCallback(async (enabled: boolean) => {
+    if (!shopId) throw new Error("لم يتم تحديد المتجر النشط.");
+    const result = await setAllShopFeatureLocks(shopId, enabled);
+    await refreshFeatureLocks();
+    return result;
   }, [refreshFeatureLocks, shopId]);
 
   const isPasswordEnabled = useCallback((section: string) =>
@@ -137,7 +157,7 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, [shopId]);
 
   const setPassword = useCallback(async (section: string, pin: string) => {
-    if (!isFeatureLockKey(section)) throw new Error("هذه الميزة لا تدعم قفل PIN.");
+    if (!isFeatureLockKey(section)) throw new Error("معرّف شاشة PIN غير صالح.");
     await setFeatureLockPin(section, pin);
   }, [setFeatureLockPin]);
 
@@ -160,6 +180,7 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     isPasswordEnabled,
     setFeatureLockEnabled,
     setFeatureLockPin,
+    setAllFeatureLocks,
     refreshFeatureLocks,
   }), [
     checkPassword,
@@ -171,6 +192,7 @@ export const SecurityProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     lockSettingsError,
     managerEmail,
     refreshFeatureLocks,
+    setAllFeatureLocks,
     setFeatureLockEnabled,
     setFeatureLockPin,
     setPassword,

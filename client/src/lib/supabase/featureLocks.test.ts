@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { FEATURE_LOCKS, isFeatureLockKey, isValidFeaturePin } from "./featureLocks";
+import { isFeatureLockKey, isValidFeaturePin } from "./featureLocks";
+import { SCREEN_PIN_LOCKS, screenPinKeyForPath } from "./screenPinRegistry";
 
-describe("feature PIN locks", () => {
+describe("independent screen PIN locks", () => {
   it("accepts only exactly four or six ASCII digits", () => {
     expect(isValidFeaturePin("1234")).toBe(true);
     expect(isValidFeaturePin("001234")).toBe(true);
@@ -13,17 +14,24 @@ describe("feature PIN locks", () => {
     expect(isValidFeaturePin(" 1234")).toBe(false);
   });
 
-  it("exposes exactly the seven requested feature groups", () => {
-    expect(FEATURE_LOCKS.map(feature => feature.key)).toEqual([
-      "expenses",
-      "settings",
-      "employees",
-      "materials",
-      "suppliers",
-      "backup",
-      "financial_reports",
-    ]);
-    expect(isFeatureLockKey("expenses")).toBe(true);
-    expect(isFeatureLockKey("unknown-section")).toBe(false);
+  it("assigns a unique dynamic key to every internal staff route", () => {
+    const keys = SCREEN_PIN_LOCKS.map(feature => feature.key);
+    expect(SCREEN_PIN_LOCKS.length).toBeGreaterThan(40);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(keys).toContain(screenPinKeyForPath("/cashier"));
+    expect(keys).toContain(screenPinKeyForPath("/sales"));
+    expect(keys).toContain(screenPinKeyForPath("/material-details/:id"));
+    expect(screenPinKeyForPath("/cashier")).not.toBe(screenPinKeyForPath("/sales"));
+    expect(isFeatureLockKey(screenPinKeyForPath("/cashier"))).toBe(true);
+    expect(isFeatureLockKey("expenses")).toBe(false);
+    expect(isFeatureLockKey("screen__invalid/key")).toBe(false);
+  });
+
+  it("does not register authentication, public customer screens, or security recovery", () => {
+    const paths = SCREEN_PIN_LOCKS.map(feature => feature.path);
+    expect(paths).not.toContain("/auth");
+    expect(paths).not.toContain("/catalog");
+    expect(paths).not.toContain("/loyalty");
+    expect(paths).not.toContain("/security-settings");
   });
 });
