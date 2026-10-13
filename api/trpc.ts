@@ -37,6 +37,18 @@ function safeErrorName(error: unknown): string {
   return /^[A-Za-z][A-Za-z0-9]{0,39}$/.test(error.name) ? error.name : "UnknownError";
 }
 
+function safeErrorMessage(error: unknown): string {
+  if (!(error instanceof Error)) return "Unknown error";
+  return error.message
+    .replace(/\b(Bearer\s+)[^\s,;]+/gi, "$1[redacted]")
+    .replace(/\beyJ[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\.[A-Za-z0-9_-]*\b/g, "[redacted-jwt]")
+    .replace(/\b((?:JWT_SECRET|DATABASE_URL|OAUTH_SERVER_URL|BUILT_IN_FORGE_API_KEY|SUPABASE_SERVICE_ROLE_KEY|SUPABASE_ANON_KEY|VITE_SUPABASE_ANON_KEY))\s*[:=]\s*[^,\s;]+/gi, "$1=[redacted]")
+    .replace(/\b(password|secret|token|api[-_]?key)\s*[:=]\s*[^,\s;]+/gi, "$1=[redacted]")
+    .replace(/(?:file:\/\/)?\/(?:[^\s"'():]+\/)*[^\s"'():]+/g, "[path]")
+    .replace(/https?:\/\/[^\s"'<>]+/g, "[url]")
+    .slice(0, 240) || "No error message";
+}
+
 export async function handleTrpcRequest(
   request: Request,
   moduleLoader: RuntimeModuleLoader = loadRuntimeModules,
@@ -77,6 +89,7 @@ export async function handleTrpcRequest(
       error: "API_TEMPORARILY_UNAVAILABLE",
       phase,
       name: safeErrorName(error),
+      message: phase === "request-handler" ? "Request processing failed" : safeErrorMessage(error),
     }, {
       status: 503,
       headers: { "Cache-Control": "private, no-store, max-age=0" },
