@@ -18,13 +18,19 @@ describe("Vercel native tRPC Fetch entrypoint", () => {
   it("catches dynamic module-load failures and returns only sanitized diagnostics", async () => {
     const response = await handleTrpcRequest(new Request(authMeUrl), async setPhase => {
       setPhase("app-router");
-      throw new Error("do-not-expose-environment-or-stack");
+      throw new Error("Cannot load /var/task/server/routers JWT_SECRET=private-value Bearer private-token");
     });
     expect(response.status).toBe(503);
     expect(response.headers.get("cache-control")).toContain("no-store");
     const body = await response.json();
-    expect(body).toEqual({ error: "API_TEMPORARILY_UNAVAILABLE", phase: "app-router", name: "Error" });
-    expect(JSON.stringify(body)).not.toContain("do-not-expose-environment-or-stack");
+    expect(body).toEqual({
+      error: "API_TEMPORARILY_UNAVAILABLE",
+      phase: "app-router",
+      name: "Error",
+      message: "Cannot load [path] JWT_SECRET=[redacted] Bearer [redacted]",
+    });
+    expect(body).not.toHaveProperty("stack");
+    expect(JSON.stringify(body)).not.toMatch(/var\/task|private-value|private-token/);
   });
 
   it("accepts Web Headers and treats invalid optional cookies as unauthenticated", async () => {
