@@ -143,6 +143,7 @@ create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idem
 	      register_apartment_inventory_image: { Args: { p_shop_id: string; p_item_id: string; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
       save_formulation_with_ingredients: { Args: { p_shop_id: string; p_formulation_id: string | null; p_expected_version: number | null; p_formulation: Json; p_ingredients: Json }; Returns: Json };
 	      register_formulation_image: { Args: { p_shop_id: string; p_formulation_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: Json };
+	      register_public_formulation_image: { Args: { p_shop_id: string; p_formulation_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_public_url: string; p_content_type: string; p_size_bytes: number }; Returns: Json };
 	      set_shop_feature_lock_pin: { Args: { p_shop_id: string; p_feature_key: string; p_pin: string }; Returns: boolean };
 	      set_shop_feature_lock: { Args: { p_shop_id: string; p_feature_key: string; p_enabled: boolean }; Returns: Database["public"]["Tables"]["shop_feature_locks"]["Row"] };
 	      set_all_shop_feature_locks: { Args: { p_shop_id: string; p_enabled: boolean }; Returns: Json };

@@ -57,7 +57,7 @@ function toPayload(input: ExpenseInput) {
   };
 }
 
-export function calculateExpenseSummaryFallback(
+export function calculateExpenseSummaryFromRows(
   invoices: Array<Pick<InvoiceRow, "total">>,
   invoiceItems: Array<Pick<InvoiceCostRow, "quantity" | "unit_cost_snapshot">>,
   expenses: Array<Pick<CloudExpense, "amount">>,
@@ -117,27 +117,8 @@ export async function deleteCloudExpense(expense: Pick<CloudExpense, "id" | "ver
   requireCloudResult(result);
 }
 
-export async function getCloudExpenseSummary(): Promise<ExpenseSummary> {
-  assertCloudOnline();
-  const { shopId } = await getActiveShopContext();
-  const result = await getSupabaseClient().rpc("get_expense_summary", { p_shop_id: shopId });
-  const value = requireCloudResult(result);
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("أعاد الخادم ملخصًا ماليًا غير صالح.");
-  }
-  const summary = value as Record<string, unknown>;
-  const totalRevenue = Number(summary.total_revenue);
-  const totalExpenses = Number(summary.total_expenses);
-  const totalProfit = Number(summary.total_profit);
-  const netProfit = Number(summary.net_profit);
-  if (![totalRevenue, totalExpenses, totalProfit, netProfit].every(Number.isFinite)) {
-    throw new Error("تعذر التحقق من أرقام الملخص المالي السحابي.");
-  }
-  return { totalRevenue, totalExpenses, totalProfit, netProfit };
-}
-
-/** Reconstructs the same summary from shop-scoped read-only rows when the RPC is unavailable. */
-export async function getCloudExpenseSummaryFallback(expenses: CloudExpense[]): Promise<ExpenseSummary> {
+/** Calculates financial totals from shop-scoped invoices, item costs, and expenses; no summary RPC is used. */
+export async function getCloudExpenseSummaryDirect(expenses: CloudExpense[]): Promise<ExpenseSummary> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
   const supabase = getSupabaseClient();
@@ -172,7 +153,7 @@ export async function getCloudExpenseSummaryFallback(expenses: CloudExpense[]): 
       if (page.length < PAGE_SIZE) break;
     }
   }
-  return calculateExpenseSummaryFallback(invoices, invoiceItems, expenses);
+  return calculateExpenseSummaryFromRows(invoices, invoiceItems, expenses);
 }
 
 export async function subscribeToExpenseChanges(onChange: () => void): Promise<() => Promise<unknown>> {

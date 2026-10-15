@@ -3,9 +3,35 @@ import { getActiveShopContext } from "./products";
 import { prepareCloudProductImage } from "./prepareProductImage";
 
 const FORMULATION_IMAGE_PATH = /^[0-9a-fA-F-]{36}\/formulations\/[0-9a-fA-F-]{36}\/[0-9a-fA-F-]{36}\.(?:webp|jpe?g)$/;
+const PUBLIC_FORMULA_MARKER = "/storage/v1/object/public/formulas/";
+type ImageLocation = { bucket: "formulas" | "product-images"; path: string };
 
 export function isFormulationImageStoragePath(value: unknown): value is string {
   return typeof value === "string" && FORMULATION_IMAGE_PATH.test(value);
+}
+
+function getPublicFormulaPath(value: string): string | null {
+  try {
+    const url = new URL(value);
+    const configuredUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
+    if (!configuredUrl || url.origin !== new URL(configuredUrl).origin) return null;
+    const markerIndex = url.pathname.indexOf(PUBLIC_FORMULA_MARKER);
+    if (markerIndex < 0) return null;
+    const path = decodeURIComponent(url.pathname.slice(markerIndex + PUBLIC_FORMULA_MARKER.length));
+    return isFormulationImageStoragePath(path) ? path : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveImageLocation(value: string): ImageLocation | null {
+  if (isFormulationImageStoragePath(value)) return { bucket: "product-images", path: value };
+  const publicFormulaPath = getPublicFormulaPath(value);
+  return publicFormulaPath ? { bucket: "formulas", path: publicFormulaPath } : null;
+}
+
+export function isPublicFormulationImageUrl(value: unknown): value is string {
+  return typeof value === "string" && getPublicFormulaPath(value) !== null;
 }
 
 export async function getSignedFormulationImageUrl(storagePath: string, expiresInSeconds = 900): Promise<string> {
@@ -30,44 +56,60 @@ export async function uploadCloudFormulationImage(input: { formulationId: string
   const { shopId, role } = await getActiveShopContext();
   if (!( ["manager", "admin", "supervisor"] as string[]).includes(role)) throw new Error("رفع صور التركيبات متاح للإدارة فقط.");
   const image = await prepareCloudProductImage(input.file, { allowJpegFallback: true });
-  if (image.size < 1 || image.size > 5 * 1024 * 1024) throw new Error("يجب ألا يتجاوز حجم الصورة المضغوطة 5 ميجابايت.");
-  const supabase = getSupabaseClient();
-  const imageId = globalThis.crypto.randomUUID();
+  if (image.size < 1 || image.size >= 300_000) throw new Error("يجب أن تكون الصورة المضغوطة أقل من 300KB.");
+
   const contentType = image.type === "image/webp" ? "image/webp" : image.type === "image/jpeg" ? "image/jpeg" : null;
   if (!contentType) throw new Error("صيغة الصورة المضغوطة غير مدعومة.");
   const extension = contentType === "image/webp" ? "webp" : "jpg";
+  const imageId = globalThis.crypto.randomUUID();
   const storagePath = `${shopId}/formulations/${input.formulationId}/${imageId}.${extension}`;
-  const bucket = supabase.storage.from("product-images");
+  const supabase = getSupabaseClient();
+  const bucket = supabase.storage.from("formulas");
   const uploaded = await bucket.upload(storagePath, image, { contentType, cacheControl: "3600", upsert: false });
-  if (uploaded.error) throw new Error(uploaded.error.message);
+  if (uploaded.error) throw new Error(`فشل رفع الصورة المضغوطة إلى مخزن التركيبات: ${uploaded.error.message}`);
 
-  const registered = await supabase.rpc("register_formulation_image", {
+  const publicUrl = bucket.getPublicUrl(storagePath).data.publicUrl;
+  if (!publicUrl || !isPublicFormulationImageUrl(publicUrl)) {
+    await bucket.remove([storagePath]).catch(() => undefined);
+    throw new Error("تعذر استخراج رابط القراءة العام لصورة التركيبة؛ أُلغي الربط ولم يُترك ملف يتيم.");
+  }
+
+  const registered = await supabase.rpc("register_public_formulation_image", {
     p_shop_id: shopId,
     p_formulation_id: input.formulationId,
     p_expected_version: input.expectedVersion,
     p_image_id: imageId,
     p_storage_path: storagePath,
+    p_public_url: publicUrl,
     p_content_type: contentType,
     p_size_bytes: image.size,
   });
   if (registered.error || !registered.data) {
     const cleanup = await bucket.remove([storagePath]);
-    if (cleanup.error) console.error("Uploaded formulation image cleanup failed.", cleanup.error.message);
-    throw new Error(registered.error?.message ?? "لم يؤكد الخادم ربط الصورة بالتركيبة.");
+    if (cleanup.error) console.error("Uploaded formula image cleanup failed.", cleanup.error.message);
+    throw new Error(registered.error?.message ?? "لم يؤكد الخادم ربط رابط الصورة العام بسجل التركيبة.");
   }
 
-  const row = requireCloudResult(registered) as { storage_path?: string; version?: number };
-  let signedUrl = "";
-  try { signedUrl = await getSignedFormulationImageUrl(storagePath); } catch { /* The private object is registered; a later list refresh can renew its signed URL. */ }
-  if (input.previousStoragePath && input.previousStoragePath !== storagePath && isFormulationImageStoragePath(input.previousStoragePath)) {
-    const removed = await bucket.remove([input.previousStoragePath]);
-    if (removed.error) console.warn("Replaced formulation image could not be removed.", removed.error.message);
+  const row = requireCloudResult(registered) as { public_url?: string; version?: number };
+  if (row.public_url !== publicUrl || !Number.isFinite(Number(row.version))) {
+    const cleanup = await bucket.remove([storagePath]);
+    if (cleanup.error) console.error("Unverified formula image cleanup failed.", cleanup.error.message);
+    throw new Error("لم يؤكد الخادم رابط الصورة المخزن في سجل التركيبة.");
   }
-  return { storagePath: row.storage_path || storagePath, signedUrl, version: Number(row.version) || input.expectedVersion + 1 };
+
+  if (input.previousStoragePath) {
+    const previous = resolveImageLocation(input.previousStoragePath);
+    if (previous && !(previous.bucket === "formulas" && previous.path === storagePath)) {
+      const removed = await supabase.storage.from(previous.bucket).remove([previous.path]);
+      if (removed.error) console.warn("Replaced formula image could not be removed.", removed.error.message);
+    }
+  }
+  return { storagePath, publicUrl, version: Number(row.version) };
 }
 
-export async function removeCloudFormulationImage(storagePath: string) {
-  if (!isFormulationImageStoragePath(storagePath)) return;
-  const result = await getSupabaseClient().storage.from("product-images").remove([storagePath]);
+export async function removeCloudFormulationImage(storagePathOrPublicUrl: string) {
+  const location = resolveImageLocation(storagePathOrPublicUrl);
+  if (!location) return;
+  const result = await getSupabaseClient().storage.from(location.bucket).remove([location.path]);
   if (result.error) throw new Error(result.error.message);
 }
