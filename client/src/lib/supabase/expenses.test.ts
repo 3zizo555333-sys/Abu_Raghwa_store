@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { calculateExpenseSummaryFallback } from "./expenses";
+import { calculateExpenseSummaryFromRows } from "./expenses";
 
-describe("calculateExpenseSummaryFallback", () => {
+describe("calculateExpenseSummaryFromRows", () => {
   it("computes revenue, expenses, gross profit, and net profit from cloud rows", () => {
-    const summary = calculateExpenseSummaryFallback(
+    const summary = calculateExpenseSummaryFromRows(
       [{ total: 1000 }, { total: "500" }],
       [
         { quantity: 2, unit_cost_snapshot: 200 },
@@ -21,7 +21,7 @@ describe("calculateExpenseSummaryFallback", () => {
   });
 
   it("returns zero totals for empty data without NaN", () => {
-    expect(calculateExpenseSummaryFallback([], [], [])).toEqual({
+    expect(calculateExpenseSummaryFromRows([], [], [])).toEqual({
       totalRevenue: 0,
       totalExpenses: 0,
       totalProfit: 0,

@@ -310,8 +310,8 @@ export default function CatalogManager() {
     setUploadingProductId(uploadId);
     try {
       const result = await uploadCloudFormulationImage({ formulationId: recipeId, expectedVersion: recipe.version, file, previousStoragePath: recipe.imageStoragePath });
-      updateRecipe(recipeId, { catalogImageUrl: result.signedUrl || undefined, imageStoragePath: result.storagePath, version: result.version });
-      toast.success("رُفعت صورة التركيبة إلى product-images الخاص وربطت بالسجل السحابي");
+      updateRecipe(recipeId, { catalogImageUrl: result.publicUrl, imageStoragePath: result.publicUrl, version: result.version });
+      toast.success("رُفعت صورة التركيبة إلى formulas وربط publicUrl مباشرةً بالسجل السحابي");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر رفع صورة التركيبة، حاول مرة أخرى");
     } finally {

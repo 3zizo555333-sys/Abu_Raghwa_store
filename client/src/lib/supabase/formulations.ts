@@ -1,7 +1,7 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
 import type { Database, Json } from "./database.types";
-import { getSignedFormulationImageUrls, isFormulationImageStoragePath } from "./formulationImages";
+import { getSignedFormulationImageUrls, isFormulationImageStoragePath, isPublicFormulationImageUrl } from "./formulationImages";
 
 export type CloudFormulationIngredient = { materialId: string; materialName: string; quantity: number; unit: string; cost: number };
 export type CloudFormulation = {
@@ -64,7 +64,7 @@ export async function listCloudFormulations(): Promise<CloudFormulation[]> {
       notes: row.notes || row.description || "", createdDate: row.created_at,
       isPasswordProtected: row.is_password_protected, password: row.password_hash ?? undefined, loyaltyPoints: row.loyalty_points,
       imageUrl: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? undefined : row.image_url)) : undefined,
-      imageStoragePath: isFormulationImageStoragePath(row.image_url) ? row.image_url : undefined, version: row.version,
+      imageStoragePath: row.image_url && (isFormulationImageStoragePath(row.image_url) || isPublicFormulationImageUrl(row.image_url)) ? row.image_url : undefined, version: row.version,
     };
   });
 }
@@ -80,7 +80,8 @@ export async function saveCloudFormulation(input: CloudFormulationInput): Promis
     name: input.name.trim(), description: input.notes, notes: input.notes,
     cost_price: totalCost, retail_price: input.salePrice, category: "عام",
     production_quantity: input.productionQuantity, production_unit: input.productionUnit,
-    loyalty_points: input.loyaltyPoints, image_url: input.imageStoragePath || input.imageUrl || null,
+    loyalty_points: input.loyaltyPoints,
+    image_url: input.imageUrl && isPublicFormulationImageUrl(input.imageUrl) ? input.imageUrl : input.imageStoragePath || input.imageUrl || null,
     is_password_protected: input.isPasswordProtected,
     password_hash: passwordHash || null,
   } as unknown as Json;
