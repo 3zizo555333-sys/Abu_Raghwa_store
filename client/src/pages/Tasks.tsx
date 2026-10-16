@@ -6,6 +6,7 @@ import { ArrowLeft, Plus, Trash2, Award, Zap, Dices, ShieldAlert, MinusCircle, H
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useShopFeatureState } from "@/lib/supabase/featureState";
+import { createCloudTask, deleteCloudTask, listCloudTasks, mapTaskRow, subscribeToCloudTasks, updateCloudTaskStatus } from "@/lib/supabase/tasks";
 import { adjustEmployeePoints, findPointsEmployee } from "@/lib/pointsLedger";
 import { listTaskStaffDirectory } from "@/lib/supabase/operations";
 
@@ -64,7 +65,11 @@ interface PenaltyLog {
 
 export default function Tasks() {
   const [, navigate] = useLocation();
-  const [tasks, setTasks] = useShopFeatureState<Task[]>("abu_raghwa_tasks", []);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [tasksLoading, setTasksLoading] = useState(true);
+  const [tasksError, setTasksError] = useState<string | null>(null);
+  const [savingTask, setSavingTask] = useState(false);
+  const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
   const [pointsEmployees, setPointsEmployees] = useShopFeatureState<PointsEmployee[]>("points_system_employees", []);
   const [penaltyRules, setPenaltyRules] = useShopFeatureState<PenaltyRule[]>("abu_raghwa_penalty_rules", []);
@@ -83,11 +88,29 @@ export default function Tasks() {
 
   useEffect(() => {
     let active = true;
-    void listTaskStaffDirectory().then(rows => { if (active) setEmployees(rows.map(row => ({ id: row.id, name: row.name }))); })
-      .catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل دليل موظفي المهام."); });
-    return () => { active = false; };
+    const load = async () => {
+      setTasksLoading(true);
+      setTasksError(null);
+      try {
+        const [rows, staff] = await Promise.all([listCloudTasks(), listTaskStaffDirectory()]);
+        if (!active) return;
+        const directory = new Map(staff.map(row => [row.id, row.name]));
+        setEmployees(staff.map(row => ({ id: row.id, name: row.name })));
+        setTasks(rows.map(row => ({ ...mapTaskRow(row), assignedToName: directory.get(row.assigned_to || "") || "غير معروف" })));
+      } catch (error) {
+        if (active) setTasksError(error instanceof Error ? error.message : "تعذر تحميل مهام السحابة.");
+      } finally {
+        if (active) setTasksLoading(false);
+      }
+    };
+    void load();
+    let unsubscribe: (() => void) | undefined;
+    void subscribeToCloudTasks(() => { void load(); }).then(cleanup => { unsubscribe = cleanup; }).catch(error => {
+      if (active) setTasksError(error instanceof Error ? error.message : "تعذر الاشتراك في تحديثات المهام.");
+    });
+    return () => { active = false; unsubscribe?.(); };
   }, []);
-  
+
   const [formData, setFormData] = useState({
     title: "",
     description: "",
@@ -96,10 +119,6 @@ export default function Tasks() {
     priority: "medium" as const,
     pointsValue: 0
   });
-
-  const saveTasks = (updated: Task[]) => {
-    setTasks(updated);
-  };
 
   const savePointsEmployees = (updated: PointsEmployee[]) => {
     setPointsEmployees(updated);
@@ -110,12 +129,12 @@ export default function Tasks() {
     setIsSpinning(true);
     let spins = 0;
     const maxSpins = 30;
-    
+
     const spinInterval = setInterval(() => {
       const randomPoints = Math.floor(Math.random() * 100) * 10 + 10; // 10, 20, 30... 1000
       setSelectedPoints(randomPoints);
       spins++;
-      
+
       if (spins >= maxSpins) {
         clearInterval(spinInterval);
         setIsSpinning(false);
@@ -123,70 +142,53 @@ export default function Tasks() {
     }, 50);
   };
 
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (!formData.title.trim() || !formData.assignedTo) {
-      alert("الرجاء إدخال اسم المهمة واختيار الموظف");
+      toast.error("الرجاء إدخال اسم المهمة واختيار الموظف");
       return;
     }
-
     if (formData.pointsValue <= 0) {
-      alert("الرجاء تحديد عدد النقاط (استخدم العداد العشوائي)");
+      toast.error("الرجاء تحديد عدد النقاط (استخدم العداد العشوائي)");
       return;
     }
-
     const assignedEmployee = employees.find(e => e.id === formData.assignedTo);
     if (!assignedEmployee) return;
-
-    const newTask: Task = {
-      id: Date.now().toString(),
-      title: formData.title,
-      description: formData.description,
-      assignedTo: formData.assignedTo,
-      assignedToName: assignedEmployee.name,
-      dueDate: formData.dueDate,
-      priority: formData.priority,
-      status: "pending",
-      createdDate: new Date().toLocaleDateString("ar-EG"),
-      pointsValue: formData.pointsValue
-    };
-
-    saveTasks([...tasks, newTask]);
-    setFormData({ 
-      title: "", 
-      description: "", 
-      assignedTo: "", 
-      dueDate: "", 
-      priority: "medium",
-      pointsValue: 0
-    });
-    setShowForm(false);
-    setShowRandomizer(false);
-    setSelectedPoints(0);
+    setSavingTask(true);
+    try {
+      const row = await createCloudTask(formData);
+      setTasks(current => [{ ...mapTaskRow(row), assignedToName: assignedEmployee.name }, ...current]);
+      setFormData({ title: "", description: "", assignedTo: "", dueDate: "", priority: "medium", pointsValue: 0 });
+      setShowForm(false);
+      setShowRandomizer(false);
+      setSelectedPoints(0);
+      toast.success("تم حفظ المهمة في Supabase.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ المهمة سحابياً؛ بقيت بيانات النموذج كما هي.");
+    } finally {
+      setSavingTask(false);
+    }
   };
 
-  const handleUpdateStatus = (taskId: string, newStatus: Task["status"]) => {
+  const handleUpdateStatus = async (taskId: string, newStatus: Task["status"]) => {
     const task = tasks.find(t => t.id === taskId);
-    if (!task) return;
-
-    // النقاط تُضاف مرة واحدة فقط عند الانتقال الفعلي إلى حالة مكتملة.
+    if (!task || busyTaskId) return;
     const shouldAwardPoints = newStatus === "completed" && task.status !== "completed" && !task.pointsAwarded;
-    if (shouldAwardPoints) {
-      const updatedPointsEmployees = adjustEmployeePoints(
-        pointsEmployees,
-        { id: task.assignedTo, name: task.assignedToName },
-        task.pointsValue,
-        { type: "earned", description: `تم إضافة ${task.pointsValue} نقطة بسبب إكمال المهمة: ${task.title}`, transactionId: `task-${task.id}` },
-      );
-      savePointsEmployees(updatedPointsEmployees);
-      setNotificationMessage(`✅ تم إضافة ${task.pointsValue} نقطة لـ ${task.assignedToName}`);
-      setShowNotification(true);
-      setTimeout(() => setShowNotification(false), 3000);
+    setBusyTaskId(taskId);
+    try {
+      const row = await updateCloudTaskStatus(taskId, newStatus, shouldAwardPoints || Boolean(task.pointsAwarded));
+      const updated = { ...mapTaskRow(row), assignedToName: task.assignedToName };
+      setTasks(current => current.map(item => item.id === taskId ? updated : item));
+      if (shouldAwardPoints) {
+        savePointsEmployees(adjustEmployeePoints(pointsEmployees, { id: task.assignedTo, name: task.assignedToName }, task.pointsValue, { type: "earned", description: `تم إضافة ${task.pointsValue} نقطة بسبب إكمال المهمة: ${task.title}`, transactionId: `task-${task.id}` }));
+        setNotificationMessage(`✅ تم إضافة ${task.pointsValue} نقطة لـ ${task.assignedToName}`);
+        setShowNotification(true);
+        setTimeout(() => setShowNotification(false), 3000);
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ حالة المهمة في Supabase.");
+    } finally {
+      setBusyTaskId(null);
     }
-
-    const updated = tasks.map(t =>
-      t.id === taskId ? { ...t, status: newStatus, pointsAwarded: t.pointsAwarded || shouldAwardPoints } : t
-    );
-    saveTasks(updated);
   };
 
   const handleAddPenaltyRule = () => {
@@ -239,9 +241,17 @@ export default function Tasks() {
     toast.success(`تم خصم ${rule.pointsDeducted} نقطة من ${employee.name}. الرصيد الحالي: ${balance} نقطة.`);
   };
 
-  const handleDelete = (id: string) => {
-    if (confirm("هل تريد حذف هذه المهمة؟")) {
-      saveTasks(tasks.filter(t => t.id !== id));
+  const handleDelete = async (id: string) => {
+    if (!confirm("هل تريد حذف هذه المهمة؟")) return;
+    setBusyTaskId(id);
+    try {
+      await deleteCloudTask(id);
+      setTasks(current => current.filter(task => task.id !== id));
+      toast.success("تم حذف المهمة من السحابة.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تأكيد حذف المهمة في Supabase.");
+    } finally {
+      setBusyTaskId(null);
     }
   };
 
@@ -307,6 +317,9 @@ export default function Tasks() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 py-8">
+        {tasksLoading && <p className="mb-4 rounded-lg bg-blue-50 p-3 text-blue-800">جاري تحميل المهام من السحابة...</p>}
+        {tasksError && <p role="alert" className="mb-4 rounded-lg bg-red-50 p-3 text-red-800">{tasksError}</p>}
+
         {/* أزرار الفلترة */}
         <div className="flex gap-2 mb-6 flex-wrap">
           {(["all", "pending", "in-progress", "completed"] as const).map(status => (
@@ -566,12 +579,12 @@ export default function Tasks() {
               </div>
 
               <div className="flex gap-2">
-                <Button 
-                  onClick={handleAddTask} 
-                  disabled={formData.pointsValue === 0}
+                <Button
+                  onClick={() => void handleAddTask()}
+                  disabled={formData.pointsValue === 0 || savingTask}
                   className="flex-1 bg-green-600 hover:bg-green-700 disabled:bg-gray-400"
                 >
-                  إضافة المهمة
+                  {savingTask ? "جاري الحفظ..." : "إضافة المهمة"}
                 </Button>
                 <Button onClick={() => setShowForm(false)} className="flex-1 bg-gray-400 hover:bg-gray-500">
                   إلغاء
@@ -603,7 +616,7 @@ export default function Tasks() {
                         </span>
                       </div>
                       <p className="text-gray-600 text-sm mb-3">{task.description}</p>
-                      
+
                       <div className="flex flex-wrap gap-2 mb-3">
                         <span className={`px-3 py-1 rounded text-sm font-semibold ${getPriorityColor(task.priority)}`}>
                           {getPriorityLabel(task.priority)}
@@ -624,7 +637,8 @@ export default function Tasks() {
                     <div className="flex flex-col gap-2 ml-4">
                       <select
                         value={task.status}
-                        onChange={(e) => handleUpdateStatus(task.id, e.target.value as Task["status"])}
+                        onChange={(e) => void handleUpdateStatus(task.id, e.target.value as Task["status"])}
+                        disabled={busyTaskId === task.id}
                         className={`px-3 py-2 rounded font-semibold text-sm border-2 ${
                           task.status === "completed"
                             ? "bg-green-100 border-green-300 text-green-700"
@@ -639,7 +653,8 @@ export default function Tasks() {
                       </select>
 
                       <Button
-                        onClick={() => handleDelete(task.id)}
+                        onClick={() => void handleDelete(task.id)}
+                        disabled={busyTaskId === task.id}
                         className="bg-red-600 hover:bg-red-700 text-white"
                       >
                         <Trash2 className="w-4 h-4" /> حذف
