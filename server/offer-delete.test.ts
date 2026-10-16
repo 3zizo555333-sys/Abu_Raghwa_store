@@ -49,6 +49,20 @@ describe("صلاحيات العروض المنشورة", () => {
     await expect(caller(token).offers.delete({ id: "offer-a" })).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 
+  it("يعرض للبائع العروض المنشورة فقط بعد إزالة حقول التكلفة والربح والمورد", async () => {
+    const seller = { ...manager, email: "offers-public-seller@example.com", role: "seller" as const };
+    vi.spyOn(db, "getStaffAccounts").mockResolvedValue([seller]);
+    vi.spyOn(db, "listSharedOffers").mockResolvedValue([
+      { id: "offer-live", title: "عرض منشور", isActivated: true, offerPrice: 90, totalCostPrice: 60, items: [{ name: "صنف", offerPrice: 90, costPrice: 50, supplierName: "مورد" }] },
+      { id: "offer-disabled", title: "عرض غير منشور", isActivated: false, totalCostPrice: 30 },
+    ]);
+
+    const offers = await caller().offers.listPublic();
+    expect(offers).toHaveLength(1);
+    expect(JSON.stringify(offers)).not.toMatch(/cost|profit|supplier|wholesale/i);
+    expect(offers[0]).toMatchObject({ id: "offer-live", title: "عرض منشور", offerPrice: 90, items: [{ name: "صنف", offerPrice: 90 }] });
+  });
+
   it("يتيح الإدارة للمدير ويزيل حقول التكلفة من نقطة العرض العامة", async () => {
     const token = await staffToken(manager.email);
     const saveOffer = vi.spyOn(db, "saveSharedOffer").mockResolvedValue(undefined);

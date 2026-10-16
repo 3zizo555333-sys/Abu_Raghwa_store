@@ -37,4 +37,31 @@ describe("صلاحيات عرض البائع", () => {
     expect(app).toContain('component={withManagerRole(SecuritySettings)}');
     expect(app).toContain('path={"/employees"} component={withManagerRole(withPasswordProtection(Employees');
   });
+
+  it("يُبقي للبائع واجهة تنقل محدودة لمسارات البيع والكتالوج والعروض العامة", () => {
+    const access = readFileSync(resolve(projectRoot, "client/src/lib/sellerAccess.ts"), "utf8");
+    const navigation = readFileSync(resolve(projectRoot, "client/src/components/SellerNavigation.tsx"), "utf8");
+    const app = readFileSync(resolve(projectRoot, "client/src/App.tsx"), "utf8");
+    expect(access).toContain('"/cashier"');
+    expect(access).toContain('"/catalog"');
+    expect(access).toContain('"/catalog-offers"');
+    expect(access).toContain('normalized === "/public-offer"');
+    expect(access).not.toContain('"/sales"');
+    expect(access).not.toContain('"/smart-offers"');
+    expect(navigation).toContain('label: "نقطة البيع"');
+    expect(navigation).toContain('label: "الكتالوج"');
+    expect(app).toContain("sellerRestricted = isSeller && !canSellerAccessPath(location)");
+  });
+
+  it("لا يطلب استعلام الكتالوج العام أعمدة التكلفة أو ملاحظات التركيبات الداخلية", () => {
+    const operations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/operations.ts"), "utf8");
+    const displayQuery = operations.slice(operations.indexOf("export async function listPublicCatalogDisplayData"), operations.indexOf("export async function listCatalogRewards"));
+    expect(displayQuery).toContain('select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path")');
+    expect(displayQuery).toContain('catalog_description, catalog_details_url, catalog_category, catalog_company, version');
+    expect(displayQuery).not.toContain('select("*")');
+    expect(displayQuery).not.toContain("cost_price");
+    expect(displayQuery).not.toContain("wholesale_price_per_unit");
+    expect(displayQuery).not.toContain("password_hash");
+    expect(displayQuery).not.toContain("notes");
+  });
 });

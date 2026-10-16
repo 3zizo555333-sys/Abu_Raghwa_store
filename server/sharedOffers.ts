@@ -1,6 +1,6 @@
 export type SharedOffer = Record<string, unknown> & { id: string };
 
-const PRIVATE_OFFER_FIELD = /cost|profit|margin|wholesale|supplier|purchaseprice/i;
+const PRIVATE_OFFER_FIELD = /cost|profit|margin|wholesale|supplier|purchaseprice|ingredients?|materials?|formulas?|recipes?|mixing|instructions?/i;
 
 function parseOffer(value: unknown): SharedOffer | null {
   if (!value || typeof value !== "object" || typeof (value as Record<string, unknown>).id !== "string") return null;
@@ -17,13 +17,19 @@ function removePrivateOfferFields(value: unknown): unknown {
   );
 }
 
+/** Return a public-safe offer object while preserving its published fields. */
+export function publicOfferData(value: unknown): SharedOffer | null {
+  if (!value || typeof value !== "object" || Array.isArray(value) || typeof (value as Record<string, unknown>).id !== "string") return null;
+  return removePrivateOfferFields(value) as SharedOffer;
+}
+
 /** Serialize a published offer without exposing nested supplier/cost/profit data. */
 export function publicOfferJson(offerData: string | null | undefined): string | null {
   if (!offerData) return null;
   try {
     const parsed: unknown = JSON.parse(offerData);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return JSON.stringify(removePrivateOfferFields(parsed));
+    const safeOffer = publicOfferData(parsed);
+    return safeOffer ? JSON.stringify(safeOffer) : null;
   } catch {
     return null;
   }

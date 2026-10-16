@@ -22,7 +22,7 @@ type CatalogOffer = {
 };
 
 export default function CatalogOffersPage() {
-  const publishedOffersQuery = trpc.offers.list.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", retry: false });
+  const publishedOffersQuery = trpc.offers.listPublic.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", retry: false });
   const publishedOffers = publishedOffersQuery.data as CatalogOffer[] | undefined;
   const offers: CatalogOffer[] = publishedOffers ?? [];
   const [now, setNow] = useState(() => Date.now());

@@ -1,6 +1,5 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
-import { getActiveShopContext } from "./products";
-import { listProductsPage } from "./products";
+import { getActiveShopContext, getSignedProductImageUrl, listProductsPage } from "./products";
 import type { Database } from "./database.types";
 import { getSignedFormulationImageUrls, isFormulationImageStoragePath } from "./formulationImages";
 
@@ -132,6 +131,40 @@ export async function listCatalogDisplayData(options: { includeProductImages?: b
     image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
   }));
   return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
+}
+
+/** Public customer catalog read. Intentionally selects no product cost, wholesale, or recipe secret columns. */
+export async function listPublicCatalogDisplayData(options: { includeProductImages?: boolean } = {}) {
+  const id = await shopId();
+  const client = getSupabaseClient();
+  const [productResult, taxonomy, pricing, recipes] = await Promise.all([
+    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path").eq("shop_id", id).is("deleted_at", null).order("name").limit(200),
+    listCatalogTaxonomy(),
+    getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
+    client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version").eq("shop_id", id).is("deleted_at", null).limit(1000),
+  ]);
+  const products = await Promise.all(requireCloudResult(productResult).map(async row => ({
+    id: row.id,
+    name: row.name,
+    unit: row.unit_name,
+    retailPrice: row.retail_price,
+    wholesaleRetailPrice: row.retail_price,
+    category: row.category_name,
+    loyaltyPoints: row.loyalty_points,
+    imageUrl: options.includeProductImages === false || !row.catalog_image_path
+      ? undefined
+      : await getSignedProductImageUrl(row.catalog_image_path).catch(() => undefined),
+  })));
+  const recipeRows = requireCloudResult(recipes);
+  let signedImages = new Map<string, string>();
+  const imagePaths = recipeRows.map(row => row.image_url).filter(isFormulationImageStoragePath);
+  try { signedImages = await getSignedFormulationImageUrls(imagePaths); } catch { /* Keep catalog rows usable while private Storage is temporarily unavailable. */ }
+  const catalogRecipes = recipeRows.map(row => ({
+    ...row,
+    image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
+    image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
+  }));
+  return { registeredProducts: products, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
 }
 
 export async function listCatalogRewards() {
