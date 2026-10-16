@@ -2,7 +2,7 @@ import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, AlertTriangle, TrendingDown, Package, Plus, Trash2, Edit2, ChevronDown, ChevronUp } from "lucide-react";
+import { ArrowLeft, AlertTriangle, TrendingDown, Package, Plus, Trash2, Edit2, ChevronDown, ChevronUp, Camera, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { getActiveShopContext, subscribeToShopChanges } from "@/lib/supabase/products";
@@ -15,6 +15,8 @@ import {
   listShortageProducts,
   replaceCloudManualProducts,
   saveCloudShortage,
+  subscribeToShortageRealtime,
+  uploadShortageImage,
   type CloudManualProduct,
   type CloudShortage,
 } from "@/lib/supabase/shortages";
@@ -58,6 +60,9 @@ export default function Shortages() {
   const [showForm, setShowForm] = useState(false);
   const [showCategoryForm, setShowCategoryForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [lightboxUrl, setLightboxUrl] = useState<string | null>(null);
   const [manualProductName, setManualProductName] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
   const [formData, setFormData] = useState({
@@ -103,17 +108,22 @@ export default function Shortages() {
   useEffect(() => {
     let mounted = true;
     let unsubscribe: (() => Promise<unknown>) | undefined;
+    let unsubscribeRealtime: (() => void) | undefined;
     const refreshOnReturn = () => { if (mounted) void refreshCloudData(); };
     window.addEventListener("focus", refreshOnReturn);
     void refreshCloudData();
     void getActiveShopContext()
-      .then(({ shopId }) => subscribeToShopChanges(shopId, () => { if (mounted) void refreshCloudData(); }))
+      .then(({ shopId }) => {
+        unsubscribeRealtime = subscribeToShortageRealtime(shopId, () => { if (mounted) void refreshCloudData(); });
+        return subscribeToShopChanges(shopId, () => { if (mounted) void refreshCloudData(); });
+      })
       .then(stop => { if (mounted) unsubscribe = stop; else void stop(); })
       .catch(error => { if (mounted) toast.error(error instanceof Error ? error.message : "تعذر الاتصال بمزامنة النواقص."); });
     return () => {
       mounted = false;
       window.removeEventListener("focus", refreshOnReturn);
       if (unsubscribe) void unsubscribe();
+      if (unsubscribeRealtime) unsubscribeRealtime();
     };
   }, []);
 
@@ -227,6 +237,7 @@ export default function Shortages() {
     const unit = product?.unit || manualListProduct?.unit || "";
     const current = editingId ? shortages.find(item => item.id === editingId) : undefined;
     try {
+      const imageUrl = imageFile ? await uploadShortageImage(imageFile) : current?.imageUrl || null;
       const saved = await saveCloudShortage({
         productId: product?.id || "",
         productName,
@@ -236,6 +247,7 @@ export default function Shortages() {
         status: current?.status ?? "pending",
         notes: formData.notes,
         category: formData.category,
+        imageUrl,
       }, current);
       setShortages(items => current ? items.map(item => item.id === saved.id ? saved : item) : [saved, ...items]);
       toast.success(current ? "تم تحديث النقص في السحابة" : "تم حفظ النقص في السحابة");
@@ -293,6 +305,8 @@ export default function Shortages() {
     setManualProductName("");
     setManualProductsText("");
     setEditingId(null);
+    setImageFile(null);
+    setImagePreview(null);
     setShowForm(false);
   };
 
@@ -349,6 +363,7 @@ export default function Shortages() {
         <div>
           <p className="font-bold text-lg">{shortage.productName}</p>
           <p className="text-sm text-gray-600">{shortage.reportedDate}</p>
+          {shortage.imageUrl && <button type="button" onClick={() => setLightboxUrl(shortage.imageUrl)} className="mt-2 block"><img src={shortage.imageUrl} alt={`صورة ${shortage.productName}`} className="h-16 w-16 rounded-xl object-cover ring-2 ring-orange-200 transition hover:scale-105" /></button>}
         </div>
         <div>
           <p className="text-sm text-gray-600">الكمية الحالية</p>
@@ -555,6 +570,19 @@ export default function Shortages() {
                 </div>
               </div>
 
+              <div className="rounded-lg border-2 border-dashed border-orange-300 bg-orange-50 p-4">
+                <label className="block text-sm font-bold text-orange-800 mb-2">صورة العبوة (اختياري)</label>
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700">
+                  <Camera size={18} /> التقاط بالكاميرا / رفع من المعرض
+                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={event => {
+                    const file = event.target.files?.[0];
+                    if (file) { setImageFile(file); setImagePreview(URL.createObjectURL(file)); }
+                  }} />
+                </label>
+                {imagePreview && <img src={imagePreview} alt="معاينة الصورة" className="mt-3 h-28 w-28 rounded-xl object-cover ring-2 ring-orange-300" />}
+                {!imagePreview && editingId && shortages.find(item => item.id === editingId)?.imageUrl && <img src={shortages.find(item => item.id === editingId)?.imageUrl || ""} alt="صورة النقص الحالية" className="mt-3 h-28 w-28 rounded-xl object-cover ring-2 ring-orange-300" />}
+              </div>
+
               <div className="flex gap-2">
                 <Button 
                   onClick={handleAddShortage}
@@ -688,6 +716,7 @@ export default function Shortages() {
             </CardContent>
           </Card>
         )}
+        {lightboxUrl && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-4" onClick={() => setLightboxUrl(null)}><div className="relative max-h-[90vh] max-w-3xl" onClick={event => event.stopPropagation()}><button type="button" aria-label="إغلاق الصورة" onClick={() => setLightboxUrl(null)} className="absolute -right-3 -top-3 z-10 grid h-9 w-9 place-items-center rounded-full bg-white text-slate-800 shadow-lg"><X size={18} /></button><img src={lightboxUrl} alt="معاينة مكبرة" className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl" /></div></div>}
       </div>
     </div>
   );

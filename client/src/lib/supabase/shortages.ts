@@ -20,10 +20,13 @@ export type CloudShortage = {
   status: ShortageStatus;
   notes: string;
   category: string;
+  imageUrl: string | null;
+  customerName?: string | null;
+  customerPhone?: string | null;
 };
 export type CloudManualProduct = { id: string; name: string; category: string; unit: string };
 export type CloudShortageCategory = { id: string; name: string };
-export type ShortageInput = Omit<CloudShortage, "id" | "version" | "shortage" | "reportedDate"> & { reportedAt?: string };
+export type ShortageInput = Omit<CloudShortage, "id" | "version" | "shortage" | "reportedDate" | "imageUrl"> & { imageUrl?: string | null; reportedAt?: string };
 
 function requireSupervisor(role: string) {
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("هذه البيانات متاحة للمدير أو المشرف فقط.");
@@ -43,6 +46,9 @@ export function mapShortageRow(row: ShortageRow): CloudShortage {
     status: row.status as ShortageStatus,
     notes: row.notes,
     category: row.category,
+    imageUrl: row.image_url,
+    customerName: row.customer_name,
+    customerPhone: row.customer_phone,
   };
 }
 
@@ -68,7 +74,33 @@ export function toShortagePayload(input: ShortageInput) {
     notes,
     category,
     ...(input.reportedAt ? { reported_at: input.reportedAt } : {}),
+    image_url: input.imageUrl || null,
+    customer_name: input.customerName || null,
+    customer_phone: input.customerPhone || null,
   };
+}
+
+export async function uploadShortageImage(file: File): Promise<string> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext();
+  requireSupervisor(role);
+  if (!file.type.startsWith("image/")) throw new Error("اختر ملف صورة صالحًا.");
+  if (file.size > 10 * 1024 * 1024) throw new Error("حجم الصورة يجب ألا يتجاوز 10 ميجابايت.");
+  const extension = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+  const path = `${shopId}/${crypto.randomUUID()}.${extension}`;
+  const client = getSupabaseClient();
+  const upload = await client.storage.from("shortages-images").upload(path, file, { contentType: file.type, upsert: false, cacheControl: "31536000" });
+  if (upload.error) throw new Error(upload.error.message);
+  return client.storage.from("shortages-images").getPublicUrl(path).data.publicUrl;
+}
+
+export function subscribeToShortageRealtime(shopId: string, onChange: () => void) {
+  const client = getSupabaseClient();
+  const channel = client.channel(`shortages:${shopId}`)
+    .on("postgres_changes", { event: "*", schema: "public", table: "shortage_items", filter: `shop_id=eq.${shopId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "shortage_categories", filter: `shop_id=eq.${shopId}` }, onChange)
+    .subscribe();
+  return () => { void client.removeChannel(channel); };
 }
 
 export function normalizeManualProductNames(names: string[]): string[] {
