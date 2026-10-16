@@ -103,13 +103,14 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     const loyalty = readFileSync(resolve(root, "supabase/migrations/20261011135000_restore_tiered_bulk_unit_invoice_loyalty.sql"), "utf8");
     const invoice = readFileSync(resolve(root, "supabase/migrations/20261011101500_loyalty_returns.sql"), "utf8");
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
+    const parked = readFileSync(resolve(root, "client/src/lib/cashierParkedInvoices.ts"), "utf8");
     const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const handlePosCategoryChange"));
     expect(products).toContain("نقاط الولاء لصنف الصب لكل");
     expect(products).toContain('value={formData.loyaltyPoints || "30"}');
     expect(products).toContain("resolveProductLoyaltyPoints");
     expect(cashier).toContain("getCartLoyaltyPointsTotal(cart)");
     expect(completeSale).toContain("saleType,");
-    expect(completeSale).toContain("quantity: item.quantity");
+    expect(parked).toContain("quantity: item.quantity");
     expect(completeSale).not.toContain("loyaltyPoints:");
     expect(loyalty).toContain("when 'wholesale' then coalesce");
     expect(loyalty).toContain("case v_invoice.sale_type");
@@ -157,29 +158,38 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(styles).toContain("width: var(--receipt-width, 80mm) !important");
   });
 
-  it("لا يعلن نجاح البيع ولا يفرغ السلة قبل تأكيد إنشاء الفاتورة", () => {
+  it("يفرغ نموذج العميل فوراً ويحفظ الفشل في قائمة المعلقات دون إيقاف الكاشير", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
-    const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const filteredProducts"));
-    const rpcCall = completeSale.indexOf("await createCloudInvoice(");
+    const parked = readFileSync(resolve(root, "client/src/lib/cashierParkedInvoices.ts"), "utf8");
+    const completeSale = cashier.slice(cashier.indexOf("const completeSale"), cashier.indexOf("const handlePosCategoryChange"));
+    const submitFlow = cashier.slice(cashier.indexOf("const submitParkedInvoiceDraft"), cashier.indexOf("const resumeParkedInvoice"));
+    const clearCurrent = completeSale.indexOf("clearCurrentSale()");
+    const submitCall = completeSale.indexOf("submitParkedInvoiceDraft(draft)");
+    const rpcCall = submitFlow.indexOf("await createCloudInvoice(");
     expect(rpcCall).toBeGreaterThanOrEqual(0);
-    expect(completeSale.indexOf("toast.success(")).toBeGreaterThan(rpcCall);
-    expect(completeSale.indexOf("setCart([])")).toBeGreaterThan(rpcCall);
-    expect(completeSale).toContain("catch (error)");
-    expect(completeSale).toContain("لم تُفرّغ السلة");
+    expect(clearCurrent).toBeGreaterThanOrEqual(0);
+    expect(submitCall).toBeGreaterThan(clearCurrent);
+    expect(submitFlow).toContain("catch (error)");
+    expect(submitFlow).toContain("setParkedInvoices(");
+    expect(cashier).toContain("الفواتير المعلقة");
+    expect(cashier).toContain("استكمال الفاتورة");
+    expect(cashier).toContain("حذف الفاتورة نهائياً");
+    expect(parked).toContain("createInvoiceInputFromParkedDraft");
     expect(cashier).not.toContain("localStorage");
     expect(cashier).not.toContain("sessionStorage");
   });
 
-  it("يعرض سبب رفض checkout ويسمح بإلغاء intent بعد تأكيد الخادم أنه pending فقط", () => {
+  it("يلغي intent الفاشل المؤكد فقط ويعرض نقص المخزون كتلميح غير حاجب", () => {
     const cashier = readFileSync(resolve(root, "client/src/pages/Cashier.tsx"), "utf8");
     const invoices = readFileSync(resolve(root, "client/src/lib/supabase/invoices.ts"), "utf8");
-    const cancelFlow = cashier.slice(cashier.indexOf("const cancelFrozenInvoice"), cashier.indexOf("const completeSale"));
+    const submitFlow = cashier.slice(cashier.indexOf("const submitParkedInvoiceDraft"), cashier.indexOf("const resumeParkedInvoice"));
     expect(cashier).toContain("formatInvoiceCheckoutError(error)");
-    expect(cashier).toContain("إلغاء المحاولة المعلّقة وتعديل السلة");
-    expect(cancelFlow).toContain("await getRecoverableInvoiceIntent()");
-    expect(cancelFlow).toContain('intent.state === "pending"');
-    expect(cancelFlow).toContain("await cancelPendingInvoiceIntent(intent.intentId)");
-    expect(cancelFlow).toContain('intent.state === "completed"');
+    expect(cashier).toContain("getInsufficientStockProductName(error)");
+    expect(cashier).toContain("المخزون غير كافٍ للصنف");
+    expect(cashier).toContain("cancelPendingInvoiceIntent");
+    expect(submitFlow).toContain('latest.state === "pending"');
+    expect(cashier).not.toContain("attemptLocked");
+    expect(cashier).not.toContain("checkoutError &&");
     expect(invoices).toContain('"acknowledgment"');
     expect(invoices).toContain("invoiceResult");
   });
