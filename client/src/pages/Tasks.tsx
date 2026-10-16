@@ -7,25 +7,9 @@ import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useShopFeatureState } from "@/lib/supabase/featureState";
 import { createCloudTask, deleteCloudTask, listCloudTasks, mapTaskRow, subscribeToCloudTasks, updateCloudTaskStatus } from "@/lib/supabase/tasks";
-import { adjustEmployeePoints, findPointsEmployee } from "@/lib/pointsLedger";
+import { findPointsEmployee } from "@/lib/pointsLedger";
+import { awardCompletedTaskPoints, applyStaffPointAdjustment, listStaffPointBalances, type GamificationEmployee } from "@/lib/supabase/gamification";
 import { listTaskStaffDirectory } from "@/lib/supabase/operations";
-
-interface PointsEmployee {
-  id: string;
-  name: string;
-  currentPoints: number;
-  rewards: Reward[];
-  claimedRewards: any[];
-  createdDate: string;
-  pointHistory?: Array<{ id: string; type: "earned" | "deduction" | "reset"; points: number; description: string; createdAt: string }>;
-}
-
-interface Reward {
-  id: string;
-  pointsRequired: number;
-  rewardName: string;
-  rewardDescription: string;
-}
 
 interface Task {
   id: string;
@@ -71,7 +55,7 @@ export default function Tasks() {
   const [savingTask, setSavingTask] = useState(false);
   const [busyTaskId, setBusyTaskId] = useState<string | null>(null);
   const [employees, setEmployees] = useState<Employee[]>([]);
-  const [pointsEmployees, setPointsEmployees] = useShopFeatureState<PointsEmployee[]>("points_system_employees", []);
+  const [pointsEmployees, setPointsEmployees] = useState<GamificationEmployee[]>([]);
   const [penaltyRules, setPenaltyRules] = useShopFeatureState<PenaltyRule[]>("abu_raghwa_penalty_rules", []);
   const [penaltyLogs, setPenaltyLogs] = useShopFeatureState<PenaltyLog[]>("abu_raghwa_penalty_logs", []);
   const [showForm, setShowForm] = useState(false);
@@ -92,10 +76,11 @@ export default function Tasks() {
       setTasksLoading(true);
       setTasksError(null);
       try {
-        const [rows, staff] = await Promise.all([listCloudTasks(), listTaskStaffDirectory()]);
+        const [rows, staff, cloudPoints] = await Promise.all([listCloudTasks(), listTaskStaffDirectory(), listStaffPointBalances()]);
         if (!active) return;
         const directory = new Map(staff.map(row => [row.id, row.name]));
         setEmployees(staff.map(row => ({ id: row.id, name: row.name })));
+        setPointsEmployees(cloudPoints);
         setTasks(rows.map(row => ({ ...mapTaskRow(row), assignedToName: directory.get(row.assigned_to || "") || "غير معروف" })));
       } catch (error) {
         if (active) setTasksError(error instanceof Error ? error.message : "تعذر تحميل مهام السحابة.");
@@ -119,10 +104,6 @@ export default function Tasks() {
     priority: "medium" as const,
     pointsValue: 0
   });
-
-  const savePointsEmployees = (updated: PointsEmployee[]) => {
-    setPointsEmployees(updated);
-  };
 
   // العداد العشوائي
   const spinRandomizer = () => {
@@ -175,11 +156,14 @@ export default function Tasks() {
     const shouldAwardPoints = newStatus === "completed" && task.status !== "completed" && !task.pointsAwarded;
     setBusyTaskId(taskId);
     try {
-      const row = await updateCloudTaskStatus(taskId, newStatus, shouldAwardPoints || Boolean(task.pointsAwarded));
-      const updated = { ...mapTaskRow(row), assignedToName: task.assignedToName };
+      const row = await updateCloudTaskStatus(taskId, newStatus, shouldAwardPoints ? false : Boolean(task.pointsAwarded));
+      if (shouldAwardPoints) {
+        await awardCompletedTaskPoints(taskId);
+        setPointsEmployees(await listStaffPointBalances());
+      }
+      const updated = { ...mapTaskRow(row), pointsAwarded: shouldAwardPoints ? true : mapTaskRow(row).pointsAwarded, assignedToName: task.assignedToName };
       setTasks(current => current.map(item => item.id === taskId ? updated : item));
       if (shouldAwardPoints) {
-        savePointsEmployees(adjustEmployeePoints(pointsEmployees, { id: task.assignedTo, name: task.assignedToName }, task.pointsValue, { type: "earned", description: `تم إضافة ${task.pointsValue} نقطة بسبب إكمال المهمة: ${task.title}`, transactionId: `task-${task.id}` }));
         setNotificationMessage(`✅ تم إضافة ${task.pointsValue} نقطة لـ ${task.assignedToName}`);
         setShowNotification(true);
         setTimeout(() => setShowNotification(false), 3000);
@@ -218,7 +202,7 @@ export default function Tasks() {
     toast.success("تم حذف سجل المخالفة.");
   };
 
-  const handleApplyPenalty = (rule: PenaltyRule) => {
+  const handleApplyPenalty = async (rule: PenaltyRule) => {
     const employee = employees.find(item => item.id === penaltyEmployeeId);
     if (!employee) {
       toast.error("اختر الموظف أولاً لتطبيق خصم النقاط.");
@@ -226,19 +210,16 @@ export default function Tasks() {
     }
     const penaltyLogId = `penalty-log-${Date.now()}`;
     const description = `تم خصم ${rule.pointsDeducted} نقطة بسبب مخالفة: ${rule.name}`;
-    const updatedPointsEmployees = adjustEmployeePoints(
-      pointsEmployees,
-      employee,
-      -rule.pointsDeducted,
-      { type: "deduction", description, transactionId: `penalty-${penaltyLogId}` },
-    );
-    savePointsEmployees(updatedPointsEmployees);
-    setPenaltyLogs(current => [
-      { id: penaltyLogId, employeeId: employee.id, employeeName: employee.name, ruleName: rule.name, pointsDeducted: rule.pointsDeducted, date: new Date().toLocaleString("ar-EG"), description },
-      ...current,
-    ]);
-    const balance = findPointsEmployee(updatedPointsEmployees, employee)?.currentPoints ?? 0;
-    toast.success(`تم خصم ${rule.pointsDeducted} نقطة من ${employee.name}. الرصيد الحالي: ${balance} نقطة.`);
+    try {
+      await applyStaffPointAdjustment({ employeeId: employee.id, pointsDelta: -rule.pointsDeducted, entryType: "penalty", sourceId: `penalty:${penaltyLogId}`, description });
+      const updatedPointsEmployees = await listStaffPointBalances();
+      setPointsEmployees(updatedPointsEmployees);
+      setPenaltyLogs(current => [{ id: penaltyLogId, employeeId: employee.id, employeeName: employee.name, ruleName: rule.name, pointsDeducted: rule.pointsDeducted, date: new Date().toLocaleString("ar-EG"), description }, ...current]);
+      const balance = findPointsEmployee(updatedPointsEmployees, employee)?.currentPoints ?? 0;
+      toast.success(`تم خصم ${rule.pointsDeducted} نقطة من ${employee.name}. الرصيد الحالي: ${balance} نقطة.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ خصم النقاط سحابياً.");
+    }
   };
 
   const handleDelete = async (id: string) => {
