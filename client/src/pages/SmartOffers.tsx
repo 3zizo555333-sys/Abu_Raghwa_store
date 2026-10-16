@@ -100,31 +100,31 @@ interface GiftDeliveryLog {
 }
 
 const DEFAULT_STRATEGIES: OfferStrategy[] = [
-  { id: "s1", name: "خصم مباشر 10% من السعر القطاعي", category: "daily", description: "خصم فوري 10% على سعر القطاعي" },
-  { id: "s2", name: "خصم مباشر 15% لعرض اليوم", category: "daily", description: "خصم قوي ومميز ليوم واحد" },
-  { id: "s3", name: "اشتري قطعتين واحصل على خصم مضاعف", category: "daily", description: "عرض التوفير المزدوج" },
-  { id: "s4", name: "تخفيض ثابت 5 جنيه من القطاعي", category: "daily", description: "خصم قيمته 5 جنيه مباشرة" },
-  { id: "s5", name: "تخفيض ثابت 10 جنيه من القطاعي", category: "daily", description: "خصم قيمته 10 جنيه مباشرة" },
-  { id: "s6", name: "عرض الجمعة الكبرى (خصم 20% قطاعي)", category: "weekly", description: "أقوى خصم أسبوعي يوم الجمعة" },
-  { id: "s7", name: "باكدج تنظيف اقتصادي", category: "weekly", description: "مجموعة منتجات بأسعار خاصة" },
-  { id: "s8", name: "تخفيض أسبوعي على الأصناف المميزة", category: "weekly", description: "خصم على المنتجات الأكثر طلباً" },
-  { id: "s9", name: "عرض الأصدقاء (قطعتين وثالثة هدية)", category: "weekly", description: "عرض ترويجي ممتاز" },
-  { id: "s10", name: "تصفية مخزون سريعة (بدون خسارة)", category: "monthly", description: "عرض سعر خاص لتسريع البيع" },
-  { id: "s11", name: "عرض الشهر الكبير (تخفيض الكبرى)", category: "monthly", description: "أفضل عروض الشهر الاقتصادية" },
-  { id: "s12", name: "عرض العميل المميز الدائم", category: "monthly", description: "مكافأة عملاء أبو رغوة الدائمين" },
-  { id: "s13", name: "عرض باكدج البيت المتكامل", category: "monthly", description: "مجموعة منظفات شاملة بسعر خاص" },
-  { id: "s14", name: "عرض المناسبات والأعياد الكبرى", category: "seasonal", description: "احتفالية أصل الرغوة في مصر" },
-  { id: "s15", name: "العرض الموسمي لفصل الشتاء", category: "seasonal", description: "منظفات ومعطرات الشتاء الخاصة" },
-  { id: "s16", name: "العرض الموسمي لفصل الصيف", category: "seasonal", description: "منظفات ومعطرات الصيف المنعشة" },
-  { id: "s17", name: "عرض التحضيرات الكبرى للمنزل", category: "seasonal", description: "عروض نظافة المنازل الكبرى" },
-  { id: "s18", name: "عرض التوفير العائلي الضخم", category: "custom", description: "كميات اقتصادية للأسرة المصرية" },
-  { id: "s19", name: "عرض الجركن السحري + هدية", category: "custom", description: "اشتري جركن وخذ منتج إضافي" },
-  { id: "s20", name: "العرض الذكي المخصص (ابتكار أبو رغوة)", category: "custom", description: "توليد ذكي ومبتكر يومياً" },
-  { id: "s21", name: "BOGO 1+1 — اشترِ قطعة واحصل على أخرى", category: "daily", description: "قطعة إضافية مجانية عند شراء القطعة الأساسية" },
-  { id: "s22", name: "BOGO 2+1 — اشترِ قطعتين والثالثة هدية", category: "weekly", description: "ثلاث قطع بسعر قطعتين وفق تفاصيل العرض" },
-  { id: "s23", name: "خصم القطعة الثانية 50%", category: "daily", description: "خصم نصف السعر على القطعة الثانية" },
-  { id: "s24", name: "Mix & Match — التشكيلة الحرة", category: "weekly", description: "اختر أصنافك بحرية داخل باكدج بسعر موحد" },
-  { id: "s25", name: "عرض Refill — خصم العبوة الفارغة", category: "monthly", description: "خصم تشجيعي عند إعادة تعبئة العبوة" }
+  { id: "bogo_1_1", name: "1. اشترِ 1 واحصل على 1 مجاناً (BOGO 1+1)", category: "daily", description: "اشترِ قطعة واحصل على قطعة أخرى مجاناً." },
+  { id: "bogo_2_1", name: "2. اشترِ 2 واحصل على 1 مجاناً (2+1 مجاناً)", category: "weekly", description: "اشترِ قطعتين واحصل على الثالثة مجاناً." },
+  { id: "bogo_half", name: "3. القطعة الثانية بنصف السعر (خصم 50%)", category: "daily", description: "خصم 50% على القطعة الثانية." },
+  { id: "bundle_cleaning", name: "4. باكدج التوفير التكاملي (مسحوق + معطر + كلور)", category: "custom", description: "باكدج متكامل من منتجات التنظيف بسعر آمن." },
+  { id: "bundle_bridal", name: "5. باكدج تجهيز العروسة / التجهيز المنزلي", category: "custom", description: "باكدج تجهيز منزلي شامل." },
+  { id: "mix_match", name: "6. التشكيلة الحرة (اختر أي 3 أصناف بسعر موحد)", category: "weekly", description: "اختر أي 3 أصناف بسعر موحد." },
+  { id: "volume_tier", name: "7. الخصم المتدرج للكميات (كلما زادت الكمية قل السعر)", category: "weekly", description: "كلما زادت الكمية قل السعر مع الحفاظ على التكلفة." },
+  { id: "spend_save", name: "8. خصم الحد الأدنى (اشترِ بـ 300 ج واحصل على خصم 50 ج)", category: "monthly", description: "خصم عند تجاوز حد شراء محدد." },
+  { id: "free_gift_thresh", name: "9. هدية فورية عند وصول حد شراء معين", category: "custom", description: "هدية فورية عند الوصول إلى حد الشراء." },
+  { id: "loss_leader", name: "10. صنف الجذب الحارق (سعر الجملة/التكلفة لجلب الزبائن)", category: "daily", description: "سعر جذب لا يقل عن سعر الجملة/التكلفة." },
+  { id: "flash_sale", name: "11. فلاش سيل / الساعات الذهبية (خصم لساعتين فقط)", category: "daily", description: "خصم محدود خلال الساعات الذهبية." },
+  { id: "clearance", name: "12. تصفية المخزون الراكد (سعر التكلفة لتحريك السيولة)", category: "custom", description: "تصفية آمنة للمخزون الراكد دون بيع بأقل من التكلفة." },
+  { id: "double_points", name: "13. مضاعفة نقاط الولاء (نقاط 2x أو 3x)", category: "monthly", description: "نقاط ولاء مضاعفة أو ثلاثية." },
+  { id: "family_bulk", name: "14. الحجم العائلي التوفيري (جراكن وعبوات ضخمة)", category: "monthly", description: "حجم عائلي توفيري للعبوات الكبيرة." },
+  { id: "refill_discount", name: "15. خصم إعادة التعبئة بالعبوة الفارغة (Refill)", category: "monthly", description: "خصم عند إعادة التعبئة بالعبوة الفارغة." },
+  { id: "weekend_special", name: "16. عروض نهاية الأسبوع (الخميس والجمعة)", category: "weekly", description: "عرض خاص لنهاية الأسبوع." },
+  { id: "payday_stock", name: "17. عروض بداية الشهر والرواتب (تموين البيت)", category: "weekly", description: "عرض تموين البيت مع بداية الشهر." },
+  { id: "sample_pack", name: "18. عينة تجريبية مجانية مع المنتج الأساسي", category: "custom", description: "عينة مجانية مع المنتج الأساسي." },
+  { id: "flat_price", name: "19. السعر الموحد للرف (أي قطعة بـ 20 ج)", category: "custom", description: "سعر موحد للأصناف المختارة." },
+  { id: "mystery_bag", name: "20. شنطة التوفير العشوائية / المفاجآت", category: "custom", description: "شنطة مفاجآت بقيمة توفير آمنة." },
+  { id: "slow_day", name: "21. منشط الأيام الهادئة (خصم خاص لأيام الركود)", category: "daily", description: "خصم خاص لأيام الركود مع حماية التكلفة." },
+  { id: "vip_tier", name: "22. عرض حصري لكبار العملاء (VIP)", category: "monthly", description: "عرض حصري لعملاء VIP." },
+  { id: "cross_cat", name: "23. اشترِ منظف واحصل على خصم على أدوات النظافة", category: "weekly", description: "خصم متقاطع بين فئات التنظيف." },
+  { id: "seasonal", name: "24. عروض المواسم والأعياد", category: "seasonal", description: "عرض موسمي أو احتفالي." },
+  { id: "scratch_win", name: "25. كارت اكشط واربح مع كل عملية شراء", category: "seasonal", description: "كارت اكشط واربح مع كل عملية شراء." }
 ];
 
 const RANDOM_GIFT_POOL = [
@@ -199,7 +199,7 @@ export default function SmartOffers() {
   const [newRewardGift, setNewRewardGift] = useState("");
   const [newRewardCost, setNewRewardCost] = useState("");
   const [catalogSessionReady, setCatalogSessionReady] = useState(() => Boolean(browserState.get("abu_catalog_admin_token")));
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("تعذر مزامنة دفتر نقاط العملاء مع لوحة الإدارة") });
+  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => { setCustomersList([]); setCatalogSessionReady(false); } });
   const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const redeemLoyaltyReward = trpc.catalog.redeemLoyaltyReward.useMutation();
@@ -567,6 +567,11 @@ export default function SmartOffers() {
   // تأكيد وتفعيل العرض وحفظه عبر الخادم العام لضمان عمله من أي هاتف زبون
   const handleActivateAndPublishOffer = async () => {
     if (!currentOffer) return;
+    const itemCostTotal = currentOffer.items.reduce((sum, item) => sum + Math.max(0, Number(item.costPrice) || 0), 0);
+    if (Number(currentOffer.offerPrice) < itemCostTotal || Number(currentOffer.offerPrice) < Number(currentOffer.totalCostPrice)) {
+      toast.error("سعر العرض لا يمكن أن يقل عن سعر الجملة/التكلفة لضمان عدم الخسارة");
+      return;
+    }
 
     const activatedOffer: SmartOffer = {
       ...currentOffer,
@@ -579,8 +584,12 @@ export default function SmartOffers() {
     const finalOffer: SmartOffer = { ...activatedOffer, qrCodeDataUrl: qrDataUrl };
     // المسار القديم محفوظ عمداً للتوافق، والجدول السحابي الجديد هو النسخة الإضافية الدائمة.
     try {
-      await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
-      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, strategy: finalOffer.strategyName, originalPrice: finalOffer.originalTotalRetail, offerPrice: finalOffer.offerPrice, startDate: finalOffer.startDate, pointsReward: finalOffer.loyaltyPoints, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      try {
+        await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
+      } catch (legacyError) {
+        console.warn("Legacy offer mirror failed after direct Supabase save", legacyError);
+      }
     } catch (e) {
       console.error("Failed to save offer to cloud", e);
       toast.error("تعذر إتمام حفظ العرض في السحابة؛ لم يتم إعلان نجاح التفعيل. تحقق من الاتصال ثم أعد المحاولة.");
@@ -1271,7 +1280,15 @@ export default function SmartOffers() {
 
                 <select
                   value={selectedStrategyId}
-                  onChange={(e) => setSelectedStrategyId(e.target.value)}
+                  onChange={(e) => {
+                    const nextId = e.target.value;
+                    const nextStrategy = strategies.find(strategy => strategy.id === nextId);
+                    setSelectedStrategyId(nextId);
+                    if (nextStrategy) {
+                      setManualTitle(nextStrategy.name);
+                      setManualDescription(nextStrategy.description);
+                    }
+                  }}
                   className="w-full p-3 border rounded-xl font-bold text-sm bg-white shadow-sm focus:ring-2 focus:ring-orange-500"
                 >
                   {strategies.map((st) => (

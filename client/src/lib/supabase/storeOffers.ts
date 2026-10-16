@@ -10,6 +10,11 @@ type OfferRecord = {
   title: string;
   bannerTitle?: string;
   description?: string;
+  strategy?: string;
+  originalPrice?: number;
+  offerPrice?: number;
+  startDate?: string;
+  pointsReward?: number;
   offerData: Record<string, unknown>;
   startAt?: number;
   endAt?: number;
@@ -29,6 +34,13 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
     store_id: shopId,
     title: offer.title,
     banner_title: offer.bannerTitle || "",
+    description: offer.description || "",
+    strategy: offer.strategy || String((offer.offerData.strategyName as string | undefined) || ""),
+    original_price: typeof offer.originalPrice === "number" && Number.isFinite(offer.originalPrice) ? offer.originalPrice : Number((offer.offerData.originalTotalRetail as number | undefined) || 0),
+    offer_price: typeof offer.offerPrice === "number" && Number.isFinite(offer.offerPrice) ? offer.offerPrice : Number((offer.offerData.offerPrice as number | undefined) || 0),
+    start_date: offer.startDate || null,
+    expires_at: toIso(offer.endAt),
+    points_reward: Math.max(0, Math.trunc(Number(offer.pointsReward ?? offer.offerData.loyaltyPoints ?? 0) || 0)),
     public_description: offer.description || "",
     offer_data: JSON.parse(JSON.stringify(offer.offerData)),
     starts_at: toIso(offer.startAt),
