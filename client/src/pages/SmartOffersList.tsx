@@ -1,6 +1,6 @@
 import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Sparkles, Trash2, XCircle } from "lucide-react";
+import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, Sparkles, Trash2, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,6 +8,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { useShopFeatureState } from "@/lib/supabase/featureState";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
+import { deleteStoreOffer } from "@/lib/supabase/storeOffers";
 
 interface SmartOffer {
   id: string;
@@ -62,6 +63,7 @@ export default function SmartOffersList() {
 
     try {
       await deleteOfferMutation.mutateAsync({ id: offer.id });
+      try { await deleteStoreOffer(offer.id); } catch { toast.warning("تم حذف العرض من المسار الأساسي، لكن تعذر حذف النسخة السحابية الثانوية."); }
       setLegacySavedOffers(previous => previous.filter((item) => item.id !== offer.id));
       await trpcUtils.offers.list.invalidate();
 
@@ -132,9 +134,12 @@ export default function SmartOffersList() {
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <Button type="button" variant="outline" onClick={() => setExpandedOfferId(isExpanded ? null : offer.id)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
               <Eye className="ml-1 h-4 w-4" /> {isExpanded ? "إخفاء التفاصيل" : "عرض التفاصيل"}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => navigate(`/smart-offers?edit=${encodeURIComponent(offer.id)}`)} className="border-indigo-200 text-indigo-700 hover:bg-indigo-50">
+              <Pencil className="ml-1 h-4 w-4" /> تعديل يدوي
             </Button>
             <Button type="button" variant="outline" disabled={deleteOfferMutation.isPending} onClick={() => handleDeleteOffer(offer)} className="border-red-200 text-red-700 hover:bg-red-50">
               <Trash2 className="ml-1 h-4 w-4" /> حذف العرض

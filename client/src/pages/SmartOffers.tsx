@@ -15,9 +15,11 @@ import { createOfferForStrategy, type OfferCandidate } from "@/lib/offerStrategy
 import { createOfferId } from "@/lib/offerIds";
 import { updateLoyaltyRewardPoints, upsertLoyaltyRewardLevel } from "@/lib/loyaltyRewards";
 import { calculateManualOfferPrice, type ManualDiscountType } from "@/lib/manualOffer";
-import { createOfferExpiryWindow, formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
+import { createOfferExpiryWindow, formatOfferTimeRemaining, getOfferExpiryInfo, parseLegacyOfferDate } from "@/lib/offerExpiry";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
+import { listStoreOfferOrders, saveStoreOffer, updateStoreOfferOrderStatus, type CloudOfferOrder } from "@/lib/supabase/storeOffers";
+import { OfferVideoScriptButton } from "@/components/OfferVideoScript";
 
 interface Product {
   id: string;
@@ -116,7 +118,12 @@ const DEFAULT_STRATEGIES: OfferStrategy[] = [
   { id: "s17", name: "عرض التحضيرات الكبرى للمنزل", category: "seasonal", description: "عروض نظافة المنازل الكبرى" },
   { id: "s18", name: "عرض التوفير العائلي الضخم", category: "custom", description: "كميات اقتصادية للأسرة المصرية" },
   { id: "s19", name: "عرض الجركن السحري + هدية", category: "custom", description: "اشتري جركن وخذ منتج إضافي" },
-  { id: "s20", name: "العرض الذكي المخصص (ابتكار أبو رغوة)", category: "custom", description: "توليد ذكي ومبتكر يومياً" }
+  { id: "s20", name: "العرض الذكي المخصص (ابتكار أبو رغوة)", category: "custom", description: "توليد ذكي ومبتكر يومياً" },
+  { id: "s21", name: "BOGO 1+1 — اشترِ قطعة واحصل على أخرى", category: "daily", description: "قطعة إضافية مجانية عند شراء القطعة الأساسية" },
+  { id: "s22", name: "BOGO 2+1 — اشترِ قطعتين والثالثة هدية", category: "weekly", description: "ثلاث قطع بسعر قطعتين وفق تفاصيل العرض" },
+  { id: "s23", name: "خصم القطعة الثانية 50%", category: "daily", description: "خصم نصف السعر على القطعة الثانية" },
+  { id: "s24", name: "Mix & Match — التشكيلة الحرة", category: "weekly", description: "اختر أصنافك بحرية داخل باكدج بسعر موحد" },
+  { id: "s25", name: "عرض Refill — خصم العبوة الفارغة", category: "monthly", description: "خصم تشجيعي عند إعادة تعبئة العبوة" }
 ];
 
 const RANDOM_GIFT_POOL = [
@@ -155,7 +162,7 @@ function buildOfferCandidates(products: Product[], recipes: Recipe[]): OfferCand
 }
 
 export default function SmartOffers() {
-  const [, navigate] = useLocation();
+  const [location, navigate] = useLocation();
   const { isSeller } = useStaffAccess();
   const [products, setProducts] = useState<Product[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
@@ -183,6 +190,7 @@ export default function SmartOffers() {
 
   const [customersList, setCustomersList] = useState<CustomerLoyalty[]>([]);
   const [showCustomers, setShowCustomers] = useState(false);
+  const [cloudOfferOrders, setCloudOfferOrders] = useState<CloudOfferOrder[]>([]);
   const [rewardLevels, setRewardLevels] = useShopFeatureState<RewardLevel[]>("abu_reward_levels", DEFAULT_REWARDS);
   const [deliveryLogs, setDeliveryLogs, , flushDeliveryLogs] = useShopFeatureState<GiftDeliveryLog[]>("abu_gift_delivery_logs", []);
   const [newRewardPoints, setNewRewardPoints] = useState("");
@@ -210,6 +218,7 @@ export default function SmartOffers() {
     ? calculateManualOfferPrice(selectedManualCandidate.retailPrice, selectedManualCandidate.costPrice, manualDiscountType, Number(manualDiscountValue))
     : null;
   const currentOfferExpiry = currentOffer ? getOfferExpiryInfo(currentOffer, now) : null;
+  const editOfferId = new URLSearchParams(location.split("?")[1] || "").get("edit");
   const toMarketingPost = (offer: SmartOffer) => ({
     kind: "offer" as const,
     title: offer.title,
@@ -252,6 +261,19 @@ export default function SmartOffers() {
     if (!loyaltyCustomersQuery.data) return;
     setCustomersList(loyaltyCustomersQuery.data as CustomerLoyalty[]);
   }, [loyaltyCustomersQuery.data]);
+  useEffect(() => {
+    if (isSeller) return;
+    let active = true;
+    const refresh = async () => {
+      try {
+        const orders = await listStoreOfferOrders();
+        if (active) setCloudOfferOrders(orders);
+      } catch { /* keep the existing legacy request panel available */ }
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), 10_000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [isSeller]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -259,11 +281,19 @@ export default function SmartOffers() {
   }, []);
 
   useEffect(() => {
+    if (editOfferId) {
+      const requestedOffer = savedOffersList.find(offer => offer.id === editOfferId);
+      if (requestedOffer && currentOffer?.id !== requestedOffer.id) {
+        setCurrentOffer(requestedOffer);
+        setEditablePrice(String(requestedOffer.offerPrice));
+      }
+      return;
+    }
     if (!currentOffer && savedOffersList[0]) {
       setCurrentOffer(savedOffersList[0]);
       setEditablePrice(savedOffersList[0].offerPrice.toString());
     }
-  }, [currentOffer, savedOffersList]);
+  }, [currentOffer, editOfferId, savedOffersList]);
 
   const handleUpdateRewardGift = (index: number, newGift: string) => {
     const updated = [...rewardLevels];
@@ -542,34 +572,22 @@ export default function SmartOffers() {
       isActivated: true
     };
 
-    // حفظ العرض في قاعدة البيانات عبر الخادم ليعمل على أي هاتف خارجي
+    // توليد QR قبل الحفظ حتى يحمل السجل السحابي الصورة النهائية نفسها.
+    const shortUrl = `${window.location.origin}/public-offer?id=${activatedOffer.id}`;
+    const qrDataUrl = await QRCode.toDataURL(shortUrl, { width: 350, margin: 4, errorCorrectionLevel: "M" });
+    const finalOffer: SmartOffer = { ...activatedOffer, qrCodeDataUrl: qrDataUrl };
+    // المسار القديم محفوظ عمداً للتوافق، والجدول السحابي الجديد هو النسخة الإضافية الدائمة.
     try {
-      await saveOfferMutation.mutateAsync({
-        id: activatedOffer.id,
-        offerData: JSON.stringify(activatedOffer)
-      });
+      await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
+      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, description: finalOffer.description, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
     } catch (e) {
-      console.error("Failed to save offer to server", e);
-      toast.error("تعذر حفظ العرض في السحابة، لم يتم تفعيله. تحقق من الاتصال ثم أعد المحاولة.");
+      console.error("Failed to save offer to cloud", e);
+      toast.error("تعذر إتمام حفظ العرض في السحابة؛ لم يتم إعلان نجاح التفعيل. تحقق من الاتصال ثم أعد المحاولة.");
       return;
     }
-
-    // احتياطياً للتخزين المحلي أيضاً
     const existingGlobalOffers = JSON.parse(browserState.get("abu_raghwa_global_offers") || "{}");
-    existingGlobalOffers[activatedOffer.id] = activatedOffer;
+    existingGlobalOffers[finalOffer.id] = finalOffer;
     browserState.set("abu_raghwa_global_offers", JSON.stringify(existingGlobalOffers));
-
-    // رابط قصير جداً يفتح الكوبون مباشرة
-    const shortUrl = `${window.location.origin}/public-offer?id=${activatedOffer.id}`;
-    
-    // توليد QR بدقة عالية وهامش أبيض واسع (margin: 4) لضمان القراءة الفورية بماسح جوجل وكاميرا الهاتف
-    const qrDataUrl = await QRCode.toDataURL(shortUrl, { width: 350, margin: 4, errorCorrectionLevel: 'M' });
-
-    const finalOffer: SmartOffer = {
-      ...activatedOffer,
-      qrCodeDataUrl: qrDataUrl
-    };
-
     setLegacySavedOffersList(previous => [finalOffer, ...previous.filter(o => o.id !== finalOffer.id)]);
     await trpcUtils.offers.list.invalidate();
 
@@ -597,6 +615,22 @@ export default function SmartOffers() {
       };
       setCurrentOffer(updated);
     }
+  };
+  const updateCurrentOfferField = (field: "title" | "description" | "startDate" | "endDate", value: string) => {
+    setCurrentOffer(previous => {
+      if (!previous) return previous;
+      const parsedDate = field === "startDate" || field === "endDate" ? parseLegacyOfferDate(value) : null;
+      return { ...previous, [field]: value, ...(parsedDate ? field === "startDate" ? { startAt: parsedDate } : { endAt: parsedDate } : {}) };
+    });
+  };
+  const updateCurrentOfferItemPrice = (index: number, value: string) => {
+    const price = Number(value);
+    if (!Number.isFinite(price) || price < 0) return;
+    setCurrentOffer(previous => {
+      if (!previous) return previous;
+      const items = previous.items.map((item, itemIndex) => itemIndex === index ? { ...item, offerPrice: price } : item);
+      return { ...previous, items };
+    });
   };
 
   const getShareText = () => {
@@ -803,7 +837,9 @@ export default function SmartOffers() {
                               if (!window.confirm(`هل تؤكد اكتمال شراء «${request.offerTitle}» بواسطة ${request.customerName}؟ ستضاف ${request.offerPoints} نقطة إلى الكود ${request.customerCode}.`)) return;
                               try {
                                 const result = await approveOfferPurchase.mutateAsync({ id: request.id });
+                                try { await updateStoreOfferOrderStatus(request.id, "approved"); } catch { toast.warning("تم اعتماد الطلب، لكن تعذر تحديث نسخته السحابية."); }
                                 await offerPurchaseRequestsQuery.refetch();
+                                setCloudOfferOrders(previous => previous.map(order => order.id === request.id ? { ...order, status: "approved" } : order));
                                 toast.success(result.awardedPoints > 0 ? `تم تأكيد البيع وإضافة ${result.awardedPoints} نقطة إلى ${request.customerCode}.` : "تم تأكيد البيع؛ هذا العرض لا يمنح نقاطًا إضافية.");
                               } catch (error) {
                                 toast.error(error instanceof Error ? error.message : "تعذر تأكيد طلب العرض");
@@ -815,7 +851,9 @@ export default function SmartOffers() {
                               if (!window.confirm(`هل تريد رفض طلب ${request.customerName}؟ لن تُضاف نقاط.`)) return;
                               try {
                                 await cancelOfferPurchase.mutateAsync({ id: request.id });
+                                try { await updateStoreOfferOrderStatus(request.id, "cancelled"); } catch { toast.warning("تم إلغاء الطلب، لكن تعذر تحديث نسخته السحابية."); }
                                 await offerPurchaseRequestsQuery.refetch();
+                                setCloudOfferOrders(previous => previous.map(order => order.id === request.id ? { ...order, status: "cancelled" } : order));
                                 toast.success("تم إلغاء الطلب دون إضافة نقاط.");
                               } catch (error) {
                                 toast.error(error instanceof Error ? error.message : "تعذر إلغاء الطلب");
@@ -837,6 +875,14 @@ export default function SmartOffers() {
             )}
           </CardContent>
         </Card>
+        {cloudOfferOrders.length > 0 && (
+          <Card className="border-2 border-blue-200 shadow-md">
+            <CardHeader className="bg-blue-50 pb-3"><CardTitle className="flex items-center justify-between gap-2 text-base text-blue-950"><span className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-blue-600" /> نسخة الطلبات السحابية</span><span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-black text-white">{cloudOfferOrders.filter(order => order.status === "pending").length} معلّق</span></CardTitle></CardHeader>
+            <CardContent className="space-y-2 p-4">
+              {cloudOfferOrders.map(order => <article key={order.id} className={`rounded-xl border p-3 ${order.status === "pending" ? "border-blue-200 bg-blue-50/60" : "border-gray-200 bg-white"}`}><div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="font-black text-gray-900">{order.offer_title}</p><p className="text-sm text-gray-700">{order.customer_name} · كود <strong dir="ltr">{order.customer_code}</strong></p><p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleString("ar-EG")} · {order.points_cost} نقطة</p></div><span className={`rounded-full px-3 py-1 text-xs font-black ${order.status === "approved" ? "bg-green-100 text-green-800" : order.status === "cancelled" ? "bg-gray-100 text-gray-600" : "bg-amber-100 text-amber-800"}`}>{order.status === "approved" ? "موافق عليه" : order.status === "cancelled" ? "ملغي" : "بانتظار الموافقة"}</span></div></article>)}
+            </CardContent>
+          </Card>
+        )}
 
         {/* 🏆 تقرير نتائج العروض */}
         {showResultsReport && (
@@ -1271,18 +1317,20 @@ export default function SmartOffers() {
                       <p className="text-xs text-gray-600 mt-1 font-semibold">استراتيجية: {currentOffer.strategyName} | صالح حتى: {currentOffer.endDate}</p>
                       {currentOfferExpiry && <p className={`mt-1 text-xs font-black ${currentOfferExpiry.status === "active" ? "text-green-700" : "text-red-700"}`}>{formatOfferTimeRemaining(currentOfferExpiry)}</p>}
                     </div>
-                    {currentOffer.isActivated ? (
-                      <span className="bg-green-600 text-white text-xs px-3 py-1 rounded-full font-black flex items-center gap-1">
-                        <CheckCircle2 className="w-4 h-4" /> العرض مفعّل وباركود الكوبون جاهز ✅
-                      </span>
-                    ) : (
-                      <Button
-                        onClick={handleActivateAndPublishOffer}
-                        className="bg-green-600 hover:bg-green-700 text-white text-sm font-black py-2 px-5 rounded-xl shadow-lg animate-bounce flex items-center gap-1.5"
-                      >
-                        <Check className="w-4 h-4" /> تأكيد وتفعيل العرض 🔒
+                    <div className="flex flex-wrap items-center gap-2">
+                      {currentOffer.isActivated && <span className="bg-green-600 text-white text-xs px-3 py-1 rounded-full font-black flex items-center gap-1"><CheckCircle2 className="w-4 h-4" /> العرض مفعّل وباركود الكوبون جاهز ✅</span>}
+                      <Button onClick={handleActivateAndPublishOffer} className="bg-green-600 hover:bg-green-700 text-white text-sm font-black py-2 px-5 rounded-xl shadow-lg flex items-center gap-1.5">
+                        <Check className="w-4 h-4" /> {currentOffer.isActivated ? "حفظ التعديلات السحابية" : "تأكيد وتفعيل العرض 🔒"}
                       </Button>
-                    )}
+                    </div>
+                  </div>
+
+                  <div className="grid gap-3 rounded-xl border border-indigo-200 bg-white p-4 md:grid-cols-2">
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان العرض</label><Input value={currentOffer.title} onChange={event => updateCurrentOfferField("title", event.target.value)} /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">وصف العرض</label><Input value={currentOffer.description} onChange={event => updateCurrentOfferField("description", event.target.value)} /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>
+                    <p className="text-[11px] text-indigo-700 md:col-span-2">يمكن تعديل كل قيمة يدوياً ثم الضغط على «حفظ التعديلات السحابية» أو «تأكيد وتفعيل العرض».</p>
                   </div>
 
                   <div className="space-y-3">
@@ -1294,7 +1342,8 @@ export default function SmartOffers() {
                           <p className="text-xs text-gray-500">السعر القطاعي: <strong className="text-blue-600">{item.retailPrice} ج.م</strong></p>
                         </div>
                         <div className="text-left">
-                          <span className="text-sm font-black text-green-700">سعر الصنف في العرض: {item.offerPrice} ج.م</span>
+                          <label className="mb-1 block text-xs font-bold text-slate-600">سعر الصنف في العرض</label>
+                          <Input type="number" min="0" value={item.offerPrice} onChange={event => updateCurrentOfferItemPrice(idx, event.target.value)} className="w-32 text-left font-black text-green-700" />
                         </div>
                       </div>
                     ))}
@@ -1392,7 +1441,8 @@ export default function SmartOffers() {
                   {/* أزرار المشاركة والتحميل والطباعة */}
                   {currentOffer.isActivated && (
                     <div className="flex flex-wrap justify-center gap-3 pt-2">
-                      <MarketingShareButton post={toMarketingPost(currentOffer)} />
+                      <MarketingShareButton post={toMarketingPost(currentOffer)} label="توليد نص إعلاني (فيسبوك / واتساب)" />
+                      <OfferVideoScriptButton offer={currentOffer} />
                       <Button
                         onClick={() => {
                           toast.info("📸 استخدم لقطة الشاشة (Screen Shot) للكوبون أو زر الطباعة أدناه");

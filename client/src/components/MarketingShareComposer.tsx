@@ -60,7 +60,7 @@ export const buildProfessionalPost = (post: MarketingPost, headline: string, ben
   return `🌟 ${safeHeadline}\n\n${variantOpening}\n\n${selectedTone.intro(safeHeadline)}${benefitsBlock}\n\n${priceLine}${oldPriceLine}${discountLine}\n\n📍 متاح الآن من أبو رغوة\n📞 للتواصل والطلب: 01096935599\n${variantClosing}\n${selectedTone.callToAction}\n\n#أبو_رغوة #عروض_أبو_رغوة #اختيارك_الأفضل`;
 };
 
-export function MarketingShareButton({ post, compact = false }: { post: MarketingPost; compact?: boolean }) {
+export function MarketingShareButton({ post, compact = false, label }: { post: MarketingPost; compact?: boolean; label?: string }) {
   const [open, setOpen] = useState(false);
   const [headline, setHeadline] = useState(post.title);
   const [benefits, setBenefits] = useState("");
@@ -124,7 +124,7 @@ export function MarketingShareButton({ post, compact = false }: { post: Marketin
 
   return <>
     <Button type="button" size={compact ? "sm" : "default"} variant={compact ? "outline" : "default"} onClick={() => setOpen(true)} className={compact ? "border-violet-200 text-violet-700 hover:bg-violet-50" : "bg-violet-600 text-white hover:bg-violet-700"}>
-      <Share2 className="ml-1 h-4 w-4" /> {compact ? "مشاركة" : "صمّم وشارك منشورًا"}
+      <Share2 className="ml-1 h-4 w-4" /> {label || (compact ? "مشاركة" : "صمّم وشارك منشورًا")}
     </Button>
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogContent className="max-h-[90vh] max-w-2xl overflow-y-auto" dir="rtl">

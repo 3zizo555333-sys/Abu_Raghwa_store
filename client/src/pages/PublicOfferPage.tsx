@@ -9,6 +9,7 @@ import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry"
 import { buildLoyaltyPageHref } from "@/lib/loyaltyLookup";
 import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
 import { shouldDisableOfferPurchaseButton } from "@/lib/offerPurchaseUi";
+import { mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
 
 interface SmartOffer {
   id: string;
@@ -156,6 +157,11 @@ export default function PublicOfferPage() {
     }
     try {
       const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code });
+      try {
+        await mirrorPublicOfferOrder({ id: request.id, offerId: offer.id, customerName: customerRecord?.name || customerName, customerCode: code, customerPhone: customerRecord?.phone || customerPhone, pointsCost: offer.loyaltyPoints });
+      } catch {
+        toast.warning("تم إرسال الطلب للمحل، لكن تعذر إنشاء النسخة السحابية الثانوية.");
+      }
       setPurchaseRequestId(request.id);
       toast.success("وصل طلب شراء العرض إلى المحل. ستُضاف النقاط بعد تأكيد إتمام الشراء.");
     } catch (error) {
