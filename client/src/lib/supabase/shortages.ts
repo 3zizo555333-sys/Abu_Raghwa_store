@@ -99,6 +99,7 @@ export function subscribeToShortageRealtime(shopId: string, onChange: () => void
   const channel = client.channel(`shortages:${shopId}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "shortage_items", filter: `shop_id=eq.${shopId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "shortage_categories", filter: `shop_id=eq.${shopId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "shortage_manual_products", filter: `shop_id=eq.${shopId}` }, onChange)
     .subscribe();
   return () => { void client.removeChannel(channel); };
 }
@@ -181,6 +182,7 @@ export async function listCloudManualProducts(): Promise<CloudManualProduct[]> {
   const { shopId, role } = await getActiveShopContext();
   requireSupervisor(role);
   const result = await getSupabaseClient().from("shortage_manual_products").select("id, name, category_name, unit").eq("shop_id", shopId).is("deleted_at", null).order("name");
+  if (result.error && /schema cache|relation .* does not exist|could not find the table/i.test(result.error.message)) return [];
   return (requireCloudResult(result) as Pick<ManualProductRow, "id" | "name" | "category_name" | "unit">[]).map(row => ({ id: row.id, name: row.name, category: row.category_name, unit: row.unit }));
 }
 
