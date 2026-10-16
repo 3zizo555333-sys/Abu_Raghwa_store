@@ -54,7 +54,9 @@ export function recipeToCatalogProduct(recipe: CatalogRecipe): CatalogProduct {
     catalogVisible: recipe.catalogVisible === true,
     catalogPrice: recipe.catalogPrice,
     catalogOldPrice: recipe.catalogOldPrice,
-    catalogDescription: recipe.catalogDescription || recipe.notes || "",
+    // Internal recipe notes may contain ingredients or mixing instructions;
+    // only show the manager-approved catalog description on public screens.
+    catalogDescription: recipe.catalogDescription || "",
     catalogImageUrl: recipe.catalogImageUrl,
     catalogDetailsUrl: recipe.catalogDetailsUrl,
     loyaltyPoints: recipe.loyaltyPoints,

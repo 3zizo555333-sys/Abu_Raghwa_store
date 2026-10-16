@@ -11,7 +11,7 @@ import { storageGetSignedUrl, storagePreparePut, storagePut } from "./storage";
 import { parseInvoiceDataUrl, safeInvoiceFilename } from "./invoiceUpload";
 import { invokeLLM } from "./_core/llm";
 import { buildEmployeeFinanceSummary, EMPLOYEE_FINANCE_KEY, getMonthKey, hashEmployeeFinancePin, normalizeEmployeeFinanceStore, type EmployeeFinanceStore } from "./employeeFinance";
-import { publicOfferJson } from "./sharedOffers";
+import { publicOfferData, publicOfferJson } from "./sharedOffers";
 
 export const appRouter = router({
   system: systemRouter,
@@ -37,6 +37,13 @@ export const appRouter = router({
     list: publicProcedure.query(async ({ ctx }) => {
       await requireLegacySyncAccess(ctx.req, "abu_raghwa_offers");
       return db.listSharedOffers();
+    }),
+    listPublic: publicProcedure.query(async () => {
+      const offers = await db.listSharedOffers();
+      return (offers ?? []).flatMap(offer => {
+        const safeOffer = publicOfferData(offer);
+        return safeOffer && safeOffer.isActivated !== false ? [safeOffer] : [];
+      });
     }),
     get: publicProcedure
       .input(z.object({ id: z.string().min(1).max(64) }))

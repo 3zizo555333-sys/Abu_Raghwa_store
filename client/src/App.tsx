@@ -74,6 +74,8 @@ import { isPublicCustomerPath } from "@shared/pwaInstallability";
 import { syncPwaInstallability } from "./lib/pwaInstallability";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { isUserAllowed } from "@/lib/accessControl";
+import { canSellerAccessPath } from "@/lib/sellerAccess";
+import SellerNavigation from "@/components/SellerNavigation";
 
 const Home = lazy(() => import("./pages/Home"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -258,8 +260,8 @@ function App() {
   const hasStaffSession = Boolean(user && isUserAllowed(user));
   const routeScopeKey = `${user?.id ?? "guest"}:${user?.role ?? "none"}:${user?.status ?? "none"}:${hasStaffSession ? "active" : "restricted"}`;
   const syncReady = isPublicCustomerRoute || isAuthRoute || !authLoading;
-  const sellerAllowedPaths = new Set(["/sales", "/cashier", "/loyalty"]);
-  const sellerRestricted = !isPublicCustomerRoute && hasStaffSession && user?.role === "seller" && !sellerAllowedPaths.has(location.split("?")[0]);
+  const isSeller = hasStaffSession && user?.role === "seller";
+  const sellerRestricted = isSeller && !canSellerAccessPath(location);
   useEffect(() => {
     syncPwaInstallability(location);
   }, [location]);
@@ -270,13 +272,13 @@ function App() {
   useEffect(() => {
     if (isPublicCustomerRoute || authLoading) return;
     if (isAuthRoute) {
-      if (hasStaffSession) navigate("/dashboard");
+      if (hasStaffSession) navigate(user?.role === "seller" ? "/cashier" : "/dashboard");
       return;
     }
     if (!hasStaffSession) navigate("/auth");
-  }, [authLoading, hasStaffSession, isAuthRoute, isPublicCustomerRoute, navigate]);
+  }, [authLoading, hasStaffSession, isAuthRoute, isPublicCustomerRoute, navigate, user?.role]);
   if (!isPublicCustomerRoute && !isAuthRoute && !syncReady) return <PageLoadingSkeleton />;
-  if (sellerRestricted) return <main dir="rtl" className="fixed inset-0 z-[100] grid place-items-center bg-slate-50 p-5"><section className="w-full max-w-md rounded-3xl bg-white p-7 text-center shadow-xl"><h1 className="text-2xl font-bold text-slate-900">الوصول محصور بواجهة البيع</h1><p className="mt-3 text-slate-600">حساب البائع يتيح البيع السريع، وضع الصب، ونقاط العملاء فقط.</p><button type="button" onClick={() => navigate("/cashier")} className="mt-6 w-full rounded-xl bg-blue-700 px-4 py-3 font-bold text-white hover:bg-blue-800">فتح شاشة البيع</button></section></main>;
+  if (sellerRestricted) return <><SellerNavigation /><main dir="rtl" className="fixed inset-x-0 bottom-0 top-[76px] z-[100] grid place-items-center overflow-y-auto bg-slate-50 p-5"><section className="w-full max-w-md rounded-3xl bg-white p-7 text-center shadow-xl"><h1 className="text-2xl font-bold text-slate-900">هذه الصفحة غير متاحة لحساب البائع</h1><p className="mt-3 text-slate-600">يمكنك استخدام نقطة البيع، تصفح الكتالوج، ومشاهدة العروض العامة. التقارير والتكاليف وإدارة المنتجات والتركيبات محجوبة.</p><button type="button" onClick={() => navigate("/cashier")} className="mt-6 w-full rounded-xl bg-blue-700 px-4 py-3 font-bold text-white hover:bg-blue-800">فتح نقطة البيع</button></section></main></>;
   return (
     <ErrorBoundary>
       <Suspense fallback={<PageLoadingSkeleton />}>
@@ -287,6 +289,7 @@ function App() {
           >
             <TooltipProvider>
               <Toaster />
+              {isSeller && <SellerNavigation />}
               {/* Legacy snapshot synchronization is retired. Migrated pages use
                   typed Supabase tables/RPCs; remaining pages must not upload
                   local business-data snapshots. */}

@@ -7,6 +7,7 @@ const registrySource = readFileSync(resolve(import.meta.dirname, "../client/src/
 const homeSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/Home.tsx"), "utf8");
 const paymentSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/PaymentGateway.tsx"), "utf8");
 const publicOfferSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/PublicOfferPage.tsx"), "utf8");
+const sellerAccessSource = readFileSync(resolve(import.meta.dirname, "../client/src/lib/sellerAccess.ts"), "utf8");
 
 const registryEntries = [...registrySource.matchAll(/^[ \t]*\["([^\"]+)", "([^\"]+)",/gm)];
 const expectedKey = (path: string) => `screen__${path.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "root"}`;
@@ -58,10 +59,15 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(homeSource).not.toMatch(/localStorage|sessionStorage/);
   });
 
-  it("يقصر حساب البائع على البيع والكاشير ونقاط العملاء", () => {
-    expect(appSource).toContain('new Set(["/sales", "/cashier", "/loyalty"])');
+  it("يقصر البائع على نقطة البيع والكتالوج والعروض العامة ويحجب صفحات الإدارة", () => {
+    expect(appSource).toContain("canSellerAccessPath(location)");
     expect(appSource).toContain('user?.role === "seller"');
     expect(appSource).toContain('navigate("/cashier")');
+    expect(sellerAccessSource).toContain('"/cashier"');
+    expect(sellerAccessSource).toContain('"/catalog"');
+    expect(sellerAccessSource).toContain('"/catalog-offers"');
+    expect(sellerAccessSource).not.toContain('"/sales"');
+    expect(sellerAccessSource).not.toContain('"/smart-offers"');
   });
 
   it("لا يخزن مفاتيح مزود الدفع في العميل ويقيد الشاشة بالدور الإداري", () => {

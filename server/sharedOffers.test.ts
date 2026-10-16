@@ -30,10 +30,10 @@ describe("published offers list retention", () => {
       id: "public-offer",
       offerPrice: 90,
       totalCostPrice: 70,
-      items: [{ name: "منتج", retailPrice: 100, costPrice: 60, offerPrice: 90, supplierName: "مورد" }],
+      items: [{ name: "منتج", retailPrice: 100, costPrice: 60, offerPrice: 90, supplierName: "مورد", ingredients: ["مادة سرية"], mixingInstructions: "تعليمات خلط سرية" }],
     }));
     expect(result).not.toBeNull();
-    expect(result).not.toMatch(/cost|profit|supplier/i);
+    expect(result).not.toMatch(/cost|profit|supplier|ingredient|mixing/i);
     expect(JSON.parse(result!)).toMatchObject({ id: "public-offer", offerPrice: 90, items: [{ name: "منتج", retailPrice: 100, offerPrice: 90 }] });
     expect(publicOfferJson("not-json")).toBeNull();
   });
