@@ -47,6 +47,7 @@ interface Recipe {
 interface SmartOffer {
   id: string;
   title: string;
+  bannerTitle?: string;
   strategyName: string;
   items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
@@ -579,7 +580,7 @@ export default function SmartOffers() {
     // المسار القديم محفوظ عمداً للتوافق، والجدول السحابي الجديد هو النسخة الإضافية الدائمة.
     try {
       await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
-      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, description: finalOffer.description, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
     } catch (e) {
       console.error("Failed to save offer to cloud", e);
       toast.error("تعذر إتمام حفظ العرض في السحابة؛ لم يتم إعلان نجاح التفعيل. تحقق من الاتصال ثم أعد المحاولة.");
@@ -616,7 +617,7 @@ export default function SmartOffers() {
       setCurrentOffer(updated);
     }
   };
-  const updateCurrentOfferField = (field: "title" | "description" | "startDate" | "endDate", value: string) => {
+  const updateCurrentOfferField = (field: "title" | "bannerTitle" | "description" | "startDate" | "endDate", value: string) => {
     setCurrentOffer(previous => {
       if (!previous) return previous;
       const parsedDate = field === "startDate" || field === "endDate" ? parseLegacyOfferDate(value) : null;
@@ -1327,6 +1328,7 @@ export default function SmartOffers() {
 
                   <div className="grid gap-3 rounded-xl border border-indigo-200 bg-white p-4 md:grid-cols-2">
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان العرض</label><Input value={currentOffer.title} onChange={event => updateCurrentOfferField("title", event.target.value)} /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان البانر المخصص</label><Input value={currentOffer.bannerTitle || ""} onChange={event => updateCurrentOfferField("bannerTitle", event.target.value)} placeholder="مثال: دلوقتي هتلاقي عروض التوفير" /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">وصف العرض</label><Input value={currentOffer.description} onChange={event => updateCurrentOfferField("description", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>

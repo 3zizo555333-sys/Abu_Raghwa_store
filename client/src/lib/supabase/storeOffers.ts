@@ -3,10 +3,12 @@ import { getActiveShopContext } from "./products";
 import type { Database } from "./database.types";
 
 export type CloudOfferOrder = Database["public"]["Tables"]["offer_orders"]["Row"];
+export type CloudStoreOffer = Database["public"]["Tables"]["store_offers"]["Row"];
 
 type OfferRecord = {
   id: string;
   title: string;
+  bannerTitle?: string;
   description?: string;
   offerData: Record<string, unknown>;
   startAt?: number;
@@ -26,6 +28,7 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
     id: offer.id,
     store_id: shopId,
     title: offer.title,
+    banner_title: offer.bannerTitle || "",
     public_description: offer.description || "",
     offer_data: JSON.parse(JSON.stringify(offer.offerData)),
     starts_at: toIso(offer.startAt),
@@ -34,6 +37,13 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
     created_by: user.data.user?.id || null,
   }, { onConflict: "id" });
   requireCloudResult(result);
+}
+
+export async function listActiveStoreOffers(): Promise<CloudStoreOffer[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  const result = await getSupabaseClient().from("store_offers").select("id,store_id,title,banner_title,public_description,offer_data,starts_at,ends_at,status,created_by,created_at,updated_at,deleted_at").eq("store_id", shopId).eq("status", "active").is("deleted_at", null).order("created_at", { ascending: false }).limit(50);
+  return (requireCloudResult(result) || []) as CloudStoreOffer[];
 }
 
 export async function mirrorPublicOfferOrder(input: { id: string; offerId: string; customerName: string; customerCode: string; customerPhone?: string | null; pointsCost?: number }): Promise<void> {

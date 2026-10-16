@@ -9,6 +9,8 @@ import { CATALOG_PHONE, CATALOG_WHATSAPP, catalogProductMatchesSearch, getCatalo
 import { getCatalogFulfillmentMode, getFulfillmentPrice, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { trpc } from "@/lib/trpc";
 import { listPublicCatalogDisplayData, listCatalogRewards } from "@/lib/supabase/operations";
+import { listActiveStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
+import { PromoCarousel } from "@/components/PromoCarousel";
 
 type SavedOrderReference = { id: string; phone: string; customerCode?: string };
 type LoyaltyRewardLevel = { points: number; giftName: string; confirmed?: boolean };
@@ -45,6 +47,7 @@ export default function PublicCatalogPage() {
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
   const [rewardLevels, setRewardLevels] = useState<LoyaltyRewardLevel[]>(DEFAULT_LOYALTY_REWARDS);
+  const [promoOffers, setPromoOffers] = useState<CloudStoreOffer[]>([]);
   const [search, setSearch] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("الكل");
   const [companyFilter, setCompanyFilter] = useState("الكل");
@@ -67,6 +70,20 @@ export default function PublicCatalogPage() {
       setPricingConfig(data.pricing as CatalogPricingConfig);
       return listCatalogRewards();
     }).then(rows => { if (rows) setRewardLevels((rows as any[]).map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); }).catch(() => undefined);
+  }, []);
+  useEffect(() => {
+    let active = true;
+    const refreshOffers = async () => {
+      try {
+        const offers = await listActiveStoreOffers();
+        if (active) setPromoOffers(offers);
+      } catch {
+        if (active) setPromoOffers([]);
+      }
+    };
+    void refreshOffers();
+    const timer = window.setInterval(() => void refreshOffers(), 60_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, []);
   const createOrder = trpc.catalog.createOrder.useMutation();
   const fulfillmentMode = typeof window === "undefined" ? "pickup" : getCatalogFulfillmentMode(window.location.search);
@@ -186,6 +203,7 @@ export default function PublicCatalogPage() {
           <div className="flex max-w-full flex-wrap items-center justify-end gap-2"><Button variant="outline" onClick={openLoyalty} className="rounded-xl border-amber-200 text-amber-700 hover:bg-amber-50"><Star className="ml-1 h-4 w-4" />نقاطي</Button><Button variant="outline" onClick={openMyOrders} className="rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50"><ClipboardList className="ml-1 h-4 w-4" />طلباتي{savedOrders.length > 0 && <span className="mr-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">{savedOrders.length}</span>}</Button><Button onClick={() => setCartOpen(true)} className="relative rounded-xl bg-blue-600 px-4 hover:bg-blue-700"><ShoppingBag className="ml-1 h-4 w-4" />السلة{cartCount > 0 && <span className="absolute -left-2 -top-2 grid h-5 min-w-5 place-items-center rounded-full bg-orange-500 px-1 text-[10px] font-black text-white">{cartCount}</span>}</Button></div>
         </div>
       </header>
+      <PromoCarousel offers={promoOffers} />
 
       <section className="overflow-hidden bg-gradient-to-l from-blue-700 via-blue-600 to-cyan-500 px-4 py-10 text-white sm:py-14">
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">
