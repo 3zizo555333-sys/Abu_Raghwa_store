@@ -76,6 +76,7 @@ import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { isUserAllowed } from "@/lib/accessControl";
 import { canSellerAccessPath } from "@/lib/sellerAccess";
 import SellerNavigation from "@/components/SellerNavigation";
+import CustomQuickShortcuts from "@/components/CustomQuickShortcuts";
 
 const Home = lazy(() => import("./pages/Home"));
 const Dashboard = lazy(() => import("./pages/Dashboard"));
@@ -294,6 +295,7 @@ function App() {
                   typed Supabase tables/RPCs; remaining pages must not upload
                   local business-data snapshots. */}
               <VoiceCommandHandler enabled={hasStaffSession || isPublicCustomerRoute} />
+              {hasStaffSession && user && <CustomQuickShortcuts userId={user.id} role={user.role} />}
               {isPublicCustomerRoute ? <Router key="public-customer" /> : <AccessControlGate><Router key={routeScopeKey} /></AccessControlGate>}
             </TooltipProvider>
           </ThemeProvider>
