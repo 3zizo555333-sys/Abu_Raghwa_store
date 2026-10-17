@@ -5,6 +5,7 @@ import type { Database } from "./database.types";
 
 export type SupplierInvoiceItem = Database["public"]["Tables"]["supplier_invoice_items"]["Row"];
 export type SupplierInvoice = Database["public"]["Tables"]["supplier_invoices"]["Row"] & { items: SupplierInvoiceItem[] };
+export type SupplierInvoiceCategory = Database["public"]["Tables"]["supplier_invoice_categories"]["Row"];
 export type SupplierInvoiceDraftItem = {
   itemName: string;
   barcode?: string;
@@ -35,14 +36,33 @@ function normalizeItem(item: SupplierInvoiceDraftItem) {
 export async function uploadSupplierInvoiceImage(file: File): Promise<string> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  if (role !== "manager" && role !== "admin") throw new Error("إدارة فواتير الموردين متاحة للمدير فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("رفع فواتير الموردين متاح للمدير أو المشرف فقط.");
   const image = await prepareCloudProductImage(file, { allowJpegFallback: true });
   const extension = image.type === "image/png" ? "png" : image.type === "image/webp" ? "webp" : "jpg";
   const path = `${shopId}/${crypto.randomUUID()}.${extension}`;
   const bucket = getSupabaseClient().storage.from("invoices-images");
-  const upload = await bucket.upload(path, image, { contentType: image.type, cacheControl: "31536000", upsert: false });
-  if (upload.error) throw new Error(upload.error.message);
-  return bucket.getPublicUrl(path).data.publicUrl;
+  try {
+    const upload = await bucket.upload(path, image, { contentType: image.type, cacheControl: "31536000", upsert: false });
+    if (upload.error) throw new Error(`فشل رفع صورة الفاتورة إلى invoices-images: ${upload.error.message}`);
+    const publicUrl = bucket.getPublicUrl(path).data.publicUrl;
+    if (!publicUrl) throw new Error("لم يُرجع Supabase رابط الصورة المرفوعة.");
+    return publicUrl;
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : "تعذر رفع صورة الفاتورة إلى Supabase Storage.");
+  }
+}
+export async function listSupplierInvoiceCategories(): Promise<SupplierInvoiceCategory[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  return (requireCloudResult(await getSupabaseClient().from("supplier_invoice_categories").select("*").eq("store_id", shopId).order("name").limit(500)) || []) as SupplierInvoiceCategory[];
+}
+export async function createSupplierInvoiceCategory(name: string): Promise<SupplierInvoiceCategory> {
+  assertCloudOnline();
+  const normalized = name.trim();
+  if (!normalized || normalized.length > 120) throw new Error("اسم الفئة مطلوب ويجب ألا يتجاوز 120 حرفاً.");
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("إضافة الفئات متاحة للمدير أو المشرف فقط.");
+  return requireCloudResult(await getSupabaseClient().from("supplier_invoice_categories").insert({ store_id: shopId, name: normalized }).select("*").single()) as SupplierInvoiceCategory;
 }
 
 async function getPreviousCost(shopId: string, item: { item_name: string; barcode?: string | null }) {
@@ -54,10 +74,10 @@ async function getPreviousCost(shopId: string, item: { item_name: string; barcod
   return result.data?.unit_cost == null ? null : Number(result.data.unit_cost);
 }
 
-export async function saveSupplierInvoice(input: { supplierName: string; invoiceDate: string; imageUrl: string; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+export async function saveSupplierInvoice(input: { supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
-  if (role !== "manager" && role !== "admin") throw new Error("حفظ فواتير الموردين متاح للمدير فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حفظ فواتير الموردين متاح للمدير أو المشرف فقط.");
   const client = getSupabaseClient();
   const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
   if (!input.supplierName.trim() || !input.imageUrl || !normalized.length) throw new Error("أدخل المورد والصورة وبنداً واحداً على الأقل.");
@@ -68,7 +88,7 @@ export async function saveSupplierInvoice(input: { supplierName: string; invoice
     return { ...item, previous_cost: previous, price_diff: diff, price_direction: diff == null || Math.abs(diff) < 0.0001 ? "stable" : diff > 0 ? "up" : "down" as "up" | "down" | "stable" };
   });
   const totalAmount = rows.reduce((sum, row) => sum + row.total_cost, 0);
-  const invoice = requireCloudResult(await client.from("supplier_invoices").insert({ store_id: shopId, supplier_name: input.supplierName.trim(), invoice_date: input.invoiceDate || new Date().toISOString().slice(0, 10), image_url: input.imageUrl, total_amount: Math.round(totalAmount * 100) / 100, notes: input.notes?.trim() || "" }).select("*").single()) as Database["public"]["Tables"]["supplier_invoices"]["Row"];
+  const invoice = requireCloudResult(await client.from("supplier_invoices").insert({ store_id: shopId, category_id: input.categoryId || null, supplier_name: input.supplierName.trim(), invoice_date: input.invoiceDate || new Date().toISOString().slice(0, 10), image_url: input.imageUrl, total_amount: Math.round(totalAmount * 100) / 100, notes: input.notes?.trim() || "" }).select("*").single()) as Database["public"]["Tables"]["supplier_invoices"]["Row"];
   if (!invoice) throw new Error("لم يؤكد الخادم إنشاء الفاتورة.");
   const items = requireCloudResult(await client.from("supplier_invoice_items").insert(rows.map(row => ({ ...row, invoice_id: invoice.id }))).select("*")) as SupplierInvoiceItem[] | null;
   return { ...invoice, items: items || [] } as SupplierInvoice;

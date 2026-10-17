@@ -12,6 +12,7 @@ create table if not exists public.shortage_categories (
   updated_at timestamptz not null default now(),
   deleted_at timestamptz
 );
+alter table public.shortage_categories add column if not exists icon text;
 
 create table if not exists public.shortage_items (
   id uuid primary key default gen_random_uuid(),

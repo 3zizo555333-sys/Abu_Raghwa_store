@@ -341,7 +341,7 @@ export default function Dashboard() {
               </Button>
 
               {canViewSensitiveFinancials && <Button
-                onClick={() => navigate("/invoice-camera")}
+                onClick={() => navigate("/invoice-ocr")}
                 className="bg-orange-600 hover:bg-orange-700 text-white flex items-center justify-center gap-2"
               >
                 <Camera className="w-4 h-4" />

@@ -70,7 +70,7 @@ export function AdvancedVoiceControl() {
     },
     {
       pattern: /افتح|اذهب.*الفواتير/i,
-      action: () => navigate('/advanced-invoices'),
+      action: () => navigate('/invoice-ocr'),
       description: 'افتح الفواتير',
     },
     {

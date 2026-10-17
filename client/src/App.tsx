@@ -231,9 +231,9 @@ function Router() {
       <Route path={"/tasks-page"} component={withSupervisorRole(withPasswordProtection(TasksPage, 'screen__tasks_page', 'متابعة المهام'))} />
       <Route path={"/inventory"} component={withSupervisorRole(withPasswordProtection(InventoryPage, 'screen__inventory', 'إدارة المخزون'))} />
       <Route path={"/material-details/:id"} component={withSupervisorRole(withPasswordProtection(RawMaterialDetails, 'screen__material_details_id', 'تفاصيل الخامة'))} />
-      <Route path={"/invoice-camera"} component={withSupervisorRole(withPasswordProtection(InvoiceCameraPage, 'screen__invoice_camera', 'تصوير الفواتير'))} />
+      <Route path={"/invoice-camera"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__invoice_ocr', 'قراءة فواتير OCR'))} />
       <Route path={"/invoice-scanner"} component={withSupervisorRole(withPasswordProtection(InvoiceScanner, 'screen__invoice_scanner', 'ماسح الفواتير'))} />
-      <Route path={"/advanced-invoices"} component={withSupervisorRole(withPasswordProtection(AdvancedInvoices, 'screen__advanced_invoices', 'أرشيف الفواتير المتقدم'))} />
+      <Route path={"/advanced-invoices"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__invoice_ocr', 'قراءة فواتير OCR'))} />
       <Route path={"/advanced-barcode"} component={withPasswordProtection(AdvancedBarcode, 'screen__advanced_barcode', 'الباركود المتقدم')} />
       <Route path={"/social-media"} component={withPasswordProtection(SocialMedia, 'screen__social_media', 'التواصل الاجتماعي')} />
       <Route path={"/voice-control"} component={withSupervisorRole(withPasswordProtection(VoiceControlPage, 'screen__voice_control', 'التحكم الصوتي'))} />
