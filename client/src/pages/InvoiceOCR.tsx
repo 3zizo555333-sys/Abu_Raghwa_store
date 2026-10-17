@@ -1,330 +1,45 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useLocation } from "wouter";
+import { ArrowLeft, Camera, ChevronDown, ChevronUp, History, Plus, Save, Trash2, Upload } from "lucide-react";
+import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { useLocation } from "wouter";
-import { ArrowLeft, Camera, Upload, Check, AlertCircle } from "lucide-react";
 import { Input } from "@/components/ui/input";
-import { toast } from "sonner";
-import { prepareCloudProductImage } from "@/lib/supabase/prepareProductImage";
-import { listRawMaterials, saveRawMaterial } from "@/lib/supabase/operations";
-
-interface ParsedItem {
-  name: string;
-  quantity: number;
-  unit: string;
-  price: number;
-  confidence: number;
-}
-
+import { Textarea } from "@/components/ui/textarea";
+import { trpc } from "@/lib/trpc";
+import { getActiveShopContext } from "@/lib/supabase/products";
+import { deleteSupplierInvoice, listSupplierInvoices, listSupplierPriceHistory, saveSupplierInvoice, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type SupplierInvoice, type SupplierPriceComparison } from "@/lib/supabase/supplierInvoices";
+interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; totalCost: number; confidence: number; }
+function playTone(kind: "up" | "down") { try { const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext; if (!Ctx) return; const ctx = new Ctx(); const osc = ctx.createOscillator(); const gain = ctx.createGain(); osc.frequency.value = kind === "up" ? 220 : 660; gain.gain.setValueAtTime(0.0001, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.02); gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18); osc.connect(gain).connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 0.2); } catch { /* optional */ } }
 export default function InvoiceOCR() {
   const [, navigate] = useLocation();
   const [invoiceImage, setInvoiceImage] = useState<string | null>(null);
+  const [uploadedImageUrl, setUploadedImageUrl] = useState("");
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [supplier, setSupplier] = useState("");
-  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+  const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
+  const [notes, setNotes] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [savedInvoices, setSavedInvoices] = useState<SupplierInvoice[]>([]);
+  const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
+  const [history, setHistory] = useState<SupplierPriceComparison[]>([]);
+  const [historyName, setHistoryName] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
-
-  const handleImageUpload = async (file: File) => {
-    try {
-      const compressed = await prepareCloudProductImage(file, { allowJpegFallback: true });
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const imageData = e.target?.result as string;
-        if (!imageData) return;
-        setInvoiceImage(imageData);
-        processInvoice(imageData);
-      };
-      reader.onerror = () => toast.error("تعذرت قراءة صورة الفاتورة.");
-      reader.readAsDataURL(compressed);
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "تعذر ضغط صورة الفاتورة.");
-    }
-  };
-
-  const processInvoice = async (imageData: string) => {
-    setIsProcessing(true);
-    
-    // محاكاة معالجة OCR
-    // في تطبيق حقيقي، ستستخدم Google ML Kit أو Tesseract
-    setTimeout(() => {
-      const mockItems: ParsedItem[] = [
-        { name: "دقيق", quantity: 25, unit: "كيلو", price: 150, confidence: 0.95 },
-        { name: "سكر", quantity: 10, unit: "كيلو", price: 80, confidence: 0.92 },
-        { name: "زيت", quantity: 5, unit: "لتر", price: 200, confidence: 0.88 },
-        { name: "بيض", quantity: 100, unit: "حبة", price: 0.5, confidence: 0.85 }
-      ];
-      
-      setParsedItems(mockItems);
-      setIsProcessing(false);
-    }, 2000);
-  };
-
-  const handleConfirmItems = async () => {
-    if (!supplier || parsedItems.length === 0) {
-      alert("يرجى ملء اسم المورد والتأكد من العناصر");
-      return;
-    }
-
-    try {
-      const materials = await listRawMaterials();
-      for (const item of parsedItems) {
-        const existing = materials.find(material => material.name.trim().toLocaleLowerCase() === item.name.trim().toLocaleLowerCase());
-        if (existing) {
-          const newQuantity = existing.quantity + item.quantity;
-          const newWeight = existing.total_weight + item.quantity;
-          const newTotal = existing.total_price + item.price * item.quantity;
-          await saveRawMaterial({ ...existing, quantity: newQuantity, total_weight: newWeight, total_price: newTotal, wholesale_price: existing.wholesale_price + item.price * item.quantity, price_per_kilo: newWeight ? newTotal / newWeight : item.price, supplier });
-        } else {
-          await saveRawMaterial({ name: item.name, supplier, unit: item.unit, quantity: item.quantity, total_weight: item.quantity, total_price: item.price * item.quantity, wholesale_price: item.price * item.quantity, price_per_kilo: item.price, description: "", usage: "", ratio: "" });
-        }
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "تعذر حفظ مواد الفاتورة سحابياً.");
-      return;
-    }
-    alert("تم استيراد الفاتورة بنجاح!");
-    
-    setInvoiceImage(null);
-    setParsedItems([]);
-    setSupplier("");
-  };
-
-  const updateItem = (index: number, field: string, value: any) => {
-    const updated = [...parsedItems];
-    updated[index] = { ...updated[index], [field]: value };
-    setParsedItems(updated);
-  };
-
-  return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-4 py-6 flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">استيراد فواتير المورد</h1>
-            <p className="text-gray-600 mt-1">قراءة الفواتير بالكاميرا أو الرفع</p>
-          </div>
-          <Button
-            variant="outline"
-            onClick={() => navigate("/dashboard")}
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft className="w-4 h-4" />
-            العودة
-          </Button>
-        </div>
-      </header>
-
-      {/* Main Content */}
-      <main className="max-w-7xl mx-auto px-4 py-8">
-        {!invoiceImage ? (
-          <Card className="border-0 shadow-sm mb-8">
-            <CardHeader>
-              <CardTitle>اختر طريقة الاستيراد</CardTitle>
-              <CardDescription>استخدم الكاميرا أو رفع صورة الفاتورة</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div className="border-2 border-dashed border-blue-300 rounded-lg p-8 text-center">
-                  <Camera className="w-12 h-12 text-blue-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">التقط صورة</h3>
-                  <p className="text-gray-600 mb-4">استخدم كاميرا جهازك</p>
-                  <Button
-                    onClick={() => cameraInputRef.current?.click()}
-                    className="bg-blue-600 hover:bg-blue-700 text-white"
-                  >
-                    فتح الكاميرا
-                  </Button>
-                  <input
-                    ref={cameraInputRef}
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    onChange={(e) => e.target.files && handleImageUpload(e.target.files[0])}
-                    className="hidden"
-                  />
-                </div>
-
-                <div className="border-2 border-dashed border-green-300 rounded-lg p-8 text-center">
-                  <Upload className="w-12 h-12 text-green-600 mx-auto mb-4" />
-                  <h3 className="text-lg font-semibold mb-2">رفع صورة</h3>
-                  <p className="text-gray-600 mb-4">اختر صورة من جهازك</p>
-                  <Button
-                    onClick={() => fileInputRef.current?.click()}
-                    className="bg-green-600 hover:bg-green-700 text-white"
-                  >
-                    اختر ملف
-                  </Button>
-                  <input
-                    ref={fileInputRef}
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) => e.target.files && handleImageUpload(e.target.files[0])}
-                    className="hidden"
-                  />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            {/* Invoice Preview */}
-            <Card className="mb-8 border-0 shadow-sm">
-              <CardHeader>
-                <CardTitle>معاينة الفاتورة</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div>
-                    <img
-                      src={invoiceImage}
-                      alt="Invoice"
-                      className="w-full rounded-lg border border-gray-300"
-                    />
-                  </div>
-
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-2">اسم المورد *</label>
-                      <Input
-                        placeholder="مثال: مورد الدقيق الأول"
-                        value={supplier}
-                        onChange={(e) => setSupplier(e.target.value)}
-                      />
-                    </div>
-
-                    <div>
-                      <label className="block text-sm font-medium mb-2">تاريخ الفاتورة</label>
-                      <input
-                        type="date"
-                        value={invoiceDate}
-                        onChange={(e) => setInvoiceDate(e.target.value)}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md"
-                      />
-                    </div>
-
-                    <div className="bg-blue-50 p-4 rounded-lg">
-                      <p className="text-sm text-blue-800">
-                        <AlertCircle className="w-4 h-4 inline mr-2" />
-                        جاري معالجة الفاتورة بواسطة OCR...
-                      </p>
-                    </div>
-
-                    <Button
-                      onClick={() => {
-                        setInvoiceImage(null);
-                        setParsedItems([]);
-                      }}
-                      variant="outline"
-                      className="w-full"
-                    >
-                      إلغاء
-                    </Button>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Parsed Items */}
-            {parsedItems.length > 0 && (
-              <Card className="border-0 shadow-sm mb-8">
-                <CardHeader>
-                  <CardTitle>العناصر المستخرجة من الفاتورة</CardTitle>
-                  <CardDescription>تحقق من البيانات وعدّلها إذا لزم الأمر</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead className="bg-gray-100">
-                        <tr>
-                          <th className="px-4 py-3 text-right text-sm font-medium">اسم الخامة</th>
-                          <th className="px-4 py-3 text-right text-sm font-medium">الكمية</th>
-                          <th className="px-4 py-3 text-right text-sm font-medium">الوحدة</th>
-                          <th className="px-4 py-3 text-right text-sm font-medium">السعر</th>
-                          <th className="px-4 py-3 text-right text-sm font-medium">الثقة</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {parsedItems.map((item, idx) => (
-                          <tr key={idx} className="border-b hover:bg-gray-50">
-                            <td className="px-4 py-3">
-                              <Input
-                                value={item.name}
-                                onChange={(e) => updateItem(idx, "name", e.target.value)}
-                                className="text-sm"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input
-                                type="number"
-                                value={item.quantity}
-                                onChange={(e) => updateItem(idx, "quantity", parseFloat(e.target.value))}
-                                className="text-sm"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <select
-                                value={item.unit}
-                                onChange={(e) => updateItem(idx, "unit", e.target.value)}
-                                className="text-sm px-2 py-1 border border-gray-300 rounded"
-                              >
-                                <option value="كيلو">كيلو</option>
-                                <option value="جرام">جرام</option>
-                                <option value="لتر">لتر</option>
-                                <option value="حبة">حبة</option>
-                              </select>
-                            </td>
-                            <td className="px-4 py-3">
-                              <Input
-                                type="number"
-                                value={item.price}
-                                onChange={(e) => updateItem(idx, "price", parseFloat(e.target.value))}
-                                className="text-sm"
-                              />
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex items-center gap-2">
-                                {item.confidence > 0.9 ? (
-                                  <Check className="w-4 h-4 text-green-600" />
-                                ) : (
-                                  <AlertCircle className="w-4 h-4 text-orange-600" />
-                                )}
-                                <span className="text-sm">{(item.confidence * 100).toFixed(0)}%</span>
-                              </div>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <div className="flex gap-4 mt-6">
-                    <Button
-                      onClick={handleConfirmItems}
-                      className="flex-1 bg-green-600 hover:bg-green-700 text-white flex items-center justify-center gap-2"
-                    >
-                      <Check className="w-4 h-4" />
-                      تأكيد واستيراد
-                    </Button>
-                    <Button
-                      onClick={() => {
-                        setInvoiceImage(null);
-                        setParsedItems([]);
-                      }}
-                      variant="outline"
-                      className="flex-1"
-                    >
-                      إلغاء
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </>
-        )}
-      </main>
-    </div>
-  );
+  const parseInvoice = trpc.invoiceOCR.parse.useMutation();
+  const refreshInvoices = async () => { try { setSavedInvoices(await listSupplierInvoices()); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحميل فواتير الموردين."); } };
+  useEffect(() => { let stop: (() => void) | undefined; let active = true; void (async () => { await refreshInvoices(); try { const { shopId } = await getActiveShopContext(); if (active) stop = subscribeToSupplierInvoiceRealtime(shopId, () => void refreshInvoices()); } catch { /* يظهر الخطأ عند العملية */ } })(); return () => { active = false; stop?.(); }; }, []);
+  const resetDraft = () => { setInvoiceImage(null); setUploadedImageUrl(""); setParsedItems([]); setSupplier(""); setNotes(""); };
+  const handleImageUpload = async (file?: File) => { if (!file) return; try { setIsProcessing(true); setInvoiceImage(URL.createObjectURL(file)); const publicUrl = await uploadSupplierInvoiceImage(file); setUploadedImageUrl(publicUrl); const result = await parseInvoice.mutateAsync({ imageUrl: publicUrl, supplierName: supplier, invoiceDate }); const items = (result.items || []).map(item => ({ name: item.name, barcode: item.barcode || "", quantity: Number(item.quantity) || 0, unitCost: Number(item.unitCost) || 0, totalCost: Number(item.totalCost) || (Number(item.quantity) || 0) * (Number(item.unitCost) || 0), confidence: Number(item.confidence) || 0 })); setParsedItems(items); toast[items.length ? "success" : "warning"](items.length ? "تم رفع الصورة وتحليلها. راجع كل رقم قبل الحفظ." : "لم يتم التعرف على بنود واضحة؛ أضفها يدوياً."); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفع أو تحليل صورة الفاتورة."); } finally { setIsProcessing(false); } };
+  const updateItem = (index: number, field: keyof ParsedItem, value: string) => setParsedItems(rows => rows.map((row, rowIndex) => { if (rowIndex !== index) return row; const numericNext = Number(value) || 0; const next: string | number = field === "name" || field === "barcode" ? value : numericNext; const updated = { ...row, [field]: next }; if (field === "quantity" || field === "unitCost") updated.totalCost = (field === "quantity" ? numericNext : row.quantity) * (field === "unitCost" ? numericNext : row.unitCost); return updated; }));
+  const saveInvoice = async () => { if (!uploadedImageUrl) { toast.error("ارفع صورة الفاتورة أولاً."); return; } try { setIsSaving(true); await saveSupplierInvoice({ supplierName: supplier, invoiceDate, imageUrl: uploadedImageUrl, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost })) }); playTone("down"); toast.success("تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار."); resetDraft(); await refreshInvoices(); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الفاتورة سحابياً."); } finally { setIsSaving(false); } };
+  const showHistory = async (item: ParsedItem) => { try { setHistoryName(item.name); setHistory(await listSupplierPriceHistory(item.name, item.barcode)); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحميل سجل السعر."); } };
+  const totalDraft = parsedItems.reduce((sum, item) => sum + item.quantity * item.unitCost, 0);
+  return <div className="min-h-screen bg-gray-50 p-4" dir="rtl"><header className="mx-auto flex max-w-7xl items-center justify-between py-4"><div><h1 className="text-3xl font-bold text-gray-900">فواتير الموردين ومستشار المشتريات</h1><p className="mt-1 text-gray-600">رفع سحابي، قراءة ذكية، مقارنة أسعار، وسجل تاريخي</p></div><Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-2 h-4 w-4" />العودة</Button></header><main className="mx-auto max-w-7xl space-y-6">
+  {!invoiceImage ? <Card><CardHeader><CardTitle>إضافة فاتورة مورد</CardTitle><CardDescription>تُحفظ الصورة في invoices-images ثم تُحلل ويمكن تعديل كل نتيجة يدوياً.</CardDescription></CardHeader><CardContent><div className="grid gap-4 md:grid-cols-2"><Button onClick={() => cameraInputRef.current?.click()} disabled={isProcessing} className="h-28 bg-blue-600"><Camera className="ml-2" />التقاط بالكاميرا</Button><Button onClick={() => fileInputRef.current?.click()} disabled={isProcessing} className="h-28 bg-green-600"><Upload className="ml-2" />رفع من المعرض</Button></div><input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={event => void handleImageUpload(event.target.files?.[0])} /><input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={event => void handleImageUpload(event.target.files?.[0])} /></CardContent></Card> : <Card><CardHeader><CardTitle>مراجعة الفاتورة قبل الحفظ</CardTitle><CardDescription>{isProcessing || parseInvoice.isPending ? "جاري التحليل بالذكاء الاصطناعي..." : "عدّل البيانات، أضف أو احذف سطوراً، ثم احفظها."}</CardDescription></CardHeader><CardContent className="space-y-4"><div className="grid gap-6 lg:grid-cols-2"><div><img src={invoiceImage} alt="صورة فاتورة المورد" className="max-h-[620px] w-full rounded-xl border object-contain" /><p className="mt-2 text-xs text-green-700">أرشفة الصورة السحابية: {uploadedImageUrl ? "تمت" : "جارية"}</p></div><div className="space-y-3"><label className="text-sm font-bold">اسم المورد</label><Input value={supplier} onChange={event => setSupplier(event.target.value)} placeholder="اسم المورد" /><label className="text-sm font-bold">تاريخ الفاتورة</label><Input type="date" value={invoiceDate} onChange={event => setInvoiceDate(event.target.value)} /><label className="text-sm font-bold">ملاحظات</label><Textarea value={notes} onChange={event => setNotes(event.target.value)} placeholder="ملاحظات اختيارية" /></div></div><div className="overflow-x-auto"><table className="w-full min-w-[800px] text-sm"><thead className="bg-gray-100"><tr><th className="p-2 text-right">الصنف</th><th className="p-2 text-right">الباركود</th><th className="p-2 text-right">الكمية</th><th className="p-2 text-right">سعر الوحدة</th><th className="p-2 text-right">الإجمالي</th><th className="p-2">ثقة</th><th /></tr></thead><tbody>{parsedItems.map((item, index) => <tr key={index} className="border-b"><td className="p-2"><Input value={item.name} onChange={event => updateItem(index, "name", event.target.value)} /></td><td className="p-2"><Input value={item.barcode} onChange={event => updateItem(index, "barcode", event.target.value)} /></td><td className="p-2"><Input type="number" min="0" value={item.quantity} onChange={event => updateItem(index, "quantity", event.target.value)} /></td><td className="p-2"><Input type="number" min="0" step="0.01" value={item.unitCost} onChange={event => updateItem(index, "unitCost", event.target.value)} /></td><td className="p-2 font-bold">{(item.quantity * item.unitCost).toFixed(2)}</td><td className="p-2 text-center">{item.confidence ? `${Math.round(item.confidence * 100)}%` : "يدوي"}</td><td className="p-2"><Button variant="ghost" size="icon" onClick={() => setParsedItems(rows => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4 text-red-600" /></Button></td></tr>)}</tbody></table></div><div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر</Button><strong>الإجمالي: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" onClick={resetDraft}>إلغاء</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || isProcessing || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div></CardContent></Card>}
+  {parsedItems.length > 0 && !isProcessing && <Card><CardHeader><CardTitle>رادار تغير الأسعار</CardTitle></CardHeader><CardContent className="space-y-2">{parsedItems.map((item, index) => <div key={`${item.name}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"><div><strong>{item.name || "صنف بدون اسم"}</strong><span className="mr-3 text-sm text-gray-600">سعر الشراء: {item.unitCost.toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void showHistory(item)}><History className="ml-1 h-4 w-4" />مقارنة التجار والسجل</Button><Button size="sm" variant="outline" onClick={() => navigate(`/products?search=${encodeURIComponent(item.name)}`)}>تحديث سعر البيع</Button><Button size="sm" variant="outline" onClick={() => navigate(`/smart-offers?item=${encodeURIComponent(item.name)}`)}>توليد عرض</Button></div></div>)}</CardContent></Card>}
+  <Card><CardHeader><CardTitle>الفواتير المحفوظة سحابياً ({savedInvoices.length})</CardTitle></CardHeader><CardContent className="space-y-3">{savedInvoices.length === 0 ? <p className="text-sm text-gray-500">لا توجد فواتير محفوظة بعد.</p> : savedInvoices.map(invoice => <div key={invoice.id} className="rounded-xl border bg-white p-3"><div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف الفاتورة وبنودها؟")) { await deleteSupplierInvoice(invoice.id); await refreshInvoices(); } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>{expandedInvoice === invoice.id && <div className="mt-3 grid gap-2 md:grid-cols-2">{invoice.items.map(item => <div key={item.id} className={`rounded-lg p-3 ${item.price_direction === "up" ? "bg-red-50" : item.price_direction === "down" ? "bg-green-50" : "bg-gray-50"}`}><div className="flex items-center justify-between"><strong>{item.item_name}</strong><span>{item.price_direction === "up" ? "↗️" : item.price_direction === "down" ? "↘️" : "➡️"} {Number(item.unit_cost).toFixed(2)} ج.م</span></div><p className="text-xs text-gray-600">الكمية {item.quantity} · الإجمالي {item.total_cost} · {item.previous_cost == null ? "أول سعر مسجل" : `الفرق ${Number(item.price_diff).toFixed(2)} ج.م`}</p></div>)}</div>}</div>)}</CardContent></Card>
+  {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">السعر</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
+ </main></div>;
 }

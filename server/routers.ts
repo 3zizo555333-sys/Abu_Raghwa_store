@@ -90,6 +90,36 @@ export const appRouter = router({
       }),
   }),
 
+  invoiceOCR: router({
+    parse: publicProcedure
+      .input(z.object({ imageUrl: z.string().url().max(4096), supplierName: z.string().max(180).optional(), invoiceDate: z.string().max(32).optional() }))
+      .mutation(async ({ input }) => {
+        try {
+          const response = await invokeLLM({
+            model: "gemini-3-flash-preview",
+            maxTokens: 1600,
+            messages: [
+              { role: "system", content: "أنت قارئ فواتير مشتريات عربي دقيق. اقرأ الفاتورة المطبوعة أو المكتوبة بخط اليد. استخرج البنود الظاهرة فقط ولا تخترع أرقاماً. إذا كان الرقم غير مقروء استخدم 0 وثقة منخفضة. أعد JSON مطابقاً للمخطط فقط." },
+              { role: "user", content: [
+                { type: "text", text: `اقرأ هذه الفاتورة. المورد: ${input.supplierName || "غير معروف"}. التاريخ: ${input.invoiceDate || "غير معروف"}. لكل بند أعد اسم الصنف والباركود إن ظهر والكمية وسعر شراء الوحدة والإجمالي.` },
+                { type: "image_url", image_url: { url: input.imageUrl, detail: "high" } },
+              ] },
+            ],
+            response_format: { type: "json_schema", json_schema: { name: "supplier_invoice", strict: true, schema: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { name: { type: "string" }, barcode: { type: "string" }, quantity: { type: "number" }, unitCost: { type: "number" }, totalCost: { type: "number" }, confidence: { type: "number" } }, required: ["name", "barcode", "quantity", "unitCost", "totalCost", "confidence"], additionalProperties: false } }, totalAmount: { type: "number" } }, required: ["items", "totalAmount"], additionalProperties: false } } },
+          });
+          const content = response.choices[0]?.message.content;
+          const parsed = typeof content === "string" ? JSON.parse(content) as { items?: unknown[]; totalAmount?: number } : {};
+          const items = Array.isArray(parsed.items) ? parsed.items.map((item) => {
+            const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
+            return { name: String(row.name || "").trim(), barcode: String(row.barcode || "").trim(), quantity: Math.max(0, Number(row.quantity) || 0), unitCost: Math.max(0, Number(row.unitCost) || 0), totalCost: Math.max(0, Number(row.totalCost) || 0), confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)) };
+          }).filter(item => item.name) : [];
+          return { items, totalAmount: Math.max(0, Number(parsed.totalAmount) || items.reduce((sum, item) => sum + item.totalCost, 0)) };
+        } catch {
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تحليل صورة الفاتورة الآن؛ راجع البنود يدوياً وأعد المحاولة." });
+        }
+      }),
+  }),
+
   catalog: router({
     login: publicProcedure
       .input(z.object({ managerEmail: z.string().email(), managerPassword: z.string().min(1) }))
