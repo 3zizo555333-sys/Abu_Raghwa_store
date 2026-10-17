@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { applyStaffPointAdjustment, createStoreReward, deleteStoreReward, listStaffGamification, redeemStoreReward, subscribeToGamification, type GamificationEmployee, type StoreRewardRow } from "@/lib/supabase/gamification";
 import { saveStaffEmployee, softDeleteStaffEmployee } from "@/lib/supabase/operations";
+import { createLoyaltyMilestone, deleteLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow, type ReferralCampaignSettingsRow } from "@/lib/supabase/loyaltyExperience";
 
 export default function PointsSystem() {
   const [, navigate] = useLocation();
@@ -17,6 +18,10 @@ export default function PointsSystem() {
   const [loading, setLoading] = useState(true);
   const [employeeForm, setEmployeeForm] = useState({ name: "" });
   const [rewardForm, setRewardForm] = useState({ pointsRequired: 1000, rewardName: "", rewardDescription: "", availableQuantity: 1 });
+  const [milestones, setMilestones] = useState<LoyaltyMilestoneRow[]>([]);
+  const [referralSettings, setReferralSettings] = useState<ReferralCampaignSettingsRow | null>(null);
+  const [milestoneForm, setMilestoneForm] = useState({ pointsRequired: 100, rewardName: "", description: "", isMystery: false, rewardImageUrl: "" });
+  const [referralForm, setReferralForm] = useState({ title: "شارك التوفير مع حبايبك واكسب نقاط مجانية!", messageTemplate: "ادعُ أصدقاءك للتسجيل في نظام ولاء أبو رغوة واكسب 50 نقطة عن كل صديق!", pointsPerFriend: 50, isActive: true });
 
   const load = async () => {
     setLoading(true);
@@ -24,6 +29,10 @@ export default function PointsSystem() {
       const data = await listStaffGamification();
       setEmployees(data.employees);
       setRewards(data.rewards);
+      const experience = await listLoyaltyExperienceSettings();
+      setMilestones(experience.milestones);
+      setReferralSettings(experience.referral);
+      if (experience.referral) setReferralForm({ title: experience.referral.title, messageTemplate: experience.referral.message_template, pointsPerFriend: experience.referral.points_per_friend, isActive: experience.referral.is_active });
       setSelectedEmployeeId(current => current || data.employees[0]?.id || "");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر تحميل النقاط والجوائز من السحابة.");
@@ -61,6 +70,24 @@ export default function PointsSystem() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الجائزة سحابياً."); }
   };
 
+  const handleSaveReferral = async () => {
+    try { await saveReferralCampaign(referralForm); await load(); toast.success("تم حفظ حملة دعوة الأصدقاء سحابياً."); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الحملة."); }
+  };
+  const handleAddMilestone = async () => {
+    if (!milestoneForm.rewardName.trim() || milestoneForm.pointsRequired <= 0) { toast.error("اكتب اسم الهدية وعدد النقاط."); return; }
+    try { await createLoyaltyMilestone({ pointsRequired: milestoneForm.pointsRequired, rewardName: milestoneForm.rewardName, description: milestoneForm.description, isMystery: milestoneForm.isMystery, rewardImageUrl: milestoneForm.rewardImageUrl || null }); setMilestoneForm({ pointsRequired: 100, rewardName: "", description: "", isMystery: false, rewardImageUrl: "" }); await load(); toast.success("تم حفظ محطة الهدية سحابياً."); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ محطة الهدية."); }
+  };
+  const handleMilestoneImage = async (file: File) => {
+    try { const url = await uploadLoyaltyMilestoneImage(file, crypto.randomUUID()); setMilestoneForm(current => ({ ...current, rewardImageUrl: url })); toast.success("تم رفع صورة الهدية."); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفع صورة الهدية."); }
+  };
+  const handleDeleteMilestone = async (id: string) => {
+    if (!confirm("هل تريد حذف محطة الهدية؟")) return;
+    try { await deleteLoyaltyMilestone(id); await load(); toast.success("تم حذف محطة الهدية."); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف المحطة."); }
+  };
   const claimReward = async (reward: StoreRewardRow) => {
     if (!selectedEmployee) return;
     try { await redeemStoreReward(selectedEmployee.id, reward.id); await load(); notify(`🎉 تم تسجيل استلام الجائزة: ${reward.title}`); }
@@ -90,6 +117,27 @@ export default function PointsSystem() {
     <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6 text-white shadow-lg"><div className="container flex items-center justify-between"><div><h1 className="flex items-center gap-2 text-3xl font-bold"><Award size={32} /> نظام النقاط والجوائز السحابي</h1><p className="mt-2 text-purple-100">الرصيد والخصومات والجوائز محفوظة في Supabase وتتحدث لحظياً</p></div><button onClick={() => navigate("/dashboard")} className="flex items-center gap-2 rounded-lg bg-white/20 px-4 py-2 hover:bg-white/30"><ArrowLeft size={20} /> العودة</button></div></div>
     <div className="container py-8">
       {loading && <p className="mb-4 rounded-xl bg-blue-50 p-3 text-blue-800">جارٍ تحميل بيانات النقاط...</p>}
+      <section className="mb-6 grid gap-6 lg:grid-cols-2">
+        <div className="rounded-xl bg-white p-6 shadow-lg">
+          <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><Gift className="text-fuchsia-600" /> حملة دعوة الأصدقاء</h2>
+          <div className="space-y-3">
+            <input className="w-full rounded-lg border px-3 py-2" placeholder="عنوان الحملة" value={referralForm.title} onChange={e => setReferralForm({ ...referralForm, title: e.target.value })} />
+            <textarea className="min-h-20 w-full rounded-lg border px-3 py-2" placeholder="نص الدعوة" value={referralForm.messageTemplate} onChange={e => setReferralForm({ ...referralForm, messageTemplate: e.target.value })} />
+            <div className="flex items-center gap-3"><input type="number" min="0" className="w-32 rounded-lg border px-3 py-2" value={referralForm.pointsPerFriend} onChange={e => setReferralForm({ ...referralForm, pointsPerFriend: Number(e.target.value) })} /><span className="text-sm font-bold">نقطة لكل صديق</span><label className="mr-auto flex items-center gap-2 text-sm"><input type="checkbox" checked={referralForm.isActive} onChange={e => setReferralForm({ ...referralForm, isActive: e.target.checked })} /> مفعّلة</label></div>
+            <button onClick={() => void handleSaveReferral()} className="w-full rounded-lg bg-green-600 py-2 font-bold text-white">حفظ الحملة سحابياً</button>
+          </div>
+        </div>
+        <div className="rounded-xl bg-white p-6 shadow-lg">
+          <h2 className="mb-4 flex items-center gap-2 text-xl font-bold"><Award size={20} className="text-fuchsia-600" /> محطات الهدايا وصور المكافآت</h2>
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3"><input type="number" min="1" className="rounded-lg border px-3 py-2" placeholder="النقاط" value={milestoneForm.pointsRequired} onChange={e => setMilestoneForm({ ...milestoneForm, pointsRequired: Number(e.target.value) })} /><input className="rounded-lg border px-3 py-2" placeholder="اسم الهدية" value={milestoneForm.rewardName} onChange={e => setMilestoneForm({ ...milestoneForm, rewardName: e.target.value })} /></div>
+            <input className="w-full rounded-lg border px-3 py-2" placeholder="وصف اختياري" value={milestoneForm.description} onChange={e => setMilestoneForm({ ...milestoneForm, description: e.target.value })} />
+            <div className="flex items-center gap-3"><label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={milestoneForm.isMystery} onChange={e => setMilestoneForm({ ...milestoneForm, isMystery: e.target.checked })} /> هدية غامضة</label><label className="cursor-pointer rounded-lg border border-fuchsia-300 px-3 py-2 text-sm font-bold text-fuchsia-700">رفع صورة<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={e => { const file = e.target.files?.[0]; if (file) void handleMilestoneImage(file); }} /></label>{milestoneForm.rewardImageUrl && <span className="text-xs font-bold text-green-600">تم رفع الصورة</span>}</div>
+            <button onClick={() => void handleAddMilestone()} className="w-full rounded-lg bg-fuchsia-600 py-2 font-bold text-white">إضافة محطة سحابية</button>
+          </div>
+          <div className="mt-4 space-y-2">{milestones.map(item => <div key={item.id} className="flex items-center justify-between rounded-lg border bg-slate-50 p-3"><div><p className="font-bold">{item.is_mystery ? "🎁 مفاجأة سرية" : item.reward_name}</p><p className="text-xs text-slate-500">{item.points_required} نقطة{item.reward_image_url ? " · صورة مرفوعة" : ""}</p></div><button onClick={() => void handleDeleteMilestone(item.id)} className="text-red-600"><Trash2 size={16} /></button></div>)}</div>
+        </div>
+      </section>
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
         <div className="lg:col-span-1"><div className="sticky top-8 rounded-xl bg-white p-6 shadow-lg"><div className="mb-6 flex items-center justify-between"><h2 className="text-xl font-bold">👥 الموظفون</h2><button onClick={() => setShowAddEmployee(!showAddEmployee)} className="rounded-lg bg-purple-600 p-2 text-white"><Plus size={20} /></button></div>{showAddEmployee && <div className="mb-6 space-y-3 rounded-lg bg-purple-50 p-4"><input className="w-full rounded-lg border border-purple-300 px-3 py-2" placeholder="اسم الموظف" value={employeeForm.name} onChange={e => setEmployeeForm({ name: e.target.value })} /><button onClick={() => void handleAddEmployee()} className="w-full rounded-lg bg-purple-600 py-2 font-semibold text-white">حفظ الموظف</button></div>}<div className="max-h-96 space-y-2 overflow-y-auto">{employees.map(employee => <div key={employee.id} onClick={() => setSelectedEmployeeId(employee.id)} className={`cursor-pointer rounded-lg p-3 ${selectedEmployeeId === employee.id ? "border-2 border-purple-600 bg-purple-100" : "border border-gray-200 bg-gray-50"}`}><div className="flex items-start justify-between"><div><h3 className="font-bold">{employee.name}</h3><p className="mt-1 font-semibold text-purple-600">{employee.currentPoints} نقطة</p></div><button onClick={e => { e.stopPropagation(); void deleteEmployee(employee.id); }} className="text-red-600"><Trash2 size={16} /></button></div></div>)}{!employees.length && <p className="py-8 text-center text-gray-500">لا يوجد موظفون بعد</p>}</div></div></div>
         <div className="lg:col-span-3">{selectedEmployee ? <div className="space-y-6">

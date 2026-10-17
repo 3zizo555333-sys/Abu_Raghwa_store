@@ -1,11 +1,12 @@
-import { useMemo, useState } from "react";
-import { ArrowRight, Gift, History, Loader2, Phone, Star, QrCode } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { ArrowRight, Gift, History, Loader2, MessageCircle, QrCode, Star, Trophy, X } from "lucide-react";
 import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { trpc } from "@/lib/trpc";
 import { shouldLookupLoyaltyProfile } from "@/lib/loyaltyLookup";
 import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
+import { getPublicLoyaltyExperience, type PublicLoyaltyMilestone, type PublicReferralCampaign } from "@/lib/supabase/loyaltyExperience";
 
 type RewardLevel = { points: number; giftName: string; confirmed?: boolean };
 const DEFAULT_REWARDS: RewardLevel[] = [
@@ -14,50 +15,46 @@ const DEFAULT_REWARDS: RewardLevel[] = [
   { points: 100, giftName: "باكدج منظفات منزلية", confirmed: true },
   { points: 200, giftName: "هدية كبرى خاصة", confirmed: true },
 ];
+const sourceLabel: Record<string, string> = { catalog: "شراء من الكتالوج", offer: "كوبون عرض", reward: "استبدال هدية", sale: "فاتورة كاشير أو بيع عادي", manual: "تعديل إداري" };
 
-const sourceLabel: Record<string, string> = {
-  catalog: "شراء من الكتالوج",
-  offer: "كوبون عرض",
-  reward: "استبدال هدية",
-  sale: "فاتورة كاشير أو بيع عادي",
-  manual: "تعديل إداري",
-};
+function Milestones({ points, milestones, onPreview }: { points: number; milestones: PublicLoyaltyMilestone[]; onPreview: (url: string) => void }) {
+  if (!milestones.length) return null;
+  const sorted = [...milestones].sort((a, b) => a.pointsRequired - b.pointsRequired);
+  const next = sorted.find(item => points < item.pointsRequired);
+  const previous = [...sorted].reverse().find(item => points >= item.pointsRequired);
+  const start = previous?.pointsRequired || 0;
+  const end = next?.pointsRequired || Math.max(start, points);
+  const percent = next ? Math.min(100, Math.max(0, ((points - start) / Math.max(1, end - start)) * 100)) : 100;
+  return <section className="rounded-3xl border border-violet-200 bg-gradient-to-br from-violet-50 via-white to-fuchsia-50 p-5 shadow-sm" aria-label="محطات هدايا الولاء">
+    <div className="flex items-center justify-between gap-3"><div><p className="text-xs font-black text-violet-600">رحلة المكافآت</p><h2 className="mt-1 flex items-center gap-2 text-xl font-black text-violet-950"><Trophy className="h-5 w-5 text-amber-500" /> محطات هداياك</h2></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-800">{points} نقطة</span></div>
+    {next && <div className="mt-4 rounded-2xl bg-white p-3 ring-1 ring-violet-100"><div className="flex justify-between text-xs font-black text-violet-900"><span>المحطة التالية: {next.isMystery ? "هدية مفاجأة سرية" : next.rewardName}</span><span>{points} / {next.pointsRequired}</span></div><div className="mt-2 h-3 overflow-hidden rounded-full bg-violet-100"><div className="h-full rounded-full bg-gradient-to-l from-fuchsia-500 to-amber-400 transition-all duration-700" style={{ width: `${percent}%` }} /></div><p className="mt-2 text-xs font-bold text-violet-700">باقي {Math.max(0, next.pointsRequired - points)} نقطة</p></div>}
+    <div className="mt-4 grid gap-3 sm:grid-cols-2">{sorted.map(item => { const unlocked = points >= item.pointsRequired; return <article key={item.id} className={`relative overflow-hidden rounded-2xl border p-3 transition ${unlocked ? "border-emerald-300 bg-emerald-50" : item.isMystery ? "border-fuchsia-300 bg-gradient-to-br from-fuchsia-50 to-violet-100" : "border-slate-200 bg-white"}`}><div className="flex items-center gap-3"><button type="button" onClick={() => item.rewardImageUrl && onPreview(item.rewardImageUrl)} disabled={!item.rewardImageUrl} className="grid h-14 w-14 shrink-0 place-items-center overflow-hidden rounded-xl bg-white ring-1 ring-black/5 disabled:cursor-default">{item.rewardImageUrl ? <img src={item.rewardImageUrl} alt={item.isMystery ? "هدية غامضة" : item.rewardName} className="h-full w-full object-cover" /> : <span className="text-3xl">🎁</span>}</button><div className="min-w-0"><p className="text-xs font-black text-slate-500">{item.pointsRequired} نقطة</p><h3 className="font-black text-slate-900">{item.isMystery ? "🎁 مفاجأة سرية" : item.rewardName}</h3>{item.description && !item.isMystery && <p className="mt-1 text-xs text-slate-600">{item.description}</p>}</div></div>{unlocked && <span className="mt-3 block rounded-lg bg-emerald-600 px-2 py-1 text-center text-xs font-black text-white">تم الفتح والتسليم ✅</span>}</article>; })}</div>
+  </section>;
+}
 
 export default function LoyaltyPage() {
   const [phone, setPhone] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("phone") || "");
   const [customerCode, setCustomerCode] = useState(() => typeof window === "undefined" ? "" : new URLSearchParams(window.location.search).get("code") || "");
+  const [milestones, setMilestones] = useState<PublicLoyaltyMilestone[]>([]);
+  const [referral, setReferral] = useState<PublicReferralCampaign | null>(null);
+  const [experienceLoading, setExperienceLoading] = useState(false);
+  const [previewImage, setPreviewImage] = useState("");
   const rewardLevelsQuery = trpc.catalog.getPublicLoyaltyRewardLevels.useQuery(undefined, { staleTime: 30_000, retry: false });
   const queryInput = useMemo(() => ({ phone: phone.trim() || undefined, customerCode: customerCode.trim().length >= 4 ? customerCode.trim() : undefined }), [phone, customerCode]);
   const hasIdentifier = shouldLookupLoyaltyProfile(phone, customerCode);
   const profileQuery = trpc.catalog.getLoyaltyProfile.useQuery(queryInput, { enabled: hasIdentifier, retry: false });
   const profile = profileQuery.data;
+  useEffect(() => { if (!hasIdentifier) { setMilestones([]); setReferral(null); return; } let active = true; setExperienceLoading(true); void getPublicLoyaltyExperience(queryInput).then(data => { if (active) { setMilestones(data.milestones); setReferral(data.referral); } }).catch(() => { if (active) { setMilestones([]); setReferral(null); } }).finally(() => { if (active) setExperienceLoading(false); }); return () => { active = false; }; }, [hasIdentifier, queryInput]);
   const confirmedRewards = rewardLevelsQuery.data ?? DEFAULT_REWARDS;
-
-  return (
-    <main className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-blue-50 px-4 py-8 text-slate-900" dir="rtl">
-      <div className="mx-auto max-w-2xl space-y-5">
-        <header className="rounded-3xl bg-gradient-to-l from-blue-700 via-blue-600 to-cyan-500 p-6 text-white shadow-xl">
-          <Link href="/catalog" className="inline-flex items-center gap-2 text-sm font-bold text-blue-100 hover:text-white"><ArrowRight className="h-4 w-4" />العودة إلى الكتالوج</Link>
-          <div className="mt-8 flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15"><Star className="h-7 w-7 fill-amber-300 text-amber-300" /></span><div><p className="text-sm font-bold text-blue-100">مكافآتك من أبو رغوة</p><h1 className="text-3xl font-black">صفحة نقاطي</h1></div></div>
-          <p className="mt-4 max-w-xl text-sm leading-7 text-blue-50">تابع رصيدك الموحد من مشتريات الكتالوج وكوبونات العروض وفواتير الكاشير، واعرف الهدية التي وصلت إليها.</p>
-        </header>
-
-        <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100">
-          <div className="flex items-center gap-2"><QrCode className="h-5 w-5 text-orange-600" /><h2 className="font-black">ادخل إلى نقاطك</h2></div>
-          <p className="mt-1 text-sm leading-6 text-slate-500">أدخل كود الولاء المكوّن من 4 أحرف أو أرقام والموجود على فاتورتك أو بطاقة نقاطك؛ الكود وحده يكفي. رقم الهاتف اختياري.</p>
-          <div className="mt-4 grid gap-3 sm:grid-cols-2"><Input value={customerCode} onChange={event => setCustomerCode(event.target.value)} placeholder="كود الولاء (4 خانات)" autoCapitalize="characters" autoComplete="off" className="h-12 rounded-xl text-left" dir="ltr" /><Input value={phone} onChange={event => setPhone(event.target.value)} type="tel" placeholder="رقم الهاتف (اختياري)" className="h-12 rounded-xl" /></div>
-        </section>
-
-        {profileQuery.isFetching && <div className="rounded-3xl bg-white p-8 text-center shadow-sm"><Loader2 className="mx-auto h-7 w-7 animate-spin text-orange-600" /><p className="mt-3 text-sm font-bold text-slate-600">جارٍ تحميل رصيدك...</p></div>}
-        {!profileQuery.isFetching && hasIdentifier && !profile && <div className="rounded-3xl bg-white p-8 text-center shadow-sm"><Gift className="mx-auto h-10 w-10 text-amber-400" /><h2 className="mt-3 font-black">لم نعثر على بطاقة ولاء بهذا الكود أو الرقم</h2><p className="mt-2 text-sm leading-6 text-slate-500">تأكد من كتابة الكود ذي الأربع خانات كما يظهر على الفاتورة. الهاتف اختياري؛ لا تحتاج إلى إدخاله إذا كان الكود صحيحًا.</p></div>}
-        {profile && <>
-          <section className="rounded-3xl bg-gradient-to-l from-amber-500 to-orange-500 p-6 text-white shadow-lg"><p className="text-sm font-bold text-amber-50">أهلًا {profile.name}</p><p className="mt-1 text-5xl font-black">{profile.points} <span className="text-lg">نقطة</span></p><p className="mt-2 text-sm text-amber-50">رصيد واحد يجمع العروض والكتالوج والكاشير والبيع العادي.</p><p className="mt-3 text-xs text-amber-100">كودك الخاص: <strong dir="ltr">{profile.customerCode}</strong></p></section>
-          <LoyaltyRewardProgressCard points={profile.points} levels={confirmedRewards} isLoading={rewardLevelsQuery.isLoading && rewardLevelsQuery.data === undefined} />
-          <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100"><div className="flex items-center gap-2"><History className="h-5 w-5 text-blue-600" /><h2 className="font-black">حركات النقاط</h2></div>{!profile.transactions?.length ? <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">لا توجد حركات مسجلة بعد.</p> : <div className="mt-4 space-y-2">{profile.transactions.map(transaction => <div key={transaction.id} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3"><div><p className="text-sm font-bold text-slate-800">{transaction.description}</p><p className="mt-1 text-xs text-slate-500">{sourceLabel[transaction.source] || "حركة نقاط"} · {new Date(transaction.createdAt).toLocaleString("ar-EG")}</p></div><strong className={transaction.points >= 0 ? "text-green-600" : "text-red-600"}>{transaction.points > 0 ? "+" : ""}{transaction.points}</strong></div>)}</div>}</section>
-        </>}
-
-        <div className="text-center"><Button asChild variant="outline" className="rounded-xl"><Link href="/catalog">تصفح المنتجات واطلب الآن</Link></Button></div>
-      </div>
-    </main>
-  );
+  const shareReferral = () => { if (!referral || !profile) return; const message = `${referral.title}\n\n${referral.messageTemplate.replace(/50/g, String(referral.pointsPerFriend))}\n\nكود دعوة/ولاء العميل: ${profile.customerCode}\nتابع نقاطك: ${window.location.origin}/loyalty?code=${encodeURIComponent(profile.customerCode)}`; window.open(`https://wa.me/?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer"); };
+  return <main className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-blue-50 px-4 py-8 text-slate-900" dir="rtl">
+    {previewImage && <div className="fixed inset-0 z-50 grid place-items-center bg-slate-950/80 p-5" onClick={() => setPreviewImage("")}><button type="button" aria-label="إغلاق الصورة" onClick={() => setPreviewImage("")} className="absolute left-4 top-4 rounded-full bg-white/15 p-2 text-white"><X /></button><img src={previewImage} alt="صورة الهدية" className="max-h-[85vh] max-w-full rounded-2xl object-contain shadow-2xl" /></div>}
+    <div className="mx-auto max-w-2xl space-y-5"><header className="rounded-3xl bg-gradient-to-l from-blue-700 via-blue-600 to-cyan-500 p-6 text-white shadow-xl"><Link href="/catalog" className="inline-flex items-center gap-2 text-sm font-bold text-blue-100 hover:text-white"><ArrowRight className="h-4 w-4" />العودة إلى الكتالوج</Link><div className="mt-8 flex items-center gap-3"><span className="grid h-14 w-14 place-items-center rounded-2xl bg-white/15"><Star className="h-7 w-7 fill-amber-300 text-amber-300" /></span><div><p className="text-sm font-bold text-blue-100">مكافآتك من أبو رغوة</p><h1 className="text-3xl font-black">صفحة نقاطي</h1></div></div><p className="mt-4 max-w-xl text-sm leading-7 text-blue-50">تابع رصيدك ومحطات الهدايا، وشارك كودك مع أصدقائك لتحصل على نقاط مجانية.</p></header>
+      <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100"><div className="flex items-center gap-2"><QrCode className="h-5 w-5 text-orange-600" /><h2 className="font-black">ادخل إلى نقاطك</h2></div><p className="mt-1 text-sm leading-6 text-slate-500">أدخل كود الولاء أو رقم الهاتف.</p><div className="mt-4 grid gap-3 sm:grid-cols-2"><Input value={customerCode} onChange={event => setCustomerCode(event.target.value)} placeholder="كود الولاء (4 خانات)" autoCapitalize="characters" autoComplete="off" className="h-12 rounded-xl text-left" dir="ltr" /><Input value={phone} onChange={event => setPhone(event.target.value)} type="tel" placeholder="رقم الهاتف (اختياري)" className="h-12 rounded-xl" /></div></section>
+      {profileQuery.isFetching && <div className="rounded-3xl bg-white p-8 text-center shadow-sm"><Loader2 className="mx-auto h-7 w-7 animate-spin text-orange-600" /><p className="mt-3 text-sm font-bold text-slate-600">جارٍ تحميل رصيدك...</p></div>}
+      {!profileQuery.isFetching && hasIdentifier && !profile && <div className="rounded-3xl bg-white p-8 text-center shadow-sm"><Gift className="mx-auto h-10 w-10 text-amber-400" /><h2 className="mt-3 font-black">لم نعثر على بطاقة ولاء بهذا الكود أو الرقم</h2><p className="mt-2 text-sm leading-6 text-slate-500">تأكد من كتابة الكود كما يظهر على الفاتورة.</p></div>}
+      {profile && <><section className="rounded-3xl bg-gradient-to-l from-amber-500 to-orange-500 p-6 text-white shadow-lg"><p className="text-sm font-bold text-amber-50">أهلًا {profile.name}</p><p className="mt-1 text-5xl font-black">{profile.points} <span className="text-lg">نقطة</span></p><p className="mt-2 text-sm text-amber-50">رصيدك الموحد من العروض والكتالوج والكاشير.</p><p className="mt-3 text-xs text-amber-100">كودك الخاص: <strong dir="ltr">{profile.customerCode}</strong></p></section><LoyaltyRewardProgressCard points={profile.points} levels={confirmedRewards} isLoading={rewardLevelsQuery.isLoading && rewardLevelsQuery.data === undefined} />{experienceLoading && <p className="rounded-2xl bg-white p-3 text-center text-xs font-bold text-slate-500">جارٍ تحميل محطات الهدايا...</p>}<Milestones points={profile.points} milestones={milestones} onPreview={setPreviewImage} />{referral?.isActive && <section className="rounded-3xl border border-green-200 bg-gradient-to-br from-green-50 to-emerald-100 p-5 shadow-sm"><div className="flex items-start gap-3"><span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl bg-green-600 text-white"><MessageCircle /></span><div><h2 className="text-lg font-black text-green-950">{referral.title}</h2><p className="mt-2 text-sm leading-6 text-green-900">{referral.messageTemplate}</p><p className="mt-2 font-black text-green-700">اكسب {referral.pointsPerFriend} نقطة هدية عن كل صديق يسجل</p></div></div><Button type="button" onClick={shareReferral} className="mt-4 w-full bg-green-600 font-black hover:bg-green-700"><MessageCircle className="ml-2 h-4 w-4" />شارك الدعوة عبر واتساب</Button></section>}<section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-100"><div className="flex items-center gap-2"><History className="h-5 w-5 text-blue-600" /><h2 className="font-black">حركات النقاط</h2></div>{!profile.transactions?.length ? <p className="mt-4 rounded-2xl bg-slate-50 p-4 text-sm text-slate-500">لا توجد حركات مسجلة بعد.</p> : <div className="mt-4 space-y-2">{profile.transactions.map(transaction => <div key={transaction.id} className="flex items-start justify-between gap-3 rounded-2xl border border-slate-100 p-3"><div><p className="text-sm font-bold text-slate-800">{transaction.description}</p><p className="mt-1 text-xs text-slate-500">{sourceLabel[transaction.source] || "حركة نقاط"} · {new Date(transaction.createdAt).toLocaleString("ar-EG")}</p></div><strong className={transaction.points >= 0 ? "text-green-600" : "text-red-600"}>{transaction.points > 0 ? "+" : ""}{transaction.points}</strong></div>)}</div>}</section></>}
+      <div className="text-center"><Button asChild variant="outline" className="rounded-xl"><Link href="/catalog">تصفح المنتجات واطلب الآن</Link></Button></div>
+    </div>
+  </main>;
 }

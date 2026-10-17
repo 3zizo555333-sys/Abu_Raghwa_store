@@ -66,6 +66,8 @@ export type Database = {
       staff_points_ledger: Table<{ id: string; store_id: string; employee_id: string; points_delta: number; entry_type: "task_earned" | "penalty" | "reward_redeemed" | "manual_adjustment" | "reset"; source_id: string; description: string; created_by: string | null; created_at: string }>;
       store_offers: Table<{ id: string; store_id: string; title: string; banner_title: string; description: string; strategy: string; original_price: number | null; offer_price: number | null; start_date: string | null; expires_at: string | null; points_reward: number; public_description: string; offer_data: Json; starts_at: string | null; ends_at: string | null; status: "draft" | "active" | "paused" | "expired"; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
       customer_points: Table<{ id: string; store_id: string; customer_phone: string; customer_name: string | null; points: number; total_spent: number; last_transaction_at: string; created_at: string; updated_at: string }>;
+      loyalty_milestones: Table<{ id: string; store_id: string; points_required: number; reward_name: string; reward_image_url: string | null; is_mystery: boolean; description: string | null; created_at: string }>;
+      referral_campaign_settings: Table<{ id: string; store_id: string; title: string; message_template: string; points_per_friend: number; is_active: boolean; updated_at: string }>;
       offer_orders: Table<{ id: string; store_id: string; offer_id: string; offer_title: string; customer_name: string; customer_code: string; customer_phone: string | null; points_cost: number; status: "pending" | "approved" | "cancelled"; created_at: string; updated_at: string }>;
       product_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string }>;
       apartment_inventory_categories: Table<{ id: string; shop_id: string; name: string; created_at: string; updated_at: string }>;
@@ -148,6 +150,7 @@ export type Database = {
       redeem_staff_reward: { Args: { p_shop_id: string; p_employee_id: string; p_reward_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };
       list_shop_members: { Args: { p_shop_id: string }; Returns: Array<{ user_id: string; email: string; display_name: string | null; role: "manager" | "admin" | "supervisor" | "seller"; status: "pending" | "active" | "suspended"; created_at: string; updated_at: string; last_sign_in_at: string | null }> };
       set_shop_membership: { Args: { p_shop_id: string; p_user_id: string; p_role: "manager" | "admin" | "supervisor" | "seller"; p_status: "pending" | "active" | "suspended" }; Returns: Database["public"]["Tables"]["shop_memberships"]["Row"] };
+      get_public_loyalty_experience: { Args: { p_customer_code?: string | null; p_phone?: string | null }; Returns: Json };
       replace_shortage_manual_products: { Args: { p_shop_id: string; p_category: string; p_names: string[] }; Returns: Database["public"]["Tables"]["shortage_manual_products"]["Row"][] };
       get_invoice_returnable_items: { Args: { p_shop_id: string; p_invoice_id: string }; Returns: Json };
 create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idempotency_key: string; p_items: Json; p_reason?: string }; Returns: Json };
