@@ -20,6 +20,14 @@ export type SupplierPriceComparison = {
   invoiceId: string;
   isCheapest: boolean;
 };
+export type SupplierPriceInsight = {
+  previousUnitCost: number | null;
+  previousSupplierName: string | null;
+  priceDiff: number | null;
+  cheapestUnitCost: number | null;
+  cheapestSupplierName: string | null;
+  savingVsCheapest: number | null;
+};
 
 function normalizeItem(item: SupplierInvoiceDraftItem) {
   const quantity = Math.max(0.001, Number(item.quantity) || 0);
@@ -124,6 +132,40 @@ export async function listSupplierPriceHistory(itemName: string, barcode?: strin
   return matching.map(row => {
     const invoice = invoiceRows.find(candidate => candidate.id === row.invoice_id);
     return { itemName: row.item_name, supplierName: invoice?.supplier_name || "", unitCost: Number(row.unit_cost), invoiceDate: invoice?.invoice_date || "", invoiceId: row.invoice_id, isCheapest: Number(row.unit_cost) === cheapest };
+  });
+}
+
+export async function getSupplierPriceInsights(items: Array<{ itemName: string; barcode?: string; unitCost: number }>): Promise<SupplierPriceInsight[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  const client = getSupabaseClient();
+  const requested = items.map(item => ({ name: item.itemName.trim().toLocaleLowerCase(), barcode: item.barcode?.trim() || "", unitCost: Number(item.unitCost) || 0 }));
+  const empty = (): SupplierPriceInsight => ({ previousUnitCost: null, previousSupplierName: null, priceDiff: null, cheapestUnitCost: null, cheapestSupplierName: null, savingVsCheapest: null });
+  if (!requested.some(item => item.name)) return requested.map(empty);
+  const invoices = requireCloudResult(await client.from("supplier_invoices").select("id,supplier_name,created_at").eq("store_id", shopId).order("created_at", { ascending: false }).limit(2000)) || [];
+  if (!invoices.length) return requested.map(empty);
+  const itemRows: Array<{ invoice_id: string; item_name: string; barcode: string | null; unit_cost: number; created_at?: string }> = [];
+  const invoiceIds = invoices.map(invoice => invoice.id);
+  for (let offset = 0; offset < invoiceIds.length; offset += 200) {
+    const rows = requireCloudResult(await client.from("supplier_invoice_items").select("invoice_id,item_name,barcode,unit_cost,created_at").in("invoice_id", invoiceIds.slice(offset, offset + 200)).order("created_at", { ascending: false }).limit(10000)) || [];
+    itemRows.push(...(rows as typeof itemRows));
+  }
+  const invoiceMap = new Map(invoices.map(invoice => [invoice.id, invoice]));
+  return requested.map(request => {
+    if (!request.name) return empty();
+    const matches = itemRows.filter(row => row.item_name.trim().toLocaleLowerCase() === request.name && (!request.barcode || !row.barcode || row.barcode === request.barcode));
+    const previous = matches[0];
+    const cheapest = matches.reduce<typeof matches[number] | null>((best, row) => !best || Number(row.unit_cost) < Number(best.unit_cost) ? row : best, null);
+    const previousUnitCost = previous ? Number(previous.unit_cost) : null;
+    const cheapestUnitCost = cheapest ? Number(cheapest.unit_cost) : null;
+    return {
+      previousUnitCost,
+      previousSupplierName: previous ? invoiceMap.get(previous.invoice_id)?.supplier_name || null : null,
+      priceDiff: previousUnitCost == null ? null : Math.round((request.unitCost - previousUnitCost) * 100) / 100,
+      cheapestUnitCost,
+      cheapestSupplierName: cheapest ? invoiceMap.get(cheapest.invoice_id)?.supplier_name || null : null,
+      savingVsCheapest: cheapestUnitCost == null ? null : Math.round((request.unitCost - cheapestUnitCost) * 100) / 100,
+    };
   });
 }
 
