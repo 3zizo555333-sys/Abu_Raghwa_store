@@ -45,6 +45,7 @@ export default function PublicOfferPage() {
   const [loading, setLoading] = useState(true);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [referralPhone, setReferralPhone] = useState("");
   const [customerCode, setCustomerCode] = useState("");
   const [isRegistered, setIsRegistered] = useState(false);
   const [customerRecord, setCustomerRecord] = useState<CustomerLoyalty | null>(null);
@@ -127,7 +128,7 @@ export default function PublicOfferPage() {
       return;
     }
     try {
-      const profile = await registerOfferCustomer.mutateAsync({ name: customerName.trim(), phone: customerPhone.trim() || undefined, customerCode: customerCode.trim() || undefined });
+      const profile = await registerOfferCustomer.mutateAsync({ name: customerName.trim(), phone: customerPhone.trim() || undefined, customerCode: customerCode.trim() || undefined, referralPhone: referralPhone.trim() || undefined });
       if (!profile) throw new Error("تعذر إنشاء بطاقة الولاء");
       setCustomerName(profile.name);
       setCustomerPhone(profile.phone || "");
@@ -313,6 +314,14 @@ export default function PublicOfferPage() {
                   placeholder="كود نقاطك (4 خانات، اختياري)"
                   className="bg-white text-xs font-bold text-left"
                   style={{ direction: "ltr" }}
+                />
+                <Input
+                  value={referralPhone}
+                  onChange={(e) => setReferralPhone(e.target.value)}
+                  placeholder="رقم هاتف الصديق الذي دعاك (اختياري — 50 نقطة له)"
+                  type="tel"
+                  className="bg-white text-xs font-bold text-right"
+                  style={{ direction: "rtl" }}
                 />
                 <Button type="submit" disabled={isExpired || registerOfferCustomer.isLoading} className="w-full bg-purple-600 hover:bg-purple-700 text-white text-xs font-black py-2 rounded-xl shadow disabled:bg-gray-400">
                   {isExpired ? "انتهت صلاحية العرض" : "سجّل/اربط بطاقة نقاطك للشراء"}

@@ -77,6 +77,7 @@ interface OfferStrategy {
 
 interface CustomerLoyalty {
   name: string;
+  customerCode?: string;
   phone: string;
   points: number;
   usedCoupons: string[];
@@ -212,6 +213,8 @@ export default function SmartOffers() {
   const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const redeemLoyaltyReward = trpc.catalog.redeemLoyaltyReward.useMutation();
+  const manuallyAwardReferralPoints = trpc.catalog.manuallyAwardReferralPoints.useMutation();
+  const generateOfferBannerTitle = trpc.system.generateOfferBannerTitle.useMutation();
   const approveOfferPurchase = trpc.catalog.approveOfferPurchaseRequest.useMutation();
   const cancelOfferPurchase = trpc.catalog.cancelOfferPurchaseRequest.useMutation();
 
@@ -405,6 +408,24 @@ export default function SmartOffers() {
     try { await saveReferralCampaign(referralForm); toast.success("تم حفظ إعدادات حملة دعوة الأصدقاء سحابياً."); }
     catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات الحملة."); }
     finally { setSavingReferral(false); }
+  };
+  const handleGenerateBannerTitle = async () => {
+    if (!currentOffer) return;
+    try {
+      const result = await generateOfferBannerTitle.mutateAsync({ offerTitle: currentOffer.title, strategy: currentOffer.strategyName, description: currentOffer.description });
+      updateCurrentOfferField("bannerTitle", result.title);
+      toast.success("تم توليد عنوان بانر جذاب ويمكنك تعديله قبل الحفظ.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر توليد عنوان البانر."); }
+  };
+  const handleManualReferral = async (customer: CustomerLoyalty) => {
+    const friendName = window.prompt(`اكتب اسم الصديق الجديد الذي دعا إليه ${customer.name}:`, "صديق جديد");
+    if (friendName === null) return;
+    try {
+      const result = await manuallyAwardReferralPoints.mutateAsync({ phone: customer.phone || undefined, customerCode: (customer as CustomerLoyalty & { customerCode?: string }).customerCode, friendName: friendName.trim() || "صديق جديد", points: referralForm.pointsPerFriend || 50 });
+      if (result.profile) setCustomersList(current => current.map(item => item.phone === customer.phone ? result.profile as CustomerLoyalty : item));
+      void loyaltyCustomersQuery.refetch();
+      toast.success(`تمت إضافة ${result.pointsAwarded} نقطة إحالة إلى ${customer.name}.`);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إضافة نقاط الإحالة."); }
   };
   const handleSpinWheelForReward = (index: number) => {
     const randomGift = RANDOM_GIFT_POOL[Math.floor(Math.random() * RANDOM_GIFT_POOL.length)];
@@ -1078,7 +1099,7 @@ export default function SmartOffers() {
                 <div className="space-y-2">
                   <label className="block text-[11px] font-bold text-purple-900">صورة الهدية وخيار المفاجأة</label>
                   <div className="flex flex-wrap items-center gap-2">
-                    <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-2 text-[11px] font-bold text-purple-800">📷 رفع صورة الهدية<input type="file" accept="image/*" capture="environment" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file); }} /></label>
+                    <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-2 text-[11px] font-bold text-purple-800">📷 التقاط/اختيار صورة الهدية<input type="file" accept="image/*" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file); }} /></label>
                     <label className="flex items-center gap-1 text-[11px] font-bold text-purple-900"><input type="checkbox" checked={newRewardMystery} onChange={event => setNewRewardMystery(event.target.checked)} /> 🎁 غامضة</label>
                     {newRewardImageUrl && <img src={newRewardImageUrl} alt="معاينة الهدية" className="h-9 w-9 rounded object-cover ring-1 ring-purple-200" />}
                   </div>
@@ -1138,7 +1159,7 @@ export default function SmartOffers() {
                       />
                     </div>
                     <div className="flex flex-wrap items-center gap-2 border-t border-purple-100 pt-2">
-                      <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-1.5 text-[11px] font-bold text-purple-800">📷 رفع صورة الهدية<input type="file" accept="image/*" capture="environment" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file, index); }} /></label>
+                      <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-1.5 text-[11px] font-bold text-purple-800">📷 التقاط/اختيار صورة الهدية<input type="file" accept="image/*" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file, index); }} /></label>
                       <label className="flex items-center gap-1 text-[11px] font-bold text-purple-900"><input type="checkbox" checked={Boolean(lvl.isMystery)} onChange={event => { const updated = [...rewardLevels]; updated[index] = { ...updated[index], isMystery: event.target.checked, confirmed: false }; setRewardLevels(updated); }} /> 🎁 هدية غامضة / مفاجأة سرية</label>
                       {lvl.rewardImageUrl && <img src={lvl.rewardImageUrl} alt="معاينة الهدية" className="h-12 w-12 rounded-lg object-cover ring-1 ring-purple-200" />}
                     </div>
@@ -1225,6 +1246,7 @@ export default function SmartOffers() {
                           >
                             <MessageCircle className="w-4 h-4" /> واتساب 📱
                           </Button>
+                          <Button onClick={() => void handleManualReferral(cust)} disabled={manuallyAwardReferralPoints.isLoading} className="bg-fuchsia-600 hover:bg-fuchsia-700 text-white text-xs font-bold py-2 px-3 rounded-xl">🎁 إضافة {referralForm.pointsPerFriend || 50} نقطة إحالة</Button>
                         </div>
                       </div>
                     );
@@ -1416,7 +1438,7 @@ export default function SmartOffers() {
 
                   <div className="grid gap-3 rounded-xl border border-indigo-200 bg-white p-4 md:grid-cols-2">
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان العرض</label><Input value={currentOffer.title} onChange={event => updateCurrentOfferField("title", event.target.value)} /></div>
-                    <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان البانر المخصص</label><Input value={currentOffer.bannerTitle || ""} onChange={event => updateCurrentOfferField("bannerTitle", event.target.value)} placeholder="مثال: دلوقتي هتلاقي عروض التوفير" /></div>
+                    <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان البانر المخصص</label><div className="flex gap-2"><Input value={currentOffer.bannerTitle || ""} onChange={event => updateCurrentOfferField("bannerTitle", event.target.value)} placeholder="مثال: دلوقتي هتلاقي عروض التوفير" /><Button type="button" size="sm" disabled={generateOfferBannerTitle.isLoading} onClick={() => void handleGenerateBannerTitle()} className="shrink-0 bg-indigo-600 text-white hover:bg-indigo-700">✨ توليد بالذكاء الاصطناعي</Button></div></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">وصف العرض</label><Input value={currentOffer.description} onChange={event => updateCurrentOfferField("description", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>

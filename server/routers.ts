@@ -173,7 +173,7 @@ export const appRouter = router({
     getPublicLoyaltyRewardLevels: publicProcedure
       .query(async () => db.getPublicLoyaltyRewardLevels()),
     registerOfferCustomer: publicProcedure
-      .input(z.object({ name: z.string().min(2).max(255), phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional() }))
+      .input(z.object({ name: z.string().min(2).max(255), phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional(), referralPhone: z.string().max(32).optional() }))
       .mutation(async ({ input }) => db.registerOfferCustomer(input)),
     createOfferPurchaseRequest: publicProcedure
       .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48) }))
@@ -208,6 +208,12 @@ export const appRouter = router({
       .mutation(async ({ input, ctx }) => {
         await requireCatalogAdminSession(ctx.req);
         return db.redeemLoyaltyReward(input);
+      }),
+    manuallyAwardReferralPoints: publicProcedure
+      .input(z.object({ phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional(), friendName: z.string().min(1).max(255), points: z.number().positive().max(10000).optional() }).refine(value => Boolean(value.phone?.trim() || value.customerCode?.trim()), "أدخل كود العميل أو رقم الهاتف"))
+      .mutation(async ({ input, ctx }) => {
+        await requireCatalogAdminSession(ctx.req);
+        return db.manuallyAwardReferralPoints(input);
       }),
     recordDirectSaleLoyalty: publicProcedure
       .input(z.object({ saleId: z.string().min(6).max(128), customerName: z.string().min(2).max(255), phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional(), itemsJson: z.string().min(2).max(100_000) }))

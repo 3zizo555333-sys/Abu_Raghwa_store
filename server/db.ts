@@ -711,12 +711,27 @@ async function ensureCustomerLoyaltyProfile(input: { name: string; phone?: strin
   return getCustomerLoyaltyRow({ customerCode });
 }
 
-export async function registerOfferCustomer(input: { name: string; phone?: string; customerCode?: string }) {
+export async function registerOfferCustomer(input: { name: string; phone?: string; customerCode?: string; referralPhone?: string }) {
   const found = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
   if (input.customerCode?.trim() && !found) throw new Error("كود نقاط الولاء غير صحيح");
   const profile = found || await ensureCustomerLoyaltyProfile({ name: input.name, phone: input.phone, customerCode: input.customerCode });
   if (!profile) throw new Error("تعذر إنشاء بطاقة الولاء");
+  if (!found && input.referralPhone?.trim()) {
+    const referrer = await getCustomerLoyaltyRow({ phone: input.referralPhone });
+    if (referrer && referrer.customerCode !== profile.customerCode) {
+      const alreadyAwarded = parseJsonArray<LoyaltyTransaction>(referrer.transactionsJson).some(item => item.source === "manual" && item.orderId === profile.customerCode);
+      if (!alreadyAwarded) await saveCustomerLoyaltyTransaction({ phone: referrer.phone, customerCode: referrer.customerCode, name: referrer.name, transaction: { id: `referral:${referrer.customerCode}:${profile.customerCode}`, points: 50, type: "earned", source: "manual", orderId: profile.customerCode, description: `مكافأة دعوة الصديق (${profile.name})`, createdAt: new Date().toISOString() } });
+    }
+  }
   return getCustomerLoyaltyProfileFromRow(await getCustomerLoyaltyRow({ customerCode: profile.customerCode }));
+}
+
+export async function manuallyAwardReferralPoints(input: { phone?: string; customerCode?: string; friendName: string; points?: number }) {
+  const existing = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
+  if (!existing) throw new Error("العميل غير مسجل في دفتر الولاء");
+  const points = Math.max(1, Math.trunc(Number(input.points) || 50));
+  const row = await saveCustomerLoyaltyTransaction({ phone: existing.phone, customerCode: existing.customerCode, name: existing.name, transaction: { id: `manual-referral:${existing.customerCode}:${Date.now()}:${randomUUID()}`, points, type: "earned", source: "manual", description: `مكافأة دعوة الصديق (${input.friendName.trim() || "صديق جديد"})`, createdAt: new Date().toISOString() } });
+  return { profile: getCustomerLoyaltyProfileFromRow(row), pointsAwarded: points };
 }
 
 export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string }) {
