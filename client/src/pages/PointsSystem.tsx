@@ -4,6 +4,7 @@ import { useLocation } from "wouter";
 import { toast } from "sonner";
 import { applyStaffPointAdjustment, createStoreReward, deleteStoreReward, listStaffGamification, redeemStoreReward, subscribeToGamification, type GamificationEmployee, type StoreRewardRow } from "@/lib/supabase/gamification";
 import { saveStaffEmployee, softDeleteStaffEmployee } from "@/lib/supabase/operations";
+import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
 
 export default function PointsSystem() {
   const [, navigate] = useLocation();
@@ -19,9 +20,12 @@ export default function PointsSystem() {
   const [rewardForm, setRewardForm] = useState({ pointsRequired: 1000, rewardName: "", rewardDescription: "", availableQuantity: 1 });
 
   const load = async () => {
-    setLoading(true);
+    const cached = await readPersistentCloudCache<{ employees: GamificationEmployee[]; rewards: StoreRewardRow[] }>("staff-gamification");
+    if (cached) { setEmployees(cached.employees); setRewards(cached.rewards); setSelectedEmployeeId(current => current || cached.employees[0]?.id || ""); setLoading(false); }
+    else setLoading(true);
     try {
       const data = await listStaffGamification();
+      void writePersistentCloudCache("staff-gamification", data);
       setEmployees(data.employees);
       setRewards(data.rewards);
       setSelectedEmployeeId(current => current || data.employees[0]?.id || "");

@@ -671,7 +671,7 @@ export default function SmartOffers() {
     await trpcUtils.offers.list.invalidate();
 
     setCurrentOffer(finalOffer);
-    toast.success("✅ تم تفعيل العرض وحفظه في الخادم السحابي! الباركود الآن جاهز للعمل على أي هاتف خارجي.");
+    toast.success("تم تفعيل وحفظ العرض في السحابة بنجاح ✅");
   };
 
   const handlePriceChange = (val: string) => {

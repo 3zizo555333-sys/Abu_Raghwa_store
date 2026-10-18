@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { listPublicCatalogDisplayData, listCatalogRewards } from "@/lib/supabase/operations";
 import { listActiveStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { PromoCarousel } from "@/components/PromoCarousel";
+import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
 
 type SavedOrderReference = { id: string; phone: string; customerCode?: string };
 type LoyaltyRewardLevel = { points: number; giftName: string; confirmed?: boolean };
@@ -60,16 +61,27 @@ export default function PublicCatalogPage() {
   const [loyaltyPhone, setLoyaltyPhone] = useState(() => loadSavedOrders()[0]?.phone || "");
   const [loyaltyCode, setLoyaltyCode] = useState(() => typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "");
   const [customer, setCustomer] = useState({ name: "", phone: "", customerCode: typeof window === "undefined" ? "" : browserState.get("abu_active_customer_code") || "", address: "", note: "" });
+  const applyCatalogSnapshot = (data: any) => {
+    setProducts((data.registeredProducts || []).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
+    setManualProducts((data.manualProducts || []).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
+    setRecipes((data.recipes || []).map((recipe: any) => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
+    setCategories((data.categories || []).map((row: any) => ({ id: row.id, name: row.name })));
+    setCompanies((data.companies || []).map((row: any) => ({ id: row.id, name: row.name })));
+    setPricingConfig((data.pricing || { deliveryMarkupPercent: 0 }) as CatalogPricingConfig);
+  };
   useEffect(() => {
+    let active = true;
+    void readPersistentCloudCache<any>("public-catalog-display-v1").then(cached => {
+      if (!active || !cached) return;
+      applyCatalogSnapshot(cached);
+    });
     listPublicCatalogDisplayData().then(data => {
-      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
-      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
-      setRecipes((data.recipes as any[]).map(recipe => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
-      setCategories(data.categories.map(row => ({ id: row.id, name: row.name })));
-      setCompanies(data.companies.map(row => ({ id: row.id, name: row.name })));
-      setPricingConfig(data.pricing as CatalogPricingConfig);
+      if (!active) return;
+      void writePersistentCloudCache("public-catalog-display-v1", data);
+      applyCatalogSnapshot(data);
       return listCatalogRewards();
-    }).then(rows => { if (rows) setRewardLevels((rows as any[]).map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); }).catch(() => undefined);
+    }).then(rows => { if (active && rows) setRewardLevels((rows as any[]).map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); }).catch(() => undefined);
+    return () => { active = false; };
   }, []);
   useEffect(() => {
     let active = true;
@@ -78,9 +90,10 @@ export default function PublicCatalogPage() {
         const offers = await listActiveStoreOffers();
         if (active) setPromoOffers(offers);
       } catch {
-        if (active) setPromoOffers([]);
+        if (active) void readPersistentCloudCache<CloudStoreOffer[]>("public-store-offers").then(cached => { if (active && cached) setPromoOffers(cached); });
       }
     };
+    void readPersistentCloudCache<CloudStoreOffer[]>("public-store-offers").then(cached => { if (active && cached) setPromoOffers(cached); });
     void refreshOffers();
     const timer = window.setInterval(() => void refreshOffers(), 60_000);
     return () => { active = false; window.clearInterval(timer); };

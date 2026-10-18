@@ -292,7 +292,7 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         if (input.email && input.password) {
           const user = await assertEmployeeFinanceUser(input.email, input.password);
-          if (user.role === "manager") return { token: await createEmployeeFinanceSession({ email: user.email, access: "manager" }), access: "manager" as const };
+        if (user.role === "manager") return { token: await createEmployeeFinanceSession({ email: user.email, access: "manager" }), access: "manager" as const };
         }
         const cardPassword = input.cardPassword || input.pin;
         if (!cardPassword) throw new TRPCError({ code: "UNAUTHORIZED", message: "اكتب كلمة مرور بطاقة العامل التي منحها لك المدير" });
@@ -309,7 +309,15 @@ export const appRouter = router({
         if (user.role !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "إدارة رواتب الموظفين للمدير فقط" });
         return { token: await createEmployeeFinanceSession({ email: user.email, access: "manager" }), access: "manager" as const };
       }),
-    managerOverview: publicProcedure.query(async ({ ctx }) => {
+      forgotPin: publicProcedure
+        .input(z.object({ employeeName: z.string().trim().min(2).max(160) }))
+        .mutation(async ({ input }) => {
+          const store = await getEmployeeFinanceStore();
+          store.forgotPinRequests.push({ id: `pin_request_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`, employeeName: input.employeeName, createdAt: new Date().toISOString(), status: "pending" });
+          await saveEmployeeFinanceStore(store);
+          return { success: true };
+        }),
+      managerOverview: publicProcedure.query(async ({ ctx }) => {
       const session = await requireEmployeeFinanceSession(ctx.req);
       if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات جميع الموظفين متاحة للمدير فقط" });
       const { store, employees, attendance } = await getEmployeeFinanceData();
@@ -317,7 +325,7 @@ export const appRouter = router({
         return employees.map(employee => {
           const assignment = store.assignments.find(item => item.employeeId === employee.id);
           const withdrawals = store.withdrawals.filter(item => item.employeeId === employee.id).sort((a, b) => b.requestedAt.localeCompare(a.requestedAt));
-          return { employee, pinConfigured: Boolean(assignment), cardActive: assignment?.isActive ?? false, summary: buildEmployeeFinanceSummary(employee, attendance, withdrawals, now), withdrawals };
+          return { employee, pinConfigured: Boolean(assignment), cardActive: assignment?.isActive ?? false, summary: buildEmployeeFinanceSummary(employee, attendance, withdrawals, now), withdrawals, forgotPinRequests: store.forgotPinRequests.filter(request => request.status === "pending") };
       });
     }),
     managerAccount: publicProcedure.query(async ({ ctx }) => {
@@ -954,7 +962,7 @@ async function getEmployeeFinanceStore(): Promise<EmployeeFinanceStore> {
   try {
     return normalizeEmployeeFinanceStore(JSON.parse(setting?.dataJson || "{}"));
   } catch {
-    return { profiles: [], assignments: [], withdrawals: [], managerWithdrawals: [] };
+    return { profiles: [], assignments: [], withdrawals: [], managerWithdrawals: [], forgotPinRequests: [] };
   }
 }
 

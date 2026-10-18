@@ -193,6 +193,7 @@ function Router() {
       <Route path={"/reports"} component={withSupervisorRole(withPasswordProtection(Reports, 'screen__reports', 'التقارير المالية'))} />
       <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'screen__advanced_reports', 'جرد المبيعات والأرباح'))} />
       <Route path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, 'screen__employees', 'إدارة الموظفين'))} />
+      <Route path={"/my-withdrawals"} component={withPasswordProtection(Employees, 'screen__my_withdrawals', 'سحوباتي')} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'screen__tasks', 'المهام'))} />
       <Route path={"/points-system"} component={withSupervisorRole(withPasswordProtection(PointsSystem, 'screen__points_system', 'نظام النقاط'))} />
       <Route path={"/offers"} component={withSupervisorRole(withPasswordProtection(Offers, 'screen__offers', 'العروض'))} />
@@ -294,7 +295,7 @@ function App() {
               {/* Legacy snapshot synchronization is retired. Migrated pages use
                   typed Supabase tables/RPCs; remaining pages must not upload
                   local business-data snapshots. */}
-              <VoiceCommandHandler enabled={hasStaffSession || isPublicCustomerRoute} />
+              {hasStaffSession && <VoiceCommandHandler enabled />}
               {hasStaffSession && user && <CustomQuickShortcuts userId={user.id} role={user.role} />}
               {isPublicCustomerRoute ? <Router key="public-customer" /> : <AccessControlGate><Router key={routeScopeKey} /></AccessControlGate>}
             </TooltipProvider>

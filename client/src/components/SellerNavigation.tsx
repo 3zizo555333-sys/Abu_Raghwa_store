@@ -4,6 +4,7 @@ const links = [
   { href: "/cashier", label: "نقطة البيع" },
   { href: "/catalog", label: "الكتالوج" },
   { href: "/catalog-offers", label: "العروض والخصومات" },
+  { href: "/my-withdrawals", label: "💳 سحوباتي" },
 ] as const;
 
 export default function SellerNavigation() {

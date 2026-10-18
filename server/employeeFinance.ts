@@ -30,9 +30,11 @@ export type EmployeeFinanceStore = {
   assignments: FinanceAssignment[];
   withdrawals: FinanceWithdrawal[];
   managerWithdrawals: ManagerWithdrawal[];
+  forgotPinRequests: ForgotPinRequest[];
 };
 
 export type ManagerWithdrawal = { id: string; amount: number; description: string; recordedAt: string };
+export type ForgotPinRequest = { id: string; employeeName: string; createdAt: string; status: "pending" | "resolved" };
 
 export type FinanceEmployee = { id: string; name: string; position?: string; salary: number; joinDate?: string; phone?: string };
 export type FinanceAttendance = { employeeId: string; date: string; status: string };
@@ -63,7 +65,11 @@ export function normalizeEmployeeFinanceStore(value: unknown): EmployeeFinanceSt
     const data = item && typeof item === "object" ? item as Record<string, unknown> : {};
     return { id: asString(data.id), amount: asAmount(data.amount), description: asString(data.description), recordedAt: asString(data.recordedAt) };
   }).filter(item => item.id && item.amount > 0 && item.recordedAt) : [];
-  return { profiles, assignments, withdrawals, managerWithdrawals };
+  const forgotPinRequests = Array.isArray(source.forgotPinRequests) ? source.forgotPinRequests.map(item => {
+    const data = item && typeof item === "object" ? item as Record<string, unknown> : {};
+    return { id: asString(data.id), employeeName: asString(data.employeeName), createdAt: asString(data.createdAt), status: data.status === "resolved" ? "resolved" as const : "pending" as const };
+  }).filter(item => item.id && item.employeeName && item.createdAt) : [];
+  return { profiles, assignments, withdrawals, managerWithdrawals, forgotPinRequests };
 }
 
 function toLatinDigits(value: string) {

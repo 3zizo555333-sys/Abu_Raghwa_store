@@ -8,6 +8,7 @@ import React, { useState, useEffect } from "react";
 import { appendShopCreditTransaction, createShopCreditAccount, importLegacyShopCreditAccounts, listShopCreditAccounts, softDeleteShopCreditAccount, subscribeToShopCredits, type ShopCreditAccount } from "@/lib/supabase/shopCredits";
 import { browserState } from "@/lib/browserState";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
+import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
 
 interface Transaction {
   id: string;
@@ -70,8 +71,11 @@ export default function CreditsAndSuppliersAdvanced() {
   };
   const reloadAccounts = async () => {
     const [cloudCustomers, cloudSuppliers] = await Promise.all([listShopCreditAccounts("customer"), listShopCreditAccounts("supplier")]);
-    setCustomers(cloudCustomers.map(account => toView(account) as Customer));
-    setSuppliers(cloudSuppliers.map(account => toView(account) as Supplier));
+    const nextCustomers = cloudCustomers.map(account => toView(account) as Customer);
+    const nextSuppliers = cloudSuppliers.map(account => toView(account) as Supplier);
+    setCustomers(nextCustomers);
+    setSuppliers(nextSuppliers);
+    void writePersistentCloudCache("credit-ledger", { customers: nextCustomers, suppliers: nextSuppliers });
     return { cloudCustomers, cloudSuppliers };
   };
 
@@ -80,6 +84,8 @@ export default function CreditsAndSuppliersAdvanced() {
     let unsubscribe: (() => Promise<unknown>) | undefined;
     const initialize = async () => {
       try {
+        const cached = await readPersistentCloudCache<{ customers: Customer[]; suppliers: Supplier[] }>("credit-ledger");
+        if (cached && active) { setCustomers(cached.customers || []); setSuppliers(cached.suppliers || []); setIsLoading(false); }
         await reloadAccounts();
         const legacyCustomersRaw = browserState.get("abu_raghwa_customers_advanced");
         const legacySuppliersRaw = browserState.get("abu_raghwa_suppliers_advanced");
