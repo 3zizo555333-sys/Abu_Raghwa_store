@@ -1,6 +1,6 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
-import type { Database } from "./database.types";
+import type { Database, Json } from "./database.types";
 
 export type CloudOfferOrder = Database["public"]["Tables"]["offer_orders"]["Row"];
 export type CloudStoreOffer = Database["public"]["Tables"]["store_offers"]["Row"];
@@ -29,25 +29,31 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext(true);
   const user = await getSupabaseClient().auth.getUser();
-  const result = await getSupabaseClient().from("store_offers").upsert({
+  const title = String(offer.title || "").trim();
+  if (!title) throw new Error("لا يمكن حفظ عرض بلا عنوان.");
+  const originalPrice = typeof offer.originalPrice === "number" && Number.isFinite(offer.originalPrice) ? offer.originalPrice : Number((offer.offerData.originalTotalRetail as number | undefined) || 0);
+  const offerPrice = typeof offer.offerPrice === "number" && Number.isFinite(offer.offerPrice) ? offer.offerPrice : Number((offer.offerData.offerPrice as number | undefined) || 0);
+  const offerData = JSON.parse(JSON.stringify(offer.offerData || {})) as Json;
+  const payload = {
     id: offer.id,
     store_id: shopId,
-    title: offer.title,
+    title,
     banner_title: offer.bannerTitle || "",
     description: offer.description || "",
     strategy: offer.strategy || String((offer.offerData.strategyName as string | undefined) || ""),
-    original_price: typeof offer.originalPrice === "number" && Number.isFinite(offer.originalPrice) ? offer.originalPrice : Number((offer.offerData.originalTotalRetail as number | undefined) || 0),
-    offer_price: typeof offer.offerPrice === "number" && Number.isFinite(offer.offerPrice) ? offer.offerPrice : Number((offer.offerData.offerPrice as number | undefined) || 0),
+    original_price: Number.isFinite(originalPrice) ? originalPrice : 0,
+    offer_price: Number.isFinite(offerPrice) ? offerPrice : 0,
     start_date: offer.startDate || null,
     expires_at: toIso(offer.endAt),
     points_reward: Math.max(0, Math.trunc(Number(offer.pointsReward ?? offer.offerData.loyaltyPoints ?? 0) || 0)),
     public_description: offer.description || "",
-    offer_data: JSON.parse(JSON.stringify(offer.offerData)),
+    offer_data: offerData,
     starts_at: toIso(offer.startAt),
     ends_at: toIso(offer.endAt),
     status: offer.status || "active",
     created_by: user.data.user?.id || null,
-  }, { onConflict: "id" });
+  };
+  const result = await getSupabaseClient().from("store_offers").upsert(payload, { onConflict: "id", ignoreDuplicates: false }).select("id,store_id,title,status,updated_at").single();
   requireCloudResult(result);
 }
 

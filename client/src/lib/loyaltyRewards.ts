@@ -14,11 +14,10 @@ export const upsertLoyaltyRewardLevel = (
   const safeGiftName = giftName.trim();
   if (!Number.isFinite(safePoints) || safePoints <= 0 || !safeGiftName) return levels;
 
-  const newLevel: LoyaltyRewardLevel = { points: safePoints, giftName: safeGiftName, confirmed: false };
   const existingIndex = levels.findIndex(level => level.points === safePoints);
   const updated = existingIndex >= 0
-    ? levels.map((level, index) => index === existingIndex ? newLevel : level)
-    : [...levels, newLevel];
+    ? levels.map((level, index) => index === existingIndex ? { ...level, points: safePoints, giftName: safeGiftName, confirmed: false } : level)
+    : [...levels, { points: safePoints, giftName: safeGiftName, confirmed: false }];
 
   return [...updated].sort((first, second) => first.points - second.points);
 };

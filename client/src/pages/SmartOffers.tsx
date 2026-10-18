@@ -19,6 +19,7 @@ import { createOfferExpiryWindow, formatOfferTimeRemaining, getOfferExpiryInfo, 
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { listStoreOfferOrders, saveStoreOffer, updateStoreOfferOrderStatus, type CloudOfferOrder } from "@/lib/supabase/storeOffers";
+import { createLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, updateLoyaltyMilestone, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow } from "@/lib/supabase/loyaltyExperience";
 import { OfferVideoScriptButton } from "@/components/OfferVideoScript";
 
 interface Product {
@@ -83,9 +84,12 @@ interface CustomerLoyalty {
 }
 
 interface RewardLevel {
+  id?: string;
   points: number;
   giftName: string;
   giftCost?: number;
+  rewardImageUrl?: string | null;
+  isMystery?: boolean;
   confirmed?: boolean;
 }
 
@@ -198,6 +202,11 @@ export default function SmartOffers() {
   const [rewardPointDrafts, setRewardPointDrafts] = useState<Record<number, string>>({});
   const [newRewardGift, setNewRewardGift] = useState("");
   const [newRewardCost, setNewRewardCost] = useState("");
+  const [newRewardImageUrl, setNewRewardImageUrl] = useState<string | null>(null);
+  const [newRewardMystery, setNewRewardMystery] = useState(false);
+  const [rewardImageUploading, setRewardImageUploading] = useState(false);
+  const [referralForm, setReferralForm] = useState({ title: "شارك التوفير مع حبايبك واكسب نقاط مجانية!", messageTemplate: "ادعُ أصدقاءك للتسجيل في نظام ولاء أبو رغوة واكسب 50 نقطة عن كل صديق!", pointsPerFriend: 50, isActive: true });
+  const [savingReferral, setSavingReferral] = useState(false);
   const [catalogSessionReady, setCatalogSessionReady] = useState(() => Boolean(browserState.get("abu_catalog_admin_token")));
   const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => { setCustomersList([]); setCatalogSessionReady(false); } });
   const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
@@ -258,6 +267,19 @@ export default function SmartOffers() {
     return () => { active = false; };
   }, []);
 
+  useEffect(() => {
+    if (isSeller) return;
+    let active = true;
+    void listLoyaltyExperienceSettings().then(experience => {
+      if (!active) return;
+      const cloudLevels: RewardLevel[] = experience.milestones.map((level: LoyaltyMilestoneRow) => ({
+        id: level.id, points: level.points_required, giftName: level.reward_name, rewardImageUrl: level.reward_image_url, isMystery: level.is_mystery, confirmed: true,
+      }));
+      if (cloudLevels.length) setRewardLevels(cloudLevels);
+      if (experience.referral) setReferralForm({ title: experience.referral.title, messageTemplate: experience.referral.message_template, pointsPerFriend: experience.referral.points_per_friend, isActive: experience.referral.is_active });
+    }).catch(() => { /* legacy levels remain available when cloud settings are unavailable */ });
+    return () => { active = false; };
+  }, [isSeller, setRewardLevels]);
   useEffect(() => {
     if (!loyaltyCustomersQuery.data) return;
     setCustomersList(loyaltyCustomersQuery.data as CustomerLoyalty[]);
@@ -330,11 +352,18 @@ export default function SmartOffers() {
     toast.info("تم تعديل عدد النقاط. اضغط «تأكيد وتثبيت الهدية» لحفظ المستوى الجديد للعملاء.");
   };
 
-  const handleConfirmRewardLevel = (index: number) => {
-    const updated = [...rewardLevels];
-    updated[index].confirmed = true;
-    setRewardLevels(updated);
-    toast.success(`✅ تم تأكيد وتثبيت هدية مستوى (${updated[index].points} نقطة) بنجاح!`);
+  const handleConfirmRewardLevel = async (index: number) => {
+    const level = rewardLevels[index];
+    if (!level) return;
+    try {
+      const payload = { pointsRequired: level.points, rewardName: level.giftName, description: "", isMystery: Boolean(level.isMystery), rewardImageUrl: level.rewardImageUrl || null };
+      const saved = level.id ? await updateLoyaltyMilestone(level.id, payload) : await createLoyaltyMilestone(payload);
+      const updated = rewardLevels.map((item, itemIndex) => itemIndex === index ? { ...item, id: saved.id, confirmed: true, rewardImageUrl: saved.reward_image_url, isMystery: saved.is_mystery } : item);
+      setRewardLevels(updated);
+      toast.success(`✅ تم تأكيد وتثبيت هدية مستوى (${level.points} نقطة) وحفظها سحابياً.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ مستوى الهدية سحابياً.");
+    }
   };
 
   const handleAddManualRewardLevel = () => {
@@ -351,14 +380,32 @@ export default function SmartOffers() {
     }
 
     const replacing = rewardLevels.some(level => level.points === points);
-    const nextLevels = upsertLoyaltyRewardLevel(rewardLevels, points, giftName).map(level => level.points === points ? { ...level, giftCost } : level);
+    const nextLevels = upsertLoyaltyRewardLevel(rewardLevels, points, giftName).map(level => level.points === points ? { ...level, giftCost, rewardImageUrl: newRewardImageUrl, isMystery: newRewardMystery, confirmed: false } : level);
     setRewardLevels(nextLevels);
     setNewRewardPoints("");
     setNewRewardGift("");
     setNewRewardCost("");
+    setNewRewardImageUrl(null);
+    setNewRewardMystery(false);
     toast.success(replacing ? `تم استبدال هدية مستوى ${points} نقطة؛ اضغط تأكيد لتثبيتها.` : `تمت إضافة مستوى ${points} نقطة؛ اضغط تأكيد لتثبيته.`);
   };
 
+  const handleRewardImageUpload = async (file: File, index?: number) => {
+    setRewardImageUploading(true);
+    try {
+      const url = await uploadLoyaltyMilestoneImage(file, index === undefined ? crypto.randomUUID() : `level-${index}`);
+      if (index === undefined) setNewRewardImageUrl(url);
+      else setRewardLevels(current => current.map((level, itemIndex) => itemIndex === index ? { ...level, rewardImageUrl: url, confirmed: false } : level));
+      toast.success("تم رفع صورة الهدية. اضغط تأكيد وتثبيت لحفظ المستوى.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفع صورة الهدية."); }
+    finally { setRewardImageUploading(false); }
+  };
+  const handleSaveReferralSettings = async () => {
+    setSavingReferral(true);
+    try { await saveReferralCampaign(referralForm); toast.success("تم حفظ إعدادات حملة دعوة الأصدقاء سحابياً."); }
+    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات الحملة."); }
+    finally { setSavingReferral(false); }
+  };
   const handleSpinWheelForReward = (index: number) => {
     const randomGift = RANDOM_GIFT_POOL[Math.floor(Math.random() * RANDOM_GIFT_POOL.length)];
     handleUpdateRewardGift(index, randomGift);
@@ -592,7 +639,8 @@ export default function SmartOffers() {
       }
     } catch (e) {
       console.error("Failed to save offer to cloud", e);
-      toast.error("تعذر إتمام حفظ العرض في السحابة؛ لم يتم إعلان نجاح التفعيل. تحقق من الاتصال ثم أعد المحاولة.");
+      const reason = e instanceof Error ? e.message : "خطأ غير معروف";
+      toast.error(`تعذر إتمام حفظ العرض في السحابة: ${reason}`);
       return;
     }
     const existingGlobalOffers = JSON.parse(browserState.get("abu_raghwa_global_offers") || "{}");
@@ -1001,7 +1049,7 @@ export default function SmartOffers() {
               <h4 className="font-extrabold text-sm text-purple-900 flex items-center gap-1.5">
                 🎁 جدول مستويات الهدايا والجوائز (يجب الضغط على تأكيد وتثبيت لكل هدية):
               </h4>
-              <div className="bg-white/90 border border-purple-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-[150px_1fr_150px_auto] gap-2 items-end">
+              <div className="bg-white/90 border border-purple-200 rounded-xl p-3 grid grid-cols-1 md:grid-cols-[150px_1fr_150px_220px_auto] gap-2 items-end">
                 <div>
                   <label className="block text-[11px] font-bold text-purple-900 mb-1">عدد النقاط</label>
                   <Input
@@ -1026,6 +1074,14 @@ export default function SmartOffers() {
                 <div>
                   <label className="block text-[11px] font-bold text-purple-900 mb-1">تكلفة الهدية (اختياري)</label>
                   <Input type="number" min="0" value={newRewardCost} onChange={(event) => setNewRewardCost(event.target.value)} placeholder="0 ج.م" className="font-bold text-gray-900 bg-white" />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-[11px] font-bold text-purple-900">صورة الهدية وخيار المفاجأة</label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-2 text-[11px] font-bold text-purple-800">📷 رفع صورة الهدية<input type="file" accept="image/*" capture="environment" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file); }} /></label>
+                    <label className="flex items-center gap-1 text-[11px] font-bold text-purple-900"><input type="checkbox" checked={newRewardMystery} onChange={event => setNewRewardMystery(event.target.checked)} /> 🎁 غامضة</label>
+                    {newRewardImageUrl && <img src={newRewardImageUrl} alt="معاينة الهدية" className="h-9 w-9 rounded object-cover ring-1 ring-purple-200" />}
+                  </div>
                 </div>
                 <Button
                   onClick={handleAddManualRewardLevel}
@@ -1081,6 +1137,11 @@ export default function SmartOffers() {
                         className="text-xs font-bold text-gray-900 bg-white"
                       />
                     </div>
+                    <div className="flex flex-wrap items-center gap-2 border-t border-purple-100 pt-2">
+                      <label className="cursor-pointer rounded-lg border border-purple-300 bg-white px-2 py-1.5 text-[11px] font-bold text-purple-800">📷 رفع صورة الهدية<input type="file" accept="image/*" capture="environment" className="hidden" disabled={rewardImageUploading} onChange={event => { const file = event.target.files?.[0]; if (file) void handleRewardImageUpload(file, index); }} /></label>
+                      <label className="flex items-center gap-1 text-[11px] font-bold text-purple-900"><input type="checkbox" checked={Boolean(lvl.isMystery)} onChange={event => { const updated = [...rewardLevels]; updated[index] = { ...updated[index], isMystery: event.target.checked, confirmed: false }; setRewardLevels(updated); }} /> 🎁 هدية غامضة / مفاجأة سرية</label>
+                      {lvl.rewardImageUrl && <img src={lvl.rewardImageUrl} alt="معاينة الهدية" className="h-12 w-12 rounded-lg object-cover ring-1 ring-purple-200" />}
+                    </div>
                     <div className="flex justify-between items-center pt-1">
                       {lvl.confirmed ? (
                         <span className="text-xs font-bold text-green-700 flex items-center gap-1">
@@ -1102,6 +1163,16 @@ export default function SmartOffers() {
                   </div>
                 ))}
               </div>
+            </div>
+
+            <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-4 space-y-3">
+              <h4 className="font-extrabold text-sm text-emerald-950">📢 إعدادات حملة دعوة الأصدقاء وسفراء الولاء (Referral Settings)</h4>
+              <div className="grid grid-cols-1 gap-3 md:grid-cols-[220px_1fr_auto] items-end">
+                <div><label className="block text-[11px] font-bold text-emerald-900 mb-1">عدد النقاط عن كل صديق جديد</label><Input type="number" min="0" value={referralForm.pointsPerFriend} onChange={event => setReferralForm(current => ({ ...current, pointsPerFriend: Math.max(0, Number(event.target.value) || 0) }))} className="bg-white font-bold" /></div>
+                <div><label className="block text-[11px] font-bold text-emerald-900 mb-1">نص رسالة المشاركة عبر واتساب والترويج</label><Input value={referralForm.messageTemplate} onChange={event => setReferralForm(current => ({ ...current, messageTemplate: event.target.value }))} className="bg-white" /></div>
+                <Button type="button" disabled={savingReferral} onClick={() => void handleSaveReferralSettings()} className="bg-emerald-600 font-black text-white hover:bg-emerald-700">💾 حفظ إعدادات الحملة سحابياً</Button>
+              </div>
+              <div className="flex items-center gap-3"><Input value={referralForm.title} onChange={event => setReferralForm(current => ({ ...current, title: event.target.value }))} placeholder="عنوان الحملة" className="max-w-xl bg-white" /><label className="flex items-center gap-2 text-xs font-bold text-emerald-900"><input type="checkbox" checked={referralForm.isActive} onChange={event => setReferralForm(current => ({ ...current, isActive: event.target.checked }))} /> الحملة مفعلة</label></div>
             </div>
 
             {/* قائمة العملاء مع زر تأكيد التسليم ومراسلة واتساب */}
