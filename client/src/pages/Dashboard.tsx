@@ -1,4 +1,3 @@
-import { browserState } from "@/lib/browserState";
 import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,8 +28,8 @@ export default function Dashboard() {
   const [, navigate] = useLocation();
   const { user, canViewSensitiveFinancials } = useStaffAccess();
   const canOpenOwnEmployeeCard = Boolean(user && !canViewSensitiveFinancials);
-  const [staffSessionReady, setStaffSessionReady] = useState(() => Boolean(browserState.get("abu_staff_sync_token")));
-  const pendingStaff = trpc.staffSync.pending.useQuery(undefined, { enabled: staffSessionReady && (user?.role === "manager" || user?.role === "admin"), retry: false, refetchInterval: staffSessionReady ? 5_000 : false });
+  const staffSessionReady = Boolean(user && (user.role === "manager" || user.role === "admin" || user.role === "supervisor"));
+  const pendingStaff = trpc.staffSync.pending.useQuery(undefined, { enabled: staffSessionReady, retry: false, refetchInterval: staffSessionReady ? 5_000 : false });
   const [stats, setStats] = useState<DashboardStats>({
     totalSales: 0,
     totalRevenue: 0,

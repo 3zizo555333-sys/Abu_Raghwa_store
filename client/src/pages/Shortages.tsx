@@ -6,6 +6,7 @@ import { ArrowLeft, AlertTriangle, TrendingDown, Package, Plus, Trash2, Edit2, C
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { getActiveShopContext, subscribeToShopChanges } from "@/lib/supabase/products";
+import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
 import {
   createCloudShortageCategory,
   deleteCloudShortage,
@@ -74,7 +75,18 @@ export default function Shortages() {
   const categories = Array.from(new Set([...DEFAULT_CATEGORIES, ...customCategories]));
 
   const refreshCloudData = async () => {
+    let shopId = "";
     try {
+      ({ shopId } = await getActiveShopContext());
+      const cached = await readPersistentCloudCache<{ products: Product[]; manualProducts: ManualProduct[]; categories: string[]; shortages: Shortage[] }>(`shortages:${shopId}`);
+      if (cached) {
+        setProducts(cached.products);
+        setManualProducts(cached.manualProducts);
+        setCustomCategories(cached.categories);
+        setShortages(cached.shortages);
+        setLoadError(null);
+        setIsLoading(false);
+      }
       const [cloudProducts, cloudManual, cloudCategories, cloudShortageRows] = await Promise.all([
         listShortageProducts(),
         listCloudManualProducts(),
@@ -95,11 +107,12 @@ export default function Shortages() {
       setManualProducts(cloudManual);
       setCustomCategories(cloudCategories.map(category => category.name));
       setShortages(cloudShortageRows);
+      await writePersistentCloudCache(`shortages:${shopId}`, { products: normalizedProducts.sort((a, b) => a.name.localeCompare(b.name, "ar")), manualProducts: cloudManual, categories: cloudCategories.map(category => category.name), shortages: cloudShortageRows });
       setLoadError(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذر تحميل بيانات النواقص من السحابة.";
       setLoadError(message);
-      toast.error(message);
+      if (!shopId) toast.error(message);
     } finally {
       setIsLoading(false);
     }
@@ -574,7 +587,7 @@ export default function Shortages() {
                 <label className="block text-sm font-bold text-orange-800 mb-2">صورة العبوة (اختياري)</label>
                 <label className="inline-flex cursor-pointer items-center gap-2 rounded-lg bg-orange-600 px-4 py-2 text-sm font-bold text-white hover:bg-orange-700">
                   <Camera size={18} /> التقاط بالكاميرا / رفع من المعرض
-                  <input type="file" accept="image/*" capture="environment" className="hidden" onChange={event => {
+                  <input type="file" accept="image/*" className="hidden" onChange={event => {
                     const file = event.target.files?.[0];
                     if (file) { setImageFile(file); setImagePreview(URL.createObjectURL(file)); }
                   }} />

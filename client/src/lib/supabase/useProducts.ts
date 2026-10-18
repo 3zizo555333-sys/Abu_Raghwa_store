@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
-import { getActiveShopContext, listProductsPage, searchProductsByBarcode, subscribeToShopChanges, type ProductCursor } from "./products";
+import { getActiveShopContext, listProductsPage, searchProductsByBarcode, subscribeToShopChanges, type ProductCursor, type ProductPage } from "./products";
+import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
 
 export function useCloudProducts(input: { search?: string; barcode?: string; categoryId?: string | null; pageSize?: number; enabled?: boolean } = {}) {
   const queryClient = useQueryClient();
@@ -29,6 +30,24 @@ export function useCloudProducts(input: { search?: string; barcode?: string; cat
     refetchOnWindowFocus: true,
     refetchInterval: 50 * 60 * 1000,
   });
+
+  const cacheKey = context
+    ? `products:${context.userId}:${context.shopId}:${context.role}:${input.search?.trim() ?? ""}:${input.barcode?.trim() ?? ""}:${input.categoryId ?? "all"}:${input.pageSize ?? 50}`
+    : "";
+  useEffect(() => {
+    if (!cacheKey || !shouldLoad || query.data?.pages.length) return;
+    let active = true;
+    void readPersistentCloudCache<ProductPage>(cacheKey).then(cached => {
+      if (!active || !cached) return;
+      queryClient.setQueryData(queryKey, { pages: [cached], pageParams: [null] });
+    });
+    return () => { active = false; };
+  }, [cacheKey, query.data?.pages.length, queryClient, queryKey, shouldLoad]);
+
+  useEffect(() => {
+    if (!cacheKey || !query.data?.pages[0]) return;
+    void writePersistentCloudCache(cacheKey, query.data.pages[0]);
+  }, [cacheKey, query.data?.pages]);
 
   useEffect(() => {
     if (!shouldLoad || !context) return;

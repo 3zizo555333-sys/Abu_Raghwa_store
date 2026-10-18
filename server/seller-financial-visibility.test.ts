@@ -32,7 +32,7 @@ describe("صلاحيات عرض البائع", () => {
     expect(gate).toContain("if (canViewSensitiveFinancials)");
     expect(products).toContain("if (!canViewSensitiveFinancials) return;");
     expect(dashboard).toContain("canViewSensitiveFinancials");
-    expect(app).toContain("withManagerRole(withPasswordProtection(Reports");
+    expect(app).toContain("withSupervisorRole(withPasswordProtection(Reports");
     expect(app).toContain('component={withManagerRole(withPasswordProtection(UserManagement');
     expect(app).toContain('component={withManagerRole(SecuritySettings)}');
     expect(app).toContain('path={"/employees"} component={withManagerRole(withPasswordProtection(Employees');

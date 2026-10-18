@@ -39,13 +39,13 @@ function InvoiceCameraPageContent() {
   const [supplierOptions, setSupplierOptions] = useState<Array<{ id: string; name: string }>>([]);
   const [selectedSupplierId, setSelectedSupplierId] = useState("");
   const [signedImageUrls, setSignedImageUrls] = useState<Record<string, string>>({});
-  
+
   // معرض الصور الاحترافي
   const [currentIndex, setCurrentIndex] = useState<number | null>(null);
   const [zoom, setZoom] = useState(100);
   const [isViewerImageLoading, setIsViewerImageLoading] = useState(false);
   const [viewerImageError, setViewerImageError] = useState(false);
-  
+
   const cameraRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const legacyMigrationStarted = useRef(false);
@@ -435,7 +435,7 @@ function InvoiceCameraPageContent() {
         ref={cameraRef}
         type="file"
         accept="image/*"
-        capture="environment"
+
         onChange={handleCameraCapture}
         className="hidden"
       />

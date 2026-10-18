@@ -28,7 +28,7 @@ describe("رفع صور المنتجات والتركيبات", () => {
     const formulationImages = readFileSync(resolve(projectRoot, "client/src/lib/supabase/formulationImages.ts"), "utf8");
     const posFormulations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/usePosFormulations.ts"), "utf8");
     for (const page of [products, recipes]) {
-      expect(page).toContain("capture=\"environment\"");
+      expect(page).not.toContain("capture=\"environment\"");
       expect(page).toContain("catalogImageUrl");
       expect(page).toContain("accept=\"image/*\"");
     }

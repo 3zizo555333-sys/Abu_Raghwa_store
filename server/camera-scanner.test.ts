@@ -22,7 +22,7 @@ describe("تهيئة كاميرا ماسح الباركود", () => {
 
   it("يعرض بديل كاميرا الهاتف عند منع معاينة المتصفح", () => {
     const source = readFileSync(resolve(import.meta.dirname, "../client/src/components/AdvancedBarcodeScanner.tsx"), "utf8");
-    expect(source).toContain('capture="environment"');
+    expect(source).not.toContain('capture="environment"');
     expect(source).toContain('className="sr-only"');
     expect(source).toContain('aria-label="فتح كاميرا الهاتف أو المعرض"');
     expect(source).toContain('htmlFor={`${scannerElementId}-native-capture`}');

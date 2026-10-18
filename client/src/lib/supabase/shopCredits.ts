@@ -11,7 +11,13 @@ export type ShopCreditAccount = CreditAccountRow & { balance: number; transactio
 
 async function managerShopId() {
   const { shopId, role } = await getActiveShopContext();
-  if (role !== "manager" && role !== "admin") throw new Error("إدارة حسابات الآجل والموردين متاحة للمدير فقط.");
+  if (!(role === "manager" || role === "admin" || role === "supervisor")) throw new Error("إدارة حسابات الآجل والموردين متاحة للمدير أو المشرف فقط.");
+  return shopId;
+}
+
+async function creditReadShopId() {
+  const { shopId, role } = await getActiveShopContext();
+  if (!(role === "manager" || role === "admin" || role === "supervisor" || role === "seller")) throw new Error("دفتر الآجل متاح لأعضاء المتجر المصرح لهم فقط.");
   return shopId;
 }
 
@@ -34,7 +40,7 @@ export async function importLegacyShopCreditAccounts(customers: unknown[], suppl
 }
 
 export async function listShopCreditAccounts(partyType: CreditPartyType): Promise<ShopCreditAccount[]> {
-  const shopId = await managerShopId();
+  const shopId = await creditReadShopId();
   const client = getSupabaseClient();
   const [accountsResult, entriesResult] = await Promise.all([
     client.from("shop_credit_accounts").select("*").eq("shop_id", shopId).eq("party_type", partyType).is("deleted_at", null).order("name").limit(1000),
@@ -100,7 +106,7 @@ export async function softDeleteShopCreditAccount(accountId: string) {
 }
 
 export async function subscribeToShopCredits(onChange: () => void) {
-  const shopId = await managerShopId();
+  const shopId = await creditReadShopId();
   const client = getSupabaseClient();
   const channel = client.channel(`shop-credits-${shopId}-${crypto.randomUUID()}`)
     .on("postgres_changes", { event: "*", schema: "public", table: "shop_credit_accounts", filter: `shop_id=eq.${shopId}` }, onChange)

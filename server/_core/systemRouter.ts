@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { notifyOwner } from "./notification";
-import { adminProcedure, publicProcedure, router } from "./trpc";
+import { adminProcedure, protectedProcedure, publicProcedure, router } from "./trpc";
 import { invokeLLM } from "./llm";
 
 export const systemRouter = router({
@@ -14,17 +14,22 @@ export const systemRouter = router({
       ok: true,
     })),
 
-  generateOfferBannerTitle: publicProcedure
+  generateOfferBannerTitle: protectedProcedure
     .input(z.object({ offerTitle: z.string().min(1).max(180), strategy: z.string().max(180).optional(), description: z.string().max(500).optional() }))
     .mutation(async ({ input }) => {
-      const response = await invokeLLM({
+      let response;
+      try {
+        response = await invokeLLM({
         model: "gemini-3-flash-preview",
         maxTokens: 120,
         messages: [
           { role: "system", content: "اكتب عنوان بانر تسويقي واحد فقط باللهجة المصرية، جذاب وقصير (من 4 إلى 10 كلمات)، بلا علامات اقتباس أو شرح، ويناسب عرض منظفات أو عطور." },
           { role: "user", content: `العرض: ${input.offerTitle}\nالاستراتيجية: ${input.strategy || "عرض توفير"}\nالوصف: ${input.description || ""}` },
         ],
-      });
+        });
+      } catch {
+        throw new Error("تعذر توليد عنوان البانر الآن، حاول مرة أخرى.");
+      }
       const content = response.choices[0]?.message.content;
       const title = (typeof content === "string" ? content : "").replace(/["«»]/g, "").trim().split("\n")[0].slice(0, 140);
       if (!title) throw new Error("تعذر توليد عنوان البانر الآن");

@@ -38,7 +38,7 @@ export function withManagerRole(Component: React.ComponentType<any>) {
     const { user, isLoading } = useStaffAccess();
     if (isLoading) return <main className="fixed inset-0 z-[100] grid place-items-center bg-slate-50 p-5" dir="rtl"><p>جارٍ التحقق من الصلاحيات…</p></main>;
     if (isManager(user)) return <Component {...props} />;
-    return <main className="fixed inset-0 z-[100] grid place-items-center bg-slate-50 p-5" dir="rtl"><section className="w-full max-w-md rounded-3xl bg-white p-7 text-center shadow-xl"><h1 className="text-2xl font-bold text-slate-900">هذه الصفحة للمدير فقط</h1><p className="mt-3 text-slate-600">لا يمكنك رؤية حسابات العاملين الآخرين. اطلب صلاحية المدير للوصول إلى هذه الصفحة.</p><Button className="mt-6 w-full bg-violet-700 hover:bg-violet-800" onClick={() => navigate("/dashboard")}>العودة للوحة التحكم</Button></section></main>;
+    return <main className="fixed inset-0 z-[100] grid place-items-center bg-slate-50 p-5" dir="rtl"><section className="w-full max-w-md rounded-3xl bg-white p-7 text-center shadow-xl"><h1 className="text-2xl font-bold text-slate-900">🔒 هذه الصفحة للمدير فقط</h1><p className="mt-3 text-slate-600">لا يمكنك رؤية حسابات العاملين الآخرين. اطلب صلاحية المدير للوصول إلى هذه الصفحة.</p><Button className="mt-6 w-full bg-violet-700 hover:bg-violet-800" onClick={() => navigate("/dashboard")}>العودة للوحة التحكم</Button></section></main>;
   };
 }
 

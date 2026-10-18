@@ -16,11 +16,11 @@ describe("حماية المسارات المالية والحساسة", () => {
   it("يحافظ على قيود الأدوار في المسارات الحساسة", () => {
     expect(appSource).toContain('path={"/apartment-management"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/shortages"} component={withSupervisorRole(withPasswordProtection(Shortages');
-    expect(appSource).toContain('path={"/expenses"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/expenses"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/checks"} component={withManagerRole(');
     expect(appSource).toContain('path={"/checks-page"} component={withManagerRole(');
-    expect(appSource).toContain('path={"/credits-suppliers"} component={withManagerRole(');
-    expect(appSource).toContain('path={"/smart-offers"} component={withManagerRole(');
+    expect(appSource).toContain('path={"/credits-suppliers"} component={withPasswordProtection(');
+    expect(appSource).toContain('path={"/smart-offers"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/suppliers"} component={withManagerRole(');
     expect(appSource).toContain('path={"/recipes"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/invoice-ocr"} component={withSupervisorRole(');

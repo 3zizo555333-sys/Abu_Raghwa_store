@@ -70,7 +70,7 @@ export const interpretVoiceInstruction = (spokenText: string): VoiceInstruction 
   if (/خروج|اخرج|اقفل التطبيق|غلق التطبيق/.test(text)) return { kind: "exit", route: "/", response: "جاري الخروج إلى صفحة البداية" };
 
   const destinations: Array<{ words: RegExp; route: string; response: string }> = [
-    { words: /فاتورة|فواتير|تصوير الفواتير/, route: "/invoice-ocr", response: "جاري فتح صفحة الفواتير" },
+    { words: /فاتورة|فواتير|تصوير الفواتير/, route: "/invoice-camera", response: "جاري فتح صفحة الفواتير" },
     { words: /كاشير|بيع سريع|نقطة بيع/, route: "/sales", response: "جاري فتح البيع السريع" },
     { words: /مبيعات|تسجيل مبيعة|بيع/, route: "/sales", response: "جاري فتح المبيعات" },
     { words: /منتجات|بضاعة|اصناف/, route: "/products", response: "جاري فتح المنتجات" },

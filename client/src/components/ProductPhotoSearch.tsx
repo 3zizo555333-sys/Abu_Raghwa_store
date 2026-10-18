@@ -70,7 +70,7 @@ export function ProductPhotoSearch({ candidates, onChoose }: { candidates: Cashi
 
   return <section className="rounded-2xl border border-violet-100 bg-violet-50/60 p-4">
     <div className="flex items-start gap-3"><span className="rounded-xl bg-violet-600 p-2.5 text-white"><ScanSearch className="h-5 w-5" /></span><div><h3 className="font-black text-violet-950">ابحث بصورة المنتج</h3><p className="mt-1 text-xs leading-5 text-violet-800">صوّر أي لون أو وضع للعبوة؛ يركز البحث على الشركة والنوع والحجم، ويعتبر اللون اختلافًا طبيعيًا داخل نفس الصنف.</p></div></div>
-    <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-violet-300 bg-white px-3 py-3 text-sm font-black text-violet-700 hover:bg-violet-50"><Camera className="h-4 w-4" />تصوير أو اختيار صورة<input className="hidden" type="file" accept="image/*" capture="environment" onChange={event => handleImage(event.target.files?.[0], event.target)} /></label>
+    <label className="mt-3 flex cursor-pointer items-center justify-center gap-2 rounded-xl border border-dashed border-violet-300 bg-white px-3 py-3 text-sm font-black text-violet-700 hover:bg-violet-50"><Camera className="h-4 w-4" />تصوير أو اختيار صورة<input className="hidden" type="file" accept="image/*" onChange={event => handleImage(event.target.files?.[0], event.target)} /></label>
     {matchImage.isPending && <p className="mt-3 flex items-center gap-2 text-sm font-bold text-violet-700"><Loader2 className="h-4 w-4 animate-spin" />جاري مقارنة المنتج بالصورة المرجعية...</p>}
     {preview && <img src={preview} alt="صورة البحث" className="mt-3 h-28 w-28 rounded-xl border bg-white object-cover" />}
     {message && <p className="mt-3 text-xs font-bold text-slate-600">{message}</p>}

@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import React, { useState, useEffect } from "react";
 import { appendShopCreditTransaction, createShopCreditAccount, importLegacyShopCreditAccounts, listShopCreditAccounts, softDeleteShopCreditAccount, subscribeToShopCredits, type ShopCreditAccount } from "@/lib/supabase/shopCredits";
 import { browserState } from "@/lib/browserState";
+import { useStaffAccess } from "@/hooks/useStaffAccess";
 
 interface Transaction {
   id: string;
@@ -36,6 +37,8 @@ interface Supplier {
 
 export default function CreditsAndSuppliersAdvanced() {
   const [, navigate] = useLocation();
+  const { user } = useStaffAccess();
+  const canEdit = user?.role !== "seller";
   const [activeTab, setActiveTab] = useState<"customers" | "suppliers">("customers");
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -83,7 +86,7 @@ export default function CreditsAndSuppliersAdvanced() {
         let legacyCustomers: unknown[] = [];
         let legacySuppliers: unknown[] = [];
         try { legacyCustomers = JSON.parse(legacyCustomersRaw || "[]"); legacySuppliers = JSON.parse(legacySuppliersRaw || "[]"); } catch { toast.error("تعذر قراءة بيانات الآجل القديمة؛ لم تُمسح من هذا الجهاز."); }
-        if (Array.isArray(legacyCustomers) && Array.isArray(legacySuppliers) && (legacyCustomers.length || legacySuppliers.length)) {
+        if (canEdit && Array.isArray(legacyCustomers) && Array.isArray(legacySuppliers) && (legacyCustomers.length || legacySuppliers.length)) {
           try {
             const migration = await importLegacyShopCreditAccounts(legacyCustomers, legacySuppliers);
             if (migration.imported) {
@@ -285,7 +288,7 @@ export default function CreditsAndSuppliersAdvanced() {
         </Card>
 
         {/* Add Button */}
-        {!showForm && !showTransactionForm && (
+        {canEdit && !showForm && !showTransactionForm && (
           <div className="mb-8 flex gap-3">
             <Button
               onClick={() => setShowForm(true)}
@@ -298,7 +301,7 @@ export default function CreditsAndSuppliersAdvanced() {
         )}
 
         {/* Add Form */}
-        {showForm && (
+        {canEdit && showForm && (
           <Card className="mb-8 border-0 shadow-md">
             <CardHeader>
               <CardTitle>إضافة {activeTab === "customers" ? "عميل" : "مورد"} جديد</CardTitle>
@@ -417,7 +420,7 @@ export default function CreditsAndSuppliersAdvanced() {
                 )}
 
                 {/* Action Buttons */}
-                <div className="flex gap-3">
+                {canEdit && <div className="flex gap-3">
                   <Button
                     onClick={() => {
                       setSelectedId(item.id);
@@ -436,14 +439,14 @@ export default function CreditsAndSuppliersAdvanced() {
                     <Trash2 className="w-4 h-4" />
                     حذف
                   </Button>
-                </div>
+                </div>}
               </CardContent>
             </Card>
           ))}
         </div>
 
         {/* Transaction Form Modal */}
-        {showTransactionForm && selectedId && (
+        {canEdit && showTransactionForm && selectedId && (
           <Card className="fixed inset-0 m-4 max-w-2xl mx-auto my-auto border-0 shadow-2xl z-50 overflow-y-auto max-h-screen">
             <CardHeader>
               <CardTitle>إضافة حركة جديدة</CardTitle>
@@ -521,7 +524,7 @@ export default function CreditsAndSuppliersAdvanced() {
         )}
 
         {/* Overlay */}
-        {showTransactionForm && (
+        {canEdit && showTransactionForm && (
           <div
             className="fixed inset-0 bg-black bg-opacity-50 z-40"
             onClick={() => {

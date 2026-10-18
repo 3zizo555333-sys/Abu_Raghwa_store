@@ -444,7 +444,7 @@ export function AdvancedBarcodeScanner({
             id={`${scannerElementId}-native-capture`}
             type="file"
             accept="image/*"
-            capture="environment"
+
             aria-label="فتح كاميرا الهاتف أو المعرض"
             className="sr-only"
             onChange={handleCapturedCameraImage}

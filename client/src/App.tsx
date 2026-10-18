@@ -190,19 +190,19 @@ function Router() {
 
       <Route path={"/sales"} component={withPasswordProtection(Sales, 'screen__sales', 'البيع السريع')} />
       <Route path={"/cashier"} component={withPasswordProtection(Cashier, 'screen__cashier', 'كاشير الصب والبيع')} />
-      <Route path={"/reports"} component={withManagerRole(withPasswordProtection(Reports, 'screen__reports', 'التقارير المالية'))} />
-      <Route path={"/advanced-reports"} component={withManagerRole(withPasswordProtection(SalesInventory, 'screen__advanced_reports', 'جرد المبيعات والأرباح'))} />
+      <Route path={"/reports"} component={withSupervisorRole(withPasswordProtection(Reports, 'screen__reports', 'التقارير المالية'))} />
+      <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'screen__advanced_reports', 'جرد المبيعات والأرباح'))} />
       <Route path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, 'screen__employees', 'إدارة الموظفين'))} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'screen__tasks', 'المهام'))} />
-      <Route path={"/points-system"} component={withManagerRole(withPasswordProtection(PointsSystem, 'screen__points_system', 'نظام النقاط'))} />
-      <Route path={"/offers"} component={withManagerRole(withPasswordProtection(Offers, 'screen__offers', 'العروض'))} />
-      <Route path={"/smart-offers"} component={withManagerRole(withPasswordProtection(SmartOffers, 'screen__smart_offers', 'العروض الذكية'))} />
-      <Route path={"/smart-offers-list"} component={withManagerRole(withPasswordProtection(SmartOffersList, 'screen__smart_offers_list', 'قائمة العروض الذكية'))} />
+      <Route path={"/points-system"} component={withSupervisorRole(withPasswordProtection(PointsSystem, 'screen__points_system', 'نظام النقاط'))} />
+      <Route path={"/offers"} component={withSupervisorRole(withPasswordProtection(Offers, 'screen__offers', 'العروض'))} />
+      <Route path={"/smart-offers"} component={withSupervisorRole(withPasswordProtection(SmartOffers, 'screen__smart_offers', 'العروض الذكية'))} />
+      <Route path={"/smart-offers-list"} component={withSupervisorRole(withPasswordProtection(SmartOffersList, 'screen__smart_offers_list', 'قائمة العروض الذكية'))} />
       <Route path={"/public-offer"} component={PublicOfferPage} />
       <Route path={"/catalog-offers"} component={CatalogOffersPage} />
       <Route path={"/loyalty"} component={LoyaltyPage} />
       <Route path={"/catalog"} component={PublicCatalogPage} />
-      <Route path={"/catalog-manager"} component={withManagerRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
+      <Route path={"/catalog-manager"} component={withSupervisorRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
       <Route path={"/customer-display"} component={CustomerDisplay} />
       <Route path={"/led-display"} component={LedDisplay} />
       <Route path={"/voice"} component={withSupervisorRole(withPasswordProtection(VoiceAssistant, 'screen__voice', 'المساعد الصوتي'))} />
@@ -223,7 +223,7 @@ function Router() {
       <Route path={"/email-notifications"} component={withManagerRole(withPasswordProtection(EmailNotifications, 'screen__email_notifications', 'إعدادات الإشعارات'))} />
       <Route path={"/payment-gateway"} component={withManagerRole(withPasswordProtection(PaymentGateway, 'screen__payment_gateway', 'إعدادات الدفع'))} />
       <Route path={"/user-management"} component={withManagerRole(withPasswordProtection(UserManagement, 'screen__user_management', 'إدارة العضويات'))} />
-      <Route path={"/expenses"} component={withManagerRole(withPasswordProtection(Expenses, 'screen__expenses', 'المصاريف اليومية'))} />
+      <Route path={"/expenses"} component={withSupervisorRole(withPasswordProtection(Expenses, 'screen__expenses', 'المصاريف اليومية'))} />
       <Route path={"/checks"} component={withManagerRole(withPasswordProtection(Checks, 'screen__checks', 'الشيكات'))} />
 
       <Route path={"/checks-page"} component={withManagerRole(withPasswordProtection(ChecksPage, 'screen__checks_page', 'سجل الشيكات'))} />
@@ -231,18 +231,18 @@ function Router() {
       <Route path={"/tasks-page"} component={withSupervisorRole(withPasswordProtection(TasksPage, 'screen__tasks_page', 'متابعة المهام'))} />
       <Route path={"/inventory"} component={withSupervisorRole(withPasswordProtection(InventoryPage, 'screen__inventory', 'إدارة المخزون'))} />
       <Route path={"/material-details/:id"} component={withSupervisorRole(withPasswordProtection(RawMaterialDetails, 'screen__material_details_id', 'تفاصيل الخامة'))} />
-      <Route path={"/invoice-camera"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__invoice_ocr', 'قراءة فواتير OCR'))} />
+      <Route path={"/invoice-camera"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__invoice_camera', 'قراءة فواتير OCR'))} />
       <Route path={"/invoice-scanner"} component={withSupervisorRole(withPasswordProtection(InvoiceScanner, 'screen__invoice_scanner', 'ماسح الفواتير'))} />
-      <Route path={"/advanced-invoices"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__invoice_ocr', 'قراءة فواتير OCR'))} />
+      <Route path={"/advanced-invoices"} component={withSupervisorRole(withPasswordProtection(InvoiceOCR, 'screen__advanced_invoices', 'قراءة فواتير OCR'))} />
       <Route path={"/advanced-barcode"} component={withPasswordProtection(AdvancedBarcode, 'screen__advanced_barcode', 'الباركود المتقدم')} />
       <Route path={"/social-media"} component={withPasswordProtection(SocialMedia, 'screen__social_media', 'التواصل الاجتماعي')} />
       <Route path={"/voice-control"} component={withSupervisorRole(withPasswordProtection(VoiceControlPage, 'screen__voice_control', 'التحكم الصوتي'))} />
       <Route path={"/notifications"} component={withPasswordProtection(NotificationsPage, 'screen__notifications', 'الإشعارات')} />
       <Route path={"/notifications-advanced"} component={withPasswordProtection(AdvancedNotificationsPage, 'screen__notifications_advanced', 'الإشعارات المتقدمة')} />
       <Route path={"/apartment-management"} component={withSupervisorRole(withPasswordProtection(ApartmentManagement, 'screen__apartment_management', 'إدارة الشقة'))} />
-      <Route path={"/leaderboard"} component={withManagerRole(withPasswordProtection(Leaderboard, 'screen__leaderboard', 'لوحة الشرف'))} />
+      <Route path={"/leaderboard"} component={withSupervisorRole(withPasswordProtection(Leaderboard, 'screen__leaderboard', 'لوحة الشرف'))} />
       <Route path={"/security-settings"} component={withManagerRole(SecuritySettings)} />
-      <Route path={"/credits-suppliers"} component={withManagerRole(withPasswordProtection(CreditsAndSuppliersAdvanced, 'screen__credits_suppliers', 'الآجل وحسابات الموردين'))} />
+      <Route path={"/credits-suppliers"} component={withPasswordProtection(CreditsAndSuppliersAdvanced, 'screen__credits_suppliers', 'الآجل وحسابات الموردين')} />
 
       <Route path={"/shortages"} component={withSupervisorRole(withPasswordProtection(Shortages, 'screen__shortages', 'نواقص أبو رغوة'))} />
       <Route path={"404"} component={NotFound} />
