@@ -9,6 +9,7 @@ export type CloudStaffSession = {
   user: AccessUser;
   shopId: string | null;
   membershipState: MembershipState;
+  employeeProfile?: Record<string, unknown> | null;
 };
 
 /** Resolve role and shop membership from Supabase on every session refresh. */
@@ -47,6 +48,15 @@ export async function loadCurrentStaffSession(): Promise<CloudStaffSession | nul
     role = membership.role;
   }
 
+  let employeeProfile: Record<string, unknown> | null = null;
+  if (shopId && membershipState === "active" && authUser.email) {
+    const { data: boundEmployee, error: bindError } = await supabase.rpc("bind_staff_employee_auth", { p_shop_id: shopId });
+    if (bindError) throw new Error(bindError.message);
+    if (boundEmployee && typeof boundEmployee === "object" && Object.keys(boundEmployee).length > 0) {
+      employeeProfile = boundEmployee as unknown as Record<string, unknown>;
+    }
+  }
+
   const user: AccessUser = {
     id: authUser.id,
     email: authUser.email ?? "",
@@ -59,5 +69,5 @@ export async function loadCurrentStaffSession(): Promise<CloudStaffSession | nul
     isBlocked: membershipState === "suspended",
     status: membershipState,
   };
-  return { user, shopId, membershipState };
+  return { user, shopId, membershipState, employeeProfile };
 }

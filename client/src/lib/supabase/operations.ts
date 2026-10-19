@@ -19,9 +19,9 @@ export async function listTaskStaffDirectory() {
   const id = await shopId();
   return requireCloudResult(await getSupabaseClient().rpc("list_task_staff_directory", { p_shop_id: id })) as Array<{ id: string; name: string; role: string }>;
 }
-export async function saveStaffEmployee(input: Omit<Insert<"staff_employees">, "shop_id"> & { id?: string }) {
+export async function saveStaffEmployee(input: Omit<Insert<"staff_employees">, "shop_id" | "store_id"> & { id?: string; store_id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient();
-  const payload = { ...input, shop_id: id } as Insert<"staff_employees">;
+  const payload = { ...input, shop_id: id, store_id: id } as Insert<"staff_employees">;
   const result = input.id ? await client.from("staff_employees").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("staff_employees").insert(payload).select().single();
   return requireCloudResult(result) as Row<"staff_employees">;
 }
