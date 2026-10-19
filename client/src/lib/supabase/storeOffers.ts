@@ -38,6 +38,7 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
   const payload = {
     id: offer.id,
     store_id: shopId,
+    shop_id: shopId,
     title,
     banner_title: offer.bannerTitle || "",
     description: offer.description || "",
