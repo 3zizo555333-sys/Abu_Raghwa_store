@@ -1,4 +1,4 @@
-const SELLER_ALLOWED_EXACT_PATHS = new Set(["/cashier", "/catalog", "/catalog-offers", "/credits-suppliers", "/my-withdrawals"]);
+const SELLER_ALLOWED_EXACT_PATHS = new Set(["/cashier", "/catalog", "/catalog-offers", "/credits-suppliers", "/my-withdrawals", "/shortages"]);
 
 /** Normalize query strings and trailing slashes before applying the seller route allowlist. */
 export function canSellerAccessPath(pathname: string): boolean {

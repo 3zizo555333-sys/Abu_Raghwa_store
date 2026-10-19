@@ -245,7 +245,7 @@ function Router() {
       <Route path={"/security-settings"} component={withManagerRole(SecuritySettings)} />
       <Route path={"/credits-suppliers"} component={withPasswordProtection(CreditsAndSuppliersAdvanced, 'screen__credits_suppliers', 'الآجل وحسابات الموردين')} />
 
-      <Route path={"/shortages"} component={withSupervisorRole(withPasswordProtection(Shortages, 'screen__shortages', 'نواقص أبو رغوة'))} />
+      <Route path={"/shortages"} component={withPasswordProtection(Shortages, 'screen__shortages', 'نواقص أبو رغوة')} />
       <Route path={"404"} component={NotFound} />
       {/* Final fallback route */}
       <Route component={NotFound} />

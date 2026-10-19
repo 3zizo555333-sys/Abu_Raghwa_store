@@ -1,5 +1,6 @@
 import { getSupabaseClient, assertCloudOnline, requireCloudResult } from "./client";
 import type { Json, ProductRow } from "./database.types";
+import { setCachedActiveShopId } from "@/lib/persistentCloudCache";
 
 export type ProductCursor = { created_at: string; id: string };
 export type CloudProduct = {
@@ -113,6 +114,7 @@ export async function getActiveShopContext(forceRefresh = false): Promise<ShopCo
     if (error) throw new Error(error.message);
     if (!data?.length) throw new Error("لا يوجد للمستخدم عضوية نشطة في المحل. اطلب من المدير تفعيل الحساب.");
     if (data.length > 1) throw new Error("للمستخدم أكثر من محل. يجب اختيار المحل النشط قبل متابعة العمل.");
+    setCachedActiveShopId(data[0].shop_id);
     return { userId, shopId: data[0].shop_id, role: data[0].role };
   })();
   shopContextExpiresAt = Date.now() + 15_000;

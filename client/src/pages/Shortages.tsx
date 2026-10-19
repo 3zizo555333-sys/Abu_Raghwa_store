@@ -5,8 +5,9 @@ import { useLocation } from "wouter";
 import { ArrowLeft, AlertTriangle, TrendingDown, Package, Plus, Trash2, Edit2, ChevronDown, ChevronUp, Camera, X } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
+import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { getActiveShopContext, subscribeToShopChanges } from "@/lib/supabase/products";
-import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
+import { getCachedActiveShopId, readPersistentCloudCache, readSynchronousCloudCache, writePersistentCloudCache, writeSynchronousCloudCache } from "@/lib/persistentCloudCache";
 import {
   createCloudShortageCategory,
   deleteCloudShortage,
@@ -36,6 +37,11 @@ interface Product {
 type ManualProduct = CloudManualProduct;
 type Shortage = CloudShortage;
 
+type ShortagesCache = { products: Product[]; manualProducts: ManualProduct[]; categories: string[]; shortages: Shortage[] };
+const cachedShopId = getCachedActiveShopId();
+const shortagesCacheKey = (shopId: string) => `abu_raghwa_shortages_${shopId}`;
+const initialShortagesCache = cachedShopId ? readSynchronousCloudCache<ShortagesCache>(shortagesCacheKey(cachedShopId)) : null;
+
 const DEFAULT_CATEGORIES = [
   "مستحضرات التجميل",
   "منظفات متنوعة",
@@ -48,12 +54,14 @@ const DEFAULT_CATEGORIES = [
 
 export default function Shortages() {
   const [, navigate] = useLocation();
-  const [products, setProducts] = useState<Product[]>([]);
-  const [manualProducts, setManualProducts] = useState<ManualProduct[]>([]);
-  const [customCategories, setCustomCategories] = useState<string[]>([]);
+  const { canViewSensitiveFinancials } = useStaffAccess();
+  const [products, setProducts] = useState<Product[]>(() => initialShortagesCache?.products ?? []);
+  const [manualProducts, setManualProducts] = useState<ManualProduct[]>(() => initialShortagesCache?.manualProducts ?? []);
+  const [customCategories, setCustomCategories] = useState<string[]>(() => initialShortagesCache?.categories ?? []);
   const [manualProductsText, setManualProductsText] = useState("");
-  const [shortages, setShortages] = useState<Shortage[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [shortages, setShortages] = useState<Shortage[]>(() => initialShortagesCache?.shortages ?? []);
+  const [activeShopId, setActiveShopId] = useState<string | null>(cachedShopId);
+  const [isLoading, setIsLoading] = useState(!initialShortagesCache);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("مستحضرات التجميل");
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set(["مستحضرات التجميل"]));
@@ -78,7 +86,9 @@ export default function Shortages() {
     let shopId = "";
     try {
       ({ shopId } = await getActiveShopContext());
-      const cached = await readPersistentCloudCache<{ products: Product[]; manualProducts: ManualProduct[]; categories: string[]; shortages: Shortage[] }>(`shortages:${shopId}`);
+      setActiveShopId(shopId);
+      const cacheKey = shortagesCacheKey(shopId);
+      const cached = readSynchronousCloudCache<ShortagesCache>(cacheKey) ?? await readPersistentCloudCache<ShortagesCache>(cacheKey);
       if (cached) {
         setProducts(cached.products);
         setManualProducts(cached.manualProducts);
@@ -107,7 +117,9 @@ export default function Shortages() {
       setManualProducts(cloudManual);
       setCustomCategories(cloudCategories.map(category => category.name));
       setShortages(cloudShortageRows);
-      await writePersistentCloudCache(`shortages:${shopId}`, { products: normalizedProducts.sort((a, b) => a.name.localeCompare(b.name, "ar")), manualProducts: cloudManual, categories: cloudCategories.map(category => category.name), shortages: cloudShortageRows });
+      const nextCache: ShortagesCache = { products: normalizedProducts.sort((a, b) => a.name.localeCompare(b.name, "ar")), manualProducts: cloudManual, categories: cloudCategories.map(category => category.name), shortages: cloudShortageRows };
+      writeSynchronousCloudCache(cacheKey, nextCache);
+      await writePersistentCloudCache(cacheKey, nextCache);
       setLoadError(null);
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذر تحميل بيانات النواقص من السحابة.";
@@ -139,6 +151,11 @@ export default function Shortages() {
       if (unsubscribeRealtime) unsubscribeRealtime();
     };
   }, []);
+
+  useEffect(() => {
+    if (!activeShopId) return;
+    writeSynchronousCloudCache(shortagesCacheKey(activeShopId), { products, manualProducts, categories: customCategories, shortages });
+  }, [activeShopId, products, manualProducts, customCategories, shortages]);
 
   const checkShortages = async () => {
     const threshold = parseFloat(minThreshold) || 5;
@@ -391,7 +408,7 @@ export default function Shortages() {
           <p className="text-lg font-bold text-red-600">{shortage.shortage} {shortage.unit}</p>
         </div>
         <div className="flex gap-2 flex-wrap">
-          {shortage.status === "pending" && (
+          {canViewSensitiveFinancials && shortage.status === "pending" && (
             <Button 
               onClick={() => handleStatusChange(shortage.id, "ordered")}
               size="sm"
@@ -400,7 +417,7 @@ export default function Shortages() {
               طلب
             </Button>
           )}
-          {shortage.status === "ordered" && (
+          {canViewSensitiveFinancials && shortage.status === "ordered" && (
             <Button 
               onClick={() => handleStatusChange(shortage.id, "received")}
               size="sm"
@@ -409,13 +426,13 @@ export default function Shortages() {
               استلام
             </Button>
           )}
-          <Button 
+          {canViewSensitiveFinancials && <Button
             onClick={() => handleDeleteShortage(shortage.id)}
             size="sm"
             variant="destructive"
           >
             <Trash2 size={16} />
-          </Button>
+          </Button>}
         </div>
       </div>
       {shortage.notes && <p className="text-sm text-gray-600 mt-2">📝 {shortage.notes}</p>}
@@ -481,7 +498,7 @@ export default function Shortages() {
         </div>
 
         {/* Add Shortage Form */}
-        {showForm && (
+        {canViewSensitiveFinancials && showForm && (
           <Card className="mb-6 border-2 border-blue-200">
             <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
               <CardTitle>{editingId ? "تعديل نقص" : "إضافة نقص جديد"}</CardTitle>
@@ -615,7 +632,7 @@ export default function Shortages() {
           </Card>
         )}
 
-        {!showForm && (
+        {canViewSensitiveFinancials && !showForm && (
           <div className="mb-6 grid grid-cols-1 gap-3 sm:grid-cols-2">
             <Button 
               onClick={() => { void refreshCloudData(); setShowForm(true); }}
@@ -635,7 +652,7 @@ export default function Shortages() {
           </div>
         )}
 
-        {showCategoryForm && (
+        {canViewSensitiveFinancials && showCategoryForm && (
           <Card className="mb-6 border-2 border-indigo-200">
             <CardHeader className="bg-gradient-to-r from-blue-600 to-indigo-600 text-white">
               <CardTitle>إضافة فئة جديدة للنواقص</CardTitle>

@@ -32,6 +32,10 @@ function requireSupervisor(role: string) {
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("هذه البيانات متاحة للمدير أو المشرف فقط.");
 }
 
+function requireShortageReader(role: string) {
+  if (!["manager", "admin", "supervisor", "seller"].includes(role)) throw new Error("هذه البيانات متاحة لأعضاء المحل المصرح لهم فقط.");
+}
+
 export function mapShortageRow(row: ShortageRow): CloudShortage {
   return {
     id: row.id,
@@ -129,7 +133,7 @@ export async function listShortageProducts(): Promise<CloudProduct[]> {
 export async function listCloudShortages(): Promise<CloudShortage[]> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  requireSupervisor(role);
+  requireShortageReader(role);
   const result = await getSupabaseClient().from("shortage_items").select("*").eq("shop_id", shopId).is("deleted_at", null).order("reported_at", { ascending: false }).order("id", { ascending: false });
   return (requireCloudResult(result) as ShortageRow[]).map(mapShortageRow);
 }
@@ -162,7 +166,7 @@ export async function deleteCloudShortage(item: Pick<CloudShortage, "id" | "vers
 export async function listCloudShortageCategories(): Promise<CloudShortageCategory[]> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  requireSupervisor(role);
+  requireShortageReader(role);
   const result = await getSupabaseClient().from("shortage_categories").select("id, name").eq("shop_id", shopId).is("deleted_at", null).order("name");
   return (requireCloudResult(result) as Pick<CategoryRow, "id" | "name">[]).map(row => ({ id: row.id, name: row.name }));
 }
@@ -180,7 +184,7 @@ export async function createCloudShortageCategory(name: string): Promise<CloudSh
 export async function listCloudManualProducts(): Promise<CloudManualProduct[]> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  requireSupervisor(role);
+  requireShortageReader(role);
   const result = await getSupabaseClient().from("shortage_manual_products").select("id, name, category_name, unit").eq("shop_id", shopId).is("deleted_at", null).order("name");
   if (result.error && /schema cache|relation .* does not exist|could not find the table/i.test(result.error.message)) return [];
   return (requireCloudResult(result) as Pick<ManualProductRow, "id" | "name" | "category_name" | "unit">[]).map(row => ({ id: row.id, name: row.name, category: row.category_name, unit: row.unit }));

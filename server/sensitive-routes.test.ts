@@ -15,7 +15,7 @@ const expectedKey = (path: string) => `screen__${path.toLowerCase().replace(/[^a
 describe("حماية المسارات المالية والحساسة", () => {
   it("يحافظ على قيود الأدوار في المسارات الحساسة", () => {
     expect(appSource).toContain('path={"/apartment-management"} component={withSupervisorRole(');
-    expect(appSource).toContain('path={"/shortages"} component={withSupervisorRole(withPasswordProtection(Shortages');
+    expect(appSource).toContain('path={"/shortages"} component={withPasswordProtection(Shortages');
     expect(appSource).toContain('path={"/expenses"} component={withSupervisorRole(');
     expect(appSource).toContain('path={"/checks"} component={withManagerRole(');
     expect(appSource).toContain('path={"/checks-page"} component={withManagerRole(');
@@ -66,6 +66,7 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(sellerAccessSource).toContain('"/cashier"');
     expect(sellerAccessSource).toContain('"/catalog"');
     expect(sellerAccessSource).toContain('"/catalog-offers"');
+    expect(sellerAccessSource).toContain('"/shortages"');
     expect(sellerAccessSource).not.toContain('"/sales"');
     expect(sellerAccessSource).not.toContain('"/smart-offers"');
   });
