@@ -29,6 +29,10 @@ export async function softDeleteStaffEmployee(employeeId: string) {
   assertCloudOnline(); const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("staff_employees").update({ deleted_at: new Date().toISOString(), is_active: false }).eq("id", employeeId).eq("shop_id", id).select().single());
 }
+export async function deleteStaffEmployee(employeeId: string) {
+  assertCloudOnline(); const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().from("staff_employees").delete().eq("id", employeeId).eq("shop_id", id).select("id").single());
+}
 export async function listStaffAttendance() {
   const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("staff_attendance").select("*").eq("shop_id", id).order("attendance_date", { ascending: false }).limit(5000)) as Row<"staff_attendance">[];
