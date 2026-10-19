@@ -10,7 +10,8 @@ export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 let browserClient: SupabaseClient<Database> | undefined;
 
 /**
- * Browser auth is persisted by @supabase/ssr in cookies, not Web Storage.
+ * Browser auth is persisted by Supabase Auth in localStorage so it survives
+ * refreshes, browser restarts, temporary offline periods, and deployments.
  * The publishable/anon key is intentionally the only key shipped to the browser.
  */
 export function getSupabaseClient(): SupabaseClient<Database> {
@@ -27,9 +28,10 @@ export function getSupabaseClient(): SupabaseClient<Database> {
         maxAge: 60 * 60 * 24 * 7,
       },
       auth: {
+        persistSession: true,
         autoRefreshToken: true,
         detectSessionInUrl: true,
-        persistSession: true,
+        storage: typeof window !== "undefined" ? window.localStorage : undefined,
       },
     });
   }

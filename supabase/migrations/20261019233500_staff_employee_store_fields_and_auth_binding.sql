@@ -91,6 +91,7 @@ begin
     'auth_user_id', e.auth_user_id,
     'role', e.role,
     'salary', e.salary,
+    'is_active', e.is_active,
     'join_date', e.join_date,
     'hire_date', e.hire_date,
     'shop_id', e.shop_id,

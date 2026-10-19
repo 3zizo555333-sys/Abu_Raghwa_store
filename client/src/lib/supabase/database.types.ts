@@ -146,6 +146,9 @@ export type Database = {
       import_legacy_shop_credit_accounts: { Args: { p_shop_id: string; p_customers: Json; p_suppliers: Json }; Returns: Json };
       list_task_staff_directory: { Args: { p_shop_id: string }; Returns: Array<{ id: string; name: string; role: string }> };
       bind_staff_employee_auth: { Args: { p_shop_id: string }; Returns: Json };
+      request_staff_password_reset: { Args: { p_identifier: string }; Returns: Json };
+      list_staff_password_reset_requests: { Args: { p_shop_id: string }; Returns: Array<{ id: string; shop_id: string; employee_id: string | null; employee_name: string | null; identifier: string; requested_email: string | null; requested_phone: string | null; status: string; created_at: string }> };
+      manager_set_staff_password: { Args: { p_shop_id: string; p_employee_id: string; p_password: string }; Returns: Json };
       award_completed_task_points: { Args: { p_shop_id: string; p_task_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };
       apply_staff_point_adjustment: { Args: { p_shop_id: string; p_employee_id: string; p_points_delta: number; p_entry_type: string; p_source_id: string; p_description: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };
       redeem_staff_reward: { Args: { p_shop_id: string; p_employee_id: string; p_reward_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };

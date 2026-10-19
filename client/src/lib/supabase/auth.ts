@@ -47,13 +47,21 @@ export async function loadCurrentStaffSession(): Promise<CloudStaffSession | nul
     shopId = membership.shop_id;
     role = membership.role;
   }
+  if (membershipState === "suspended") {
+    await supabase.auth.signOut();
+    return null;
+  }
 
   let employeeProfile: Record<string, unknown> | null = null;
   if (shopId && membershipState === "active" && authUser.email) {
     const { data: boundEmployee, error: bindError } = await supabase.rpc("bind_staff_employee_auth", { p_shop_id: shopId });
     if (bindError) throw new Error(bindError.message);
     if (boundEmployee && typeof boundEmployee === "object" && Object.keys(boundEmployee).length > 0) {
-      employeeProfile = boundEmployee as unknown as Record<string, unknown>;
+      employeeProfile = boundEmployee as Record<string, unknown>;
+      if (employeeProfile.is_active === false) {
+        await supabase.auth.signOut();
+        return null;
+      }
     }
   }
 
@@ -66,7 +74,7 @@ export async function loadCurrentStaffSession(): Promise<CloudStaffSession | nul
     lastLogin: authUser.last_sign_in_at ?? authUser.created_at,
     deviceIds: [],
     isApproved: membershipState === "active",
-    isBlocked: membershipState === "suspended",
+    isBlocked: false,
     status: membershipState,
   };
   return { user, shopId, membershipState, employeeProfile };

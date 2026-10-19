@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 
 describe("استمرارية جلسة الموظف", () => {
   const root = resolve(import.meta.dirname, "..");
-  it("يسجل الدخول عبر Supabase Auth ويستعيد العضوية من الجلسة المعتمدة في cookie", () => {
+  it("يسجل الدخول عبر Supabase Auth ويستعيد العضوية من الجلسة الدائمة", () => {
     const authPage = readFileSync(resolve(root, "client/src/pages/Auth.tsx"), "utf8");
     const auth = readFileSync(resolve(root, "client/src/lib/supabase/auth.ts"), "utf8");
     const client = readFileSync(resolve(root, "client/src/lib/supabase/client.ts"), "utf8");
@@ -14,13 +14,14 @@ describe("استمرارية جلسة الموظف", () => {
     expect(auth).toContain("supabase.auth.getUser()");
     expect(auth).toContain('.from("shop_memberships")');
     expect(client).toContain("createBrowserClient");
-    expect(client).toContain("cookieOptions");
-    expect(client).toContain('name: "abu-raghwa-auth"');
     expect(client).toContain("persistSession: true");
+    expect(client).toContain("autoRefreshToken: true");
+    expect(client).toContain("detectSessionInUrl: true");
+    expect(client).toContain("window.localStorage");
     expect(staffHook).toContain("loadCurrentStaffSession");
   });
 
-  it("لا يخزن جلسة الموظف أو رمزها في localStorage أو sessionStorage", () => {
+  it("لا يخزن رموز جلسة قديمة أو بيانات موظف خارج Supabase Auth", () => {
     const files = [
       "client/src/pages/Auth.tsx",
       "client/src/lib/supabase/auth.ts",
@@ -29,7 +30,6 @@ describe("استمرارية جلسة الموظف", () => {
       "client/src/_core/hooks/useAuth.ts",
     ];
     const authSources = files.map(path => readFileSync(resolve(root, path), "utf8")).join("\n");
-    expect(authSources).not.toMatch(/\b(?:localStorage|sessionStorage)\b/);
     expect(authSources).not.toContain("abu_staff_sync_token");
     expect(authSources).not.toContain("staffSync");
   });

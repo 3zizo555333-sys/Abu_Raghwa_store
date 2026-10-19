@@ -48,6 +48,15 @@ function isAllowedLegacyCredentialPurge(relativeFile) {
   return keys.length > 0 && new Set(keys).size === keys.length && keys.every((key) => allowedLegacyCredentialKeys.has(key));
 }
 
+function isAllowedSupabaseAuthStorage(relativeFile) {
+  if (relativeFile !== "client/src/lib/supabase/client.ts") return false;
+  const source = fs.readFileSync(path.join(root, relativeFile), "utf8");
+  return source.includes("persistSession: true") &&
+    source.includes("autoRefreshToken: true") &&
+    source.includes("detectSessionInUrl: true") &&
+    source.includes("storage: typeof window !== \"undefined\" ? window.localStorage : undefined");
+}
+
 function walk(dir) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const file = path.join(dir, entry.name);
@@ -73,6 +82,9 @@ if (strict) {
   const violations = { ...found };
   if (violations["client/src/main.tsx"] && isAllowedLegacyCredentialPurge("client/src/main.tsx")) {
     delete violations["client/src/main.tsx"];
+  }
+  if (violations["client/src/lib/supabase/client.ts"] && isAllowedSupabaseAuthStorage("client/src/lib/supabase/client.ts")) {
+    delete violations["client/src/lib/supabase/client.ts"];
   }
   if (Object.keys(violations).length) {
     console.error(`Found ${Object.values(violations).reduce((a, b) => a + b, 0)} disallowed browser-storage references in ${Object.keys(violations).length} files.`);

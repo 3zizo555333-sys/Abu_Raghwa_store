@@ -6,6 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { CURRENT_STAFF_QUERY_KEY, loadCurrentStaffSession } from "@/lib/supabase/auth";
+import { requestStaffPasswordReset } from "@/lib/supabase/passwordResets";
 
 export default function Auth() {
   const [, navigate] = useLocation();
@@ -15,6 +16,9 @@ export default function Auth() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [forgotIdentifier, setForgotIdentifier] = useState("");
+  const [forgotSubmitting, setForgotSubmitting] = useState(false);
 
   const handleLogin = async () => {
     if (!formData.email.trim() || !formData.password) throw new Error("يرجى ملء البريد الإلكتروني وكلمة المرور.");
@@ -92,6 +96,42 @@ export default function Auth() {
     }
   };
 
+  const handleManagerResetRequest = async () => {
+    if (forgotSubmitting) return;
+    if (forgotIdentifier.trim().length < 3) { setError("أدخل البريد الإلكتروني أو رقم الهاتف المسجل."); return; }
+    setForgotSubmitting(true);
+    setError("");
+    try {
+      await requestStaffPasswordReset(forgotIdentifier);
+      setNotice("تم إرسال طلبك للإدارة، تواصل مع المشرف أو المدير لاستلام كلمة مرورك الجديدة");
+      setForgotOpen(false);
+      setForgotIdentifier("");
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : "تعذر إرسال طلب إعادة التعيين.");
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
+  const handleEmailReset = async () => {
+    if (forgotSubmitting) return;
+    const email = (forgotIdentifier.trim() || formData.email.trim()).toLowerCase();
+    if (!email || !email.includes("@")) { setError("أدخل بريداً إلكترونياً صالحاً لإرسال رابط الاستعادة."); return; }
+    setForgotSubmitting(true);
+    setError("");
+    try {
+      const { error: resetError } = await getSupabaseClient().auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/auth` });
+      if (resetError) throw new Error(resetError.message);
+      setNotice("تم إرسال رابط إعادة تعيين كلمة المرور إلى بريدك الإلكتروني.");
+      setForgotOpen(false);
+      setForgotIdentifier("");
+    } catch (resetError) {
+      setError(resetError instanceof Error ? resetError.message : "تعذر إرسال رابط الاستعادة.");
+    } finally {
+      setForgotSubmitting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 to-amber-50 flex items-center justify-center p-4" dir="rtl">
       <Card className="w-full max-w-md border-0 shadow-lg">
@@ -110,6 +150,7 @@ export default function Auth() {
             <div>
               <label className="block text-sm font-medium mb-2">كلمة المرور</label>
               <Input type="password" autoComplete={isLogin ? "current-password" : "new-password"} minLength={8} required placeholder="••••••••" value={formData.password} onChange={event => setFormData({ ...formData, password: event.target.value })} />
+              {isLogin && <button type="button" className="mt-2 text-sm font-medium text-orange-600 hover:text-orange-700" onClick={() => { setForgotOpen(true); setForgotIdentifier(formData.email); setError(""); setNotice(""); }}>نسيت كلمة المرور؟</button>}
             </div>
             {!isLogin && <div>
               <label className="block text-sm font-medium mb-2">تأكيد كلمة المرور</label>
@@ -127,6 +168,11 @@ export default function Auth() {
               </button>
             </p>
           </div>
+          {forgotOpen && <div className="mt-5 rounded-xl border border-orange-200 bg-orange-50 p-4" role="dialog" aria-modal="true" aria-labelledby="forgot-password-title">
+            <div className="flex items-start justify-between gap-3"><div><h2 id="forgot-password-title" className="font-bold text-slate-900">استعادة كلمة المرور</h2><p className="mt-1 text-sm text-slate-600">اختر الطريقة المناسبة لاستعادة الوصول إلى حسابك.</p></div><button type="button" className="text-slate-500" onClick={() => setForgotOpen(false)} aria-label="إغلاق">×</button></div>
+            <Input className="mt-3 bg-white" type="text" value={forgotIdentifier} onChange={event => setForgotIdentifier(event.target.value)} placeholder="البريد الإلكتروني أو رقم الهاتف" />
+            <div className="mt-3 grid gap-2"><Button type="button" disabled={forgotSubmitting} onClick={() => void handleManagerResetRequest()} className="bg-orange-600 hover:bg-orange-700">إرسال طلب إعادة تعيين للمدير</Button><Button type="button" disabled={forgotSubmitting} variant="outline" onClick={() => void handleEmailReset()}>إرسال رابط عبر البريد</Button></div>
+          </div>}
         </CardContent>
       </Card>
     </div>
