@@ -2,6 +2,7 @@ export interface EmployeeRecord {
   id: string;
   name: string;
   phone: string;
+  authEmail?: string;
   position: string;
   role?: "supervisor" | "cashier" | "seller";
   salary: number;
@@ -33,6 +34,7 @@ export const normalizeEmployees = (value: unknown): EmployeeRecord[] => {
       id: text(source.id) || `legacy-employee-${index}`,
       name: text(source.name) || "موظف بدون اسم",
       phone: text(source.phone),
+      ...(text(source.authEmail || source.auth_email) ? { authEmail: text(source.authEmail || source.auth_email) } : {}),
       position: text(source.position),
       role: source.role === "supervisor" || source.role === "cashier" ? source.role : "seller",
       salary: Math.max(0, number(source.salary)),

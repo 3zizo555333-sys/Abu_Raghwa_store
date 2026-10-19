@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { LogOut, Settings, Users, BarChart3, Package, ShoppingCart, Gift, Mic, Beaker, Calculator, FileText, Camera } from "lucide-react";
+import { LogOut, Settings, Users, BarChart3, Package, ShoppingCart, Gift, Mic, Beaker, Calculator, FileText, Camera, WalletCards } from "lucide-react";
 import SocialMediaLinks from "@/components/SocialMediaLinks";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { getSupabaseClient } from "@/lib/supabase/client";
@@ -104,6 +104,14 @@ export default function Home() {
       path: "/offers",
       color: "bg-red-50",
       textColor: "text-red-600"
+    },
+    {
+      icon: WalletCards,
+      label: "💳 سحوباتي",
+      description: "كشف حسابك وسحوباتك الشخصية",
+      path: "/my-withdrawals",
+      color: "bg-violet-50",
+      textColor: "text-violet-600"
     }
   ];
 

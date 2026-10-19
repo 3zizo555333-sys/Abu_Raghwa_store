@@ -27,7 +27,6 @@ interface DashboardStats {
 export default function Dashboard() {
   const [, navigate] = useLocation();
   const { user, canViewSensitiveFinancials } = useStaffAccess();
-  const canOpenOwnEmployeeCard = Boolean(user && !canViewSensitiveFinancials);
   const staffSessionReady = Boolean(user && (user.role === "manager" || user.role === "admin" || user.role === "supervisor"));
   const pendingStaff = trpc.staffSync.pending.useQuery(undefined, { enabled: staffSessionReady, retry: false, refetchInterval: staffSessionReady ? 5_000 : false });
   const [stats, setStats] = useState<DashboardStats>({
@@ -262,13 +261,13 @@ export default function Dashboard() {
               >
                 إدارة الموظفين
               </Button>}
-              {canOpenOwnEmployeeCard && <Button
-                onClick={() => navigate("/employees")}
+              <Button
+                onClick={() => navigate("/my-withdrawals")}
                 className="bg-violet-700 hover:bg-violet-800 text-white flex items-center justify-center gap-2"
               >
                 <WalletCards className="w-4 h-4" />
-                حسابي ومسحوباتي
-              </Button>}
+                💳 سحوباتي
+              </Button>
               <Button
                 onClick={() => navigate("/tasks")}
                 className="bg-indigo-600 hover:bg-indigo-700 text-white"
