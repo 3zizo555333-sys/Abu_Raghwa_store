@@ -306,7 +306,7 @@ export const appRouter = router({
     loginWithStaffSession: publicProcedure
       .mutation(async ({ ctx }) => {
         const user = await requireStaffSyncSession(ctx.req);
-        if (user.role !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "إدارة رواتب الموظفين للمدير فقط" });
+        if (user.role !== "manager" && user.role !== "supervisor") throw new TRPCError({ code: "FORBIDDEN", message: "إدارة سحوبات الموظفين متاحة للمدير والمشرف فقط" });
         return { token: await createEmployeeFinanceSession({ email: user.email, access: "manager" }), access: "manager" as const };
       }),
       forgotPin: publicProcedure
@@ -319,7 +319,7 @@ export const appRouter = router({
         }),
       managerOverview: publicProcedure.query(async ({ ctx }) => {
       const session = await requireEmployeeFinanceSession(ctx.req);
-      if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات جميع الموظفين متاحة للمدير فقط" });
+      if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "حسابات جميع الموظفين متاحة للمدير والمشرف فقط" });
       const { store, employees, attendance } = await getEmployeeFinanceData();
       const now = new Date();
         return employees.map(employee => {
@@ -429,7 +429,7 @@ export const appRouter = router({
       .input(z.object({ employeeId: z.string().min(1), amount: z.number().positive().max(100_000), description: z.string().trim().min(2).max(500) }))
       .mutation(async ({ input, ctx }) => {
         const session = await requireEmployeeFinanceSession(ctx.req);
-        if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "تسجيل سحبة بالنيابة عن العامل من صلاحية المدير فقط" });
+        if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "تسجيل سحبة بالنيابة عن العامل من صلاحية المدير والمشرف فقط" });
         const { store, employees } = await getEmployeeFinanceData();
         if (!employees.some(employee => employee.id === input.employeeId)) throw new TRPCError({ code: "NOT_FOUND", message: "لم أجد هذا الموظف" });
         const now = new Date().toISOString();
@@ -451,7 +451,7 @@ export const appRouter = router({
       .input(z.object({ withdrawalId: z.string().min(1), decision: z.enum(["approved", "rejected"]) }))
       .mutation(async ({ input, ctx }) => {
         const session = await requireEmployeeFinanceSession(ctx.req);
-        if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "اعتماد أو رفض السحب من صلاحية المدير فقط" });
+        if (session.access !== "manager") throw new TRPCError({ code: "FORBIDDEN", message: "اعتماد أو رفض السحب من صلاحية المدير والمشرف فقط" });
         const store = await getEmployeeFinanceStore();
         const withdrawal = store.withdrawals.find(item => item.id === input.withdrawalId);
         if (!withdrawal) throw new TRPCError({ code: "NOT_FOUND", message: "لم أجد هذه السحبة" });

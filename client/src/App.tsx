@@ -86,6 +86,7 @@ const loadSales = () => import("./pages/Sales");
 const Sales = lazy(loadSales);
 const Reports = lazy(() => import("./pages/Reports"));
 const Employees = lazy(() => import("./pages/Employees"));
+const StaffWithdrawals = lazy(() => import("./pages/StaffWithdrawals"));
 const Tasks = lazy(() => import("./pages/Tasks"));
 const PointsSystem = lazy(() => import("./pages/PointsSystem"));
 const Offers = lazy(() => import("./pages/Offers"));
@@ -193,7 +194,7 @@ function Router() {
       <Route path={"/reports"} component={withSupervisorRole(withPasswordProtection(Reports, 'screen__reports', 'التقارير المالية'))} />
       <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'screen__advanced_reports', 'جرد المبيعات والأرباح'))} />
       <Route path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, 'screen__employees', 'إدارة الموظفين'))} />
-      <Route path={"/my-withdrawals"} component={withPasswordProtection(Employees, 'screen__my_withdrawals', 'سحوباتي')} />
+      <Route path={"/my-withdrawals"} component={withPasswordProtection(StaffWithdrawals, 'screen__my_withdrawals', 'السحوبات والعهد')} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'screen__tasks', 'المهام'))} />
       <Route path={"/points-system"} component={withSupervisorRole(withPasswordProtection(PointsSystem, 'screen__points_system', 'نظام النقاط'))} />
       <Route path={"/offers"} component={withSupervisorRole(withPasswordProtection(Offers, 'screen__offers', 'العروض'))} />
