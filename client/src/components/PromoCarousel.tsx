@@ -48,7 +48,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
 
   return <section aria-label="العروض النشطة" className="mx-auto max-w-7xl px-4 pt-5" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
     <div className="relative overflow-hidden rounded-[2rem] bg-gradient-to-l from-orange-600 via-amber-500 to-yellow-300 p-1 shadow-xl" onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
-      <div role="button" tabIndex={0} aria-label={`فتح تفاصيل العرض ${offer.banner_title || data.title || offer.title}`} onClick={goToOffer} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") goToOffer(); }} className="relative min-h-[180px] cursor-pointer overflow-hidden rounded-[1.8rem] bg-gradient-to-l from-slate-950/95 via-orange-950/90 to-orange-700/75 px-5 py-5 text-white sm:min-h-[220px] sm:px-9 sm:py-8">
+      <div role="button" tabIndex={0} aria-label={`فتح تفاصيل العرض ${offer.banner_title || data.title || offer.title}`} onClick={goToOffer} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") goToOffer(); }} className="relative aspect-[16/6] cursor-pointer overflow-hidden rounded-[1.8rem] bg-gradient-to-l from-slate-950/95 via-orange-950/90 to-orange-700/75 px-5 py-4 text-white sm:px-9 sm:py-6">
         <div className="pointer-events-none absolute -left-10 -top-16 h-48 w-48 rounded-full bg-yellow-300/20 blur-2xl" />
         <div className="relative z-10 max-w-2xl sm:pl-40">
           <span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-3 py-1 text-[11px] font-black text-amber-100"><Sparkles className="h-3.5 w-3.5" /> عروض أبو رغوة الحالية</span>
