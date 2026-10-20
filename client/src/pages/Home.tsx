@@ -1,19 +1,36 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { LogOut, Settings, Users, BarChart3, Package, ShoppingCart, Gift, Mic, Beaker, Calculator, FileText, Camera, WalletCards } from "lucide-react";
+import { LogOut, Settings, Users, BarChart3, Package, ShoppingCart, Gift, Mic, Beaker, Calculator, FileText, Camera, WalletCards, QrCode } from "lucide-react";
 import SocialMediaLinks from "@/components/SocialMediaLinks";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { getSupabaseClient } from "@/lib/supabase/client";
+import QRCode from "qrcode";
+import { getLatestActiveStoreOffer, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 
 export default function Home() {
   const [, navigate] = useLocation();
   const { user, isLoading, error, isAuthenticated, membershipState, canViewSensitiveFinancials, refresh } = useStaffAccess({ monitorMembership: true });
+  const [latestOffer, setLatestOffer] = useState<CloudStoreOffer | null>(null);
+  const [latestOfferQr, setLatestOfferQr] = useState("");
 
   useEffect(() => {
     if (!isLoading && !error && (!isAuthenticated || membershipState !== "active")) navigate("/auth");
   }, [error, isAuthenticated, isLoading, membershipState, navigate]);
+
+  useEffect(() => {
+    if (!isAuthenticated || membershipState !== "active") return;
+    let active = true;
+    void getLatestActiveStoreOffer().then(offer => {
+      if (!active || !offer) return;
+      if (offer.status !== "active" || (offer.ends_at && Date.parse(offer.ends_at) <= Date.now())) return;
+      setLatestOffer(offer);
+      const target = offer.qr_code_data || `${window.location.origin}/public-offer?id=${encodeURIComponent(offer.id)}`;
+      return QRCode.toDataURL(target, { width: 480, margin: 4, errorCorrectionLevel: "H" }).then(qr => { if (active) setLatestOfferQr(qr); });
+    }).catch(error => console.warn("تعذر تحميل أحدث عرض نشط للواجهة الرئيسية", error));
+    return () => { active = false; };
+  }, [isAuthenticated, membershipState]);
 
   const handleLogout = async () => {
     try {
@@ -225,6 +242,8 @@ export default function Home() {
             </p>
           </CardContent>
         </Card>
+
+        {latestOffer && latestOfferQr && <Card className="mb-8 overflow-hidden border-0 bg-gradient-to-l from-blue-700 via-indigo-600 to-violet-700 text-white shadow-xl"><CardContent className="grid items-center gap-5 p-5 sm:grid-cols-[1fr_auto] sm:p-7"><div><p className="text-sm font-bold text-cyan-100">عرض نشط من أبو رغوة</p><h2 className="mt-1 text-2xl font-black sm:text-3xl">{latestOffer.title}</h2><p className="mt-2 max-w-2xl leading-7 text-blue-50">{latestOffer.description || latestOffer.public_description || "عرض حصري متاح الآن"}</p><div className="mt-4 flex flex-wrap items-center gap-3"><span className="rounded-xl bg-white/15 px-3 py-2 font-black">{latestOffer.offer_price ?? 0} ج.م</span><Button onClick={() => navigate(`/public-offer?id=${encodeURIComponent(latestOffer.id)}`)} className="bg-white text-blue-800 hover:bg-blue-50"><QrCode className="ml-1 h-4 w-4" />فتح العرض</Button></div></div><div className="rounded-2xl bg-white p-3 text-center shadow-lg"><img src={latestOfferQr} alt={`QR للعرض ${latestOffer.title}`} className="h-36 w-36 sm:h-44 sm:w-44" /><p className="mt-1 text-xs font-bold text-slate-700">امسح لفتح العرض</p></div></CardContent></Card>}
 
         {/* User Permissions */}
         <Card className="mb-8 border-0 shadow-sm">

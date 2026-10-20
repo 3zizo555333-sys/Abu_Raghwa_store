@@ -55,6 +55,8 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<CloudStoreOffe
     starts_at: toIso(offer.startAt),
     ends_at: toIso(offer.endAt),
     status: offer.status || "active",
+    is_active: (offer.status || "active") === "active",
+    qr_code_data: `${typeof window !== "undefined" ? window.location.origin : ""}/public-offer?id=${encodeURIComponent(id)}`,
     created_by: user.data.user?.id || null,
   };
   const result = await getSupabaseClient().from("store_offers").upsert(payload, { onConflict: "id", ignoreDuplicates: false }).select("*").single();
@@ -73,6 +75,13 @@ export async function listStoreOffers(): Promise<CloudStoreOffer[]> {
 export async function listActiveStoreOffers(): Promise<CloudStoreOffer[]> {
   const offers = await listStoreOffers();
   return offers.filter(offer => offer.status === "active");
+}
+
+export async function getLatestActiveStoreOffer(): Promise<CloudStoreOffer | null> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext(true);
+  const result = await getSupabaseClient().from("store_offers").select("*").eq("store_id", shopId).eq("is_active", true).is("deleted_at", null).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  return (requireCloudResult(result) || null) as CloudStoreOffer | null;
 }
 
 export async function mirrorPublicOfferOrder(input: { id: string; offerId: string; customerName: string; customerCode: string; customerPhone?: string | null; pointsCost?: number }): Promise<void> {

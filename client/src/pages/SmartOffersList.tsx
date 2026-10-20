@@ -1,6 +1,8 @@
 import { browserState } from "@/lib/browserState";
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import html2canvas from "html2canvas";
+import QRCode from "qrcode";
+import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, QrCode, RefreshCw, Share2, Sparkles, Trash2, X, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +27,7 @@ interface SmartOffer {
   startAt?: number;
   endAt?: number;
   cloudStatus?: "draft" | "active" | "paused" | "expired";
+  qrCodeData?: string;
 }
 
 type OffersTab = "active" | "expired";
@@ -38,6 +41,9 @@ export default function SmartOffersList() {
   const [activeTab, setActiveTab] = useState<OffersTab>("active");
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const [selectedOffer, setSelectedOffer] = useState<SmartOffer | null>(null);
+  const [selectedQr, setSelectedQr] = useState("");
+  const posterRef = useRef<HTMLDivElement>(null);
   const deleteOfferMutation = trpc.offers.delete.useMutation();
   const trpcUtils = trpc.useUtils();
 
@@ -56,6 +62,7 @@ export default function SmartOffersList() {
       startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined,
       endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined,
       cloudStatus: row.status,
+      qrCodeData: row.qr_code_data || `${window.location.origin}/public-offer?id=${encodeURIComponent(row.id)}`,
     };
   };
 
@@ -81,6 +88,37 @@ export default function SmartOffersList() {
     const timer = window.setInterval(() => void loadOffers(), 30_000);
     return () => window.clearInterval(timer);
   }, [loadOffers]);
+
+  const openOfferCard = async (offer: SmartOffer) => {
+    const target = offer.qrCodeData || `${window.location.origin}/public-offer?id=${encodeURIComponent(offer.id)}`;
+    try {
+      setSelectedQr(await QRCode.toDataURL(target, { width: 720, margin: 4, errorCorrectionLevel: "H" }));
+      setSelectedOffer(offer);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر إنشاء QR العرض");
+    }
+  };
+
+  const downloadQr = () => {
+    if (!selectedQr || !selectedOffer) return;
+    const link = document.createElement("a");
+    link.href = selectedQr;
+    link.download = `abu-raghwa-offer-qr-${selectedOffer.id}.png`;
+    link.click();
+  };
+
+  const exportPoster = async () => {
+    if (!posterRef.current || !selectedOffer) return;
+    try {
+      const canvas = await html2canvas(posterRef.current, { scale: 3, backgroundColor: "#ffffff", useCORS: true });
+      const link = document.createElement("a");
+      link.href = canvas.toDataURL("image/png");
+      link.download = `abu-raghwa-offer-card-${selectedOffer.id}.png`;
+      link.click();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تصدير بطاقة العرض");
+    }
+  };
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -177,9 +215,10 @@ export default function SmartOffersList() {
           )}
 
           <div className="grid grid-cols-3 gap-2">
-            <Button type="button" variant="outline" onClick={() => setExpandedOfferId(isExpanded ? null : offer.id)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+            <Button type="button" variant="outline" onClick={() => void openOfferCard(offer)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
               <Eye className="ml-1 h-4 w-4" /> {isExpanded ? "إخفاء التفاصيل" : "عرض التفاصيل"}
             </Button>
+            <Button type="button" size="icon" variant="outline" aria-label="فتح QR العرض" onClick={() => void openOfferCard(offer)} className="border-violet-200 text-violet-700 hover:bg-violet-50"><QrCode className="h-4 w-4" /></Button>
             <Button type="button" variant="outline" onClick={() => navigate(`/smart-offers?edit=${encodeURIComponent(offer.id)}`)} className="border-indigo-200 text-indigo-700 hover:bg-indigo-50">
               <Pencil className="ml-1 h-4 w-4" /> تعديل يدوي
             </Button>
@@ -241,6 +280,7 @@ export default function SmartOffersList() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{visibleOffers.map(renderOfferCard)}</div>
           )}
         </section>
+        {selectedOffer && selectedQr && <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" onClick={() => setSelectedOffer(null)}><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl" dir="rtl" onClick={event => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black">بطاقة العرض الترويجي</h2><Button type="button" variant="ghost" size="icon" onClick={() => setSelectedOffer(null)} aria-label="إغلاق"><X className="h-5 w-5" /></Button></div><div ref={posterRef} className="overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-indigo-600 to-violet-700 p-5 text-white"><p className="text-sm font-bold text-cyan-100">أبو رغوة للمنظفات</p><h3 className="mt-2 text-3xl font-black">{selectedOffer.title}</h3><p className="mt-2 leading-7 text-blue-50">{selectedOffer.description || "عرض حصري لفترة محدودة"}</p><div className="mt-4 rounded-2xl bg-white p-4 text-center"><img src={selectedQr} alt={`QR للعرض ${selectedOffer.title}`} className="mx-auto h-56 w-56" /><p className="mt-2 text-xs font-bold text-slate-700">امسح الكود لفتح العرض وطلبه</p></div><div className="mt-4 flex items-end justify-between"><div><p className="text-xs text-blue-100">سعر العرض</p><p className="text-3xl font-black">{selectedOffer.offerPrice} ج.م</p></div><div className="rounded-xl bg-white/15 px-3 py-2 text-left text-xs">العرض #{selectedOffer.id.slice(0, 8)}</div></div></div><div className="mt-4 grid grid-cols-2 gap-2"><Button type="button" onClick={downloadQr} className="bg-violet-700 hover:bg-violet-800"><QrCode className="ml-1 h-4 w-4" />تحميل الباركود مباشر</Button><Button type="button" variant="outline" onClick={() => void exportPoster()}><Share2 className="ml-1 h-4 w-4" />تصدير/حفظ الكارت</Button></div></div></div>}
       </main>
     </div>
   );
