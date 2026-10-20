@@ -652,7 +652,8 @@ export default function SmartOffers() {
     const finalOffer: SmartOffer = { ...activatedOffer, qrCodeDataUrl: qrDataUrl };
     // المسار القديم محفوظ عمداً للتوافق، والجدول السحابي الجديد هو النسخة الإضافية الدائمة.
     try {
-      await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, strategy: finalOffer.strategyName, originalPrice: finalOffer.originalTotalRetail, offerPrice: finalOffer.offerPrice, startDate: finalOffer.startDate, pointsReward: finalOffer.loyaltyPoints, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      const savedCloudOffer = await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, strategy: finalOffer.strategyName, originalPrice: finalOffer.originalTotalRetail, offerPrice: finalOffer.offerPrice, startDate: finalOffer.startDate, pointsReward: finalOffer.loyaltyPoints, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      if (!savedCloudOffer?.id || savedCloudOffer.store_id !== savedCloudOffer.shop_id) throw new Error("لم يؤكد الخادم هوية المتجر أو معرف العرض المحفوظ.");
       try {
         await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
       } catch (legacyError) {

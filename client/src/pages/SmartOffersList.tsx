@@ -1,14 +1,13 @@
 import { browserState } from "@/lib/browserState";
-import { useEffect, useMemo, useState } from "react";
-import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, Sparkles, Trash2, XCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, RefreshCw, Sparkles, Trash2, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
-import { useShopFeatureState } from "@/lib/supabase/featureState";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
-import { deleteStoreOffer } from "@/lib/supabase/storeOffers";
+import { deleteStoreOffer, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 
 interface SmartOffer {
   id: string;
@@ -25,20 +24,63 @@ interface SmartOffer {
   endDate: string;
   startAt?: number;
   endAt?: number;
+  cloudStatus?: "draft" | "active" | "paused" | "expired";
 }
 
 type OffersTab = "active" | "expired";
 
 export default function SmartOffersList() {
   const [, navigate] = useLocation();
-  const [legacySavedOffers, setLegacySavedOffers] = useShopFeatureState<SmartOffer[]>("abu_raghwa_saved_offers", []);
-  const savedOffersQuery = trpc.offers.list.useQuery(undefined, { staleTime: 0, refetchOnMount: "always", refetchInterval: 30_000, retry: false });
-  const savedOffers = (savedOffersQuery.data as SmartOffer[] | null | undefined) ?? legacySavedOffers;
+  const [savedOffers, setSavedOffers] = useState<SmartOffer[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<OffersTab>("active");
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const deleteOfferMutation = trpc.offers.delete.useMutation();
   const trpcUtils = trpc.useUtils();
+
+  const fromCloudOffer = (row: CloudStoreOffer): SmartOffer => {
+    const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
+    const items = Array.isArray(data.items) ? data.items : [];
+    return {
+      ...(data as unknown as SmartOffer),
+      id: row.id,
+      title: row.title,
+      strategyName: String(data.strategyName || row.strategy || "عرض محفوظ"),
+      items: items as SmartOffer["items"],
+      description: String(data.description || row.public_description || row.description || ""),
+      startDate: String(data.startDate || row.start_date || ""),
+      endDate: String(data.endDate || row.ends_at || row.expires_at || ""),
+      startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined,
+      endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined,
+      cloudStatus: row.status,
+    };
+  };
+
+  const loadOffers = useCallback(async (manual = false) => {
+    manual ? setIsRefreshing(true) : setIsLoading(true);
+    setLoadError(null);
+    try {
+      const rows = await listStoreOffers();
+      setSavedOffers(rows.map(fromCloudOffer));
+      if (manual) toast.success("تم تحديث العروض من السحابة بنجاح");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "تعذر جلب العروض من السحابة.";
+      setLoadError(message);
+      toast.error(`تعذر تحميل العروض: ${message}`);
+    } finally {
+      setIsLoading(false);
+      setIsRefreshing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadOffers();
+    const timer = window.setInterval(() => void loadOffers(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [loadOffers]);
 
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
@@ -49,7 +91,7 @@ export default function SmartOffersList() {
     const activeOffers: SmartOffer[] = [];
     const expiredOffers: SmartOffer[] = [];
     savedOffers.forEach((offer) => {
-      if (getOfferExpiryInfo(offer, now).status === "active") activeOffers.push(offer);
+      if (offer.cloudStatus === "active" && getOfferExpiryInfo(offer, now).status === "active") activeOffers.push(offer);
       else expiredOffers.push(offer);
     });
     return { activeOffers, expiredOffers };
@@ -62,9 +104,9 @@ export default function SmartOffersList() {
     if (!confirmed) return;
 
     try {
-      await deleteOfferMutation.mutateAsync({ id: offer.id });
-      try { await deleteStoreOffer(offer.id); } catch { toast.warning("تم حذف العرض من المسار الأساسي، لكن تعذر حذف النسخة السحابية الثانوية."); }
-      setLegacySavedOffers(previous => previous.filter((item) => item.id !== offer.id));
+      await deleteStoreOffer(offer.id);
+      try { await deleteOfferMutation.mutateAsync({ id: offer.id }); } catch { toast.warning("تم حذف العرض السحابي، لكن تعذر حذف النسخة القديمة."); }
+      setSavedOffers(previous => previous.filter((item) => item.id !== offer.id));
       await trpcUtils.offers.list.invalidate();
 
       try {
@@ -84,7 +126,7 @@ export default function SmartOffersList() {
 
   const renderOfferCard = (offer: SmartOffer) => {
     const expiry = getOfferExpiryInfo(offer, now);
-    const isActive = expiry.status === "active";
+    const isActive = offer.cloudStatus === "active" && expiry.status === "active";
     const isExpanded = expandedOfferId === offer.id;
 
     return (
@@ -158,7 +200,10 @@ export default function SmartOffersList() {
             <h1 className="flex items-center gap-2 text-2xl font-black text-slate-900"><History className="h-6 w-6 text-orange-600" /> قائمة العروض الذكية</h1>
             <p className="mt-1 text-sm text-slate-600">راجع العروض المتاحة والمنتهية، وافتح التفاصيل أو احذف ما لم تعد تحتاجه.</p>
           </div>
-          <Button type="button" variant="outline" onClick={() => navigate("/smart-offers")} className="border-slate-300 bg-white">
+              <Button type="button" variant="outline" onClick={() => void loadOffers(true)} disabled={isRefreshing} className="border-slate-300 bg-white">
+                <RefreshCw className={`ml-1 h-4 w-4 ${isRefreshing ? "animate-spin" : ""}`} /> تحديث يدوي
+              </Button>
+              <Button type="button" variant="outline" onClick={() => navigate("/smart-offers")} className="border-slate-300 bg-white">
             <ArrowLeft className="ml-1 h-4 w-4" /> العودة للعروض الذكية
           </Button>
         </header>
@@ -183,7 +228,11 @@ export default function SmartOffersList() {
             <Clock3 className="h-5 w-5 text-slate-400" />
           </div>
 
-          {visibleOffers.length === 0 ? (
+          {isLoading ? (
+            <div className="py-14 text-center text-slate-500">جارٍ جلب العروض من السحابة...</div>
+          ) : loadError ? (
+            <div className="py-14 text-center"><p className="font-bold text-red-700">تعذر تحميل العروض من السحابة.</p><p className="mt-2 text-sm text-red-600">{loadError}</p><Button type="button" className="mt-4" onClick={() => void loadOffers(true)}>إعادة المحاولة</Button></div>
+          ) : visibleOffers.length === 0 ? (
             <div className="py-14 text-center">
               <Sparkles className="mx-auto h-10 w-10 text-orange-300" />
               <p className="mt-3 font-bold text-slate-700">{activeTab === "active" ? "لا توجد عروض متاحة حاليًا." : "لا توجد عروض منتهية حاليًا."}</p>

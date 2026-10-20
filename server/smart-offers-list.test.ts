@@ -18,8 +18,9 @@ describe("قائمة إدارة العروض الذكية", () => {
     expect(listPage).toContain("عرض التفاصيل");
     expect(listPage).toContain("حذف العرض");
     expect(listPage).toContain("deleteOfferMutation.mutateAsync");
-    expect(listPage).toContain("trpc.offers.list.useQuery");
-    expect(listPage).toContain("setLegacySavedOffers(previous => previous.filter");
+    expect(listPage).toContain("listStoreOffers");
+    expect(listPage).toContain("تحديث يدوي");
+    expect(listPage).toContain("setSavedOffers(previous => previous.filter");
     expect(smartOffers).toContain("createOfferId(\"offer\")");
     expect(smartOffers).toContain("previous => [finalOffer, ...previous.filter");
     expect(database).toContain("mergeSharedOfferRecords");

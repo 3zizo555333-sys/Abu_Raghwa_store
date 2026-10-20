@@ -2,6 +2,7 @@ import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./clie
 import { getActiveShopContext } from "./products";
 import type { Database, Json } from "./database.types";
 import { writePersistentCloudCache } from "@/lib/persistentCloudCache";
+import { createOfferId } from "@/lib/offerIds";
 
 export type CloudOfferOrder = Database["public"]["Tables"]["offer_orders"]["Row"];
 export type CloudStoreOffer = Database["public"]["Tables"]["store_offers"]["Row"];
@@ -26,17 +27,18 @@ function toIso(value?: number) {
   return Number.isFinite(value) && Number(value) > 0 ? new Date(Number(value)).toISOString() : null;
 }
 
-export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
+export async function saveStoreOffer(offer: OfferRecord): Promise<CloudStoreOffer> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext(true);
   const user = await getSupabaseClient().auth.getUser();
   const title = String(offer.title || "").trim();
   if (!title) throw new Error("لا يمكن حفظ عرض بلا عنوان.");
+  const id = String(offer.id || "").trim() || createOfferId("offer");
   const originalPrice = typeof offer.originalPrice === "number" && Number.isFinite(offer.originalPrice) ? offer.originalPrice : Number((offer.offerData.originalTotalRetail as number | undefined) || 0);
   const offerPrice = typeof offer.offerPrice === "number" && Number.isFinite(offer.offerPrice) ? offer.offerPrice : Number((offer.offerData.offerPrice as number | undefined) || 0);
   const offerData = JSON.parse(JSON.stringify(offer.offerData || {})) as Json;
   const payload = {
-    id: offer.id,
+    id,
     store_id: shopId,
     shop_id: shopId,
     title,
@@ -45,7 +47,7 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
     strategy: offer.strategy || String((offer.offerData.strategyName as string | undefined) || ""),
     original_price: Number.isFinite(originalPrice) ? originalPrice : 0,
     offer_price: Number.isFinite(offerPrice) ? offerPrice : 0,
-    start_date: offer.startDate || null,
+    start_date: toIso(offer.startAt) || null,
     expires_at: toIso(offer.endAt),
     points_reward: Math.max(0, Math.trunc(Number(offer.pointsReward ?? offer.offerData.loyaltyPoints ?? 0) || 0)),
     public_description: offer.description || "",
@@ -55,17 +57,22 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<void> {
     status: offer.status || "active",
     created_by: user.data.user?.id || null,
   };
-  const result = await getSupabaseClient().from("store_offers").upsert(payload, { onConflict: "id", ignoreDuplicates: false }).select("id,store_id,title,status,updated_at").single();
-  requireCloudResult(result);
+  const result = await getSupabaseClient().from("store_offers").upsert(payload, { onConflict: "id", ignoreDuplicates: false }).select("*").single();
+  return requireCloudResult(result) as CloudStoreOffer;
 }
 
-export async function listActiveStoreOffers(): Promise<CloudStoreOffer[]> {
+export async function listStoreOffers(): Promise<CloudStoreOffer[]> {
   assertCloudOnline();
-  const { shopId } = await getActiveShopContext();
-  const result = await getSupabaseClient().from("store_offers").select("id,store_id,title,banner_title,public_description,offer_data,starts_at,ends_at,status,created_by,created_at,updated_at,deleted_at").eq("store_id", shopId).eq("status", "active").is("deleted_at", null).order("created_at", { ascending: false }).limit(50);
+  const { shopId } = await getActiveShopContext(true);
+  const result = await getSupabaseClient().from("store_offers").select("*").eq("store_id", shopId).is("deleted_at", null).order("created_at", { ascending: false }).limit(200);
   const offers = (requireCloudResult(result) || []) as CloudStoreOffer[];
   await writePersistentCloudCache("public-store-offers", offers);
   return offers;
+}
+
+export async function listActiveStoreOffers(): Promise<CloudStoreOffer[]> {
+  const offers = await listStoreOffers();
+  return offers.filter(offer => offer.status === "active");
 }
 
 export async function mirrorPublicOfferOrder(input: { id: string; offerId: string; customerName: string; customerCode: string; customerPhone?: string | null; pointsCost?: number }): Promise<void> {
