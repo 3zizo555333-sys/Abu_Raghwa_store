@@ -1,5 +1,5 @@
 import { browserState } from "@/lib/browserState";
-import React, { useMemo, useState, useEffect } from "react";
+import React, { useMemo, useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -212,6 +212,16 @@ export default function SmartOffers() {
   const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => { setCustomersList([]); setCatalogSessionReady(false); } });
   const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
   const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
+  const knownOfferRequestIds = useRef<Set<string> | null>(null);
+  useEffect(() => {
+    const pending = (offerPurchaseRequestsQuery.data || []).filter(request => request.status === "pending");
+    const ids = new Set(pending.map(request => request.id));
+    if (knownOfferRequestIds.current) {
+      const fresh = pending.find(request => !knownOfferRequestIds.current?.has(request.id));
+      if (fresh) toast.info(`طلب شراء عرض جديد من العميل ${fresh.customerName}`, { duration: 7000 });
+    }
+    knownOfferRequestIds.current = ids;
+  }, [offerPurchaseRequestsQuery.data]);
   const redeemLoyaltyReward = trpc.catalog.redeemLoyaltyReward.useMutation();
   const manuallyAwardReferralPoints = trpc.catalog.manuallyAwardReferralPoints.useMutation();
   const generateOfferBannerTitle = trpc.system.generateOfferBannerTitle.useMutation();
@@ -906,6 +916,7 @@ export default function SmartOffers() {
                           <p className="font-black text-gray-900">{request.offerTitle}</p>
                           <p className="text-sm text-gray-700">العميل: <strong>{request.customerName}</strong> · كود الولاء: <strong dir="ltr" className="inline-block">{request.customerCode}</strong></p>
                           {request.customerPhone && <p className="text-xs text-gray-600">الهاتف: {request.customerPhone}</p>}
+                          {request.customerNote && <p className="text-xs font-bold text-blue-700">ملاحظات العميل: {request.customerNote}</p>}
                           {itemNames && <p className="text-xs text-gray-600">الأصناف: {itemNames}</p>}
                           <p className="text-xs text-gray-600">سعر العرض: {price} ج.م · نقاط العرض: {request.offerPoints} · وصل الطلب: {new Date(request.createdAt).toLocaleString("ar-EG")}</p>
                           {request.status === "approved" && <p className="text-xs font-bold text-green-700">تمت الموافقة وإضافة {request.loyaltyPointsAwarded} نقطة إلى البطاقة.</p>}

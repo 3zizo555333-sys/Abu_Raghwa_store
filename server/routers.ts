@@ -176,7 +176,7 @@ export const appRouter = router({
       .input(z.object({ name: z.string().min(2).max(255), phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional(), referralPhone: z.string().max(32).optional() }))
       .mutation(async ({ input }) => db.registerOfferCustomer(input)),
     createOfferPurchaseRequest: publicProcedure
-      .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48) }))
+      .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48), customerNote: z.string().max(1000).optional() }))
       .mutation(async ({ input }) => db.createOfferPurchaseRequest(input)),
     getOfferPurchaseStatus: publicProcedure
       .input(z.object({ id: z.string().min(16).max(96), customerCode: z.string().min(4).max(48) }))

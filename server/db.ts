@@ -734,7 +734,7 @@ export async function manuallyAwardReferralPoints(input: { phone?: string; custo
   return { profile: getCustomerLoyaltyProfileFromRow(row), pointsAwarded: points };
 }
 
-export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string }) {
+export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string; customerNote?: string }) {
   const database = await getDb();
   if (!database) throw new Error("قاعدة البيانات غير متاحة لتسجيل طلب العرض الآن");
   const offerRow = await getSharedOffer(input.offerId);
@@ -791,6 +791,7 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
       offerPoints,
       customerName: profile.name,
       customerPhone: profile.phone || null,
+      customerNote: input.customerNote?.trim().slice(0, 1000) || null,
       customerCode: profile.customerCode,
       status: "pending",
       loyaltyPointsAwarded: 0,

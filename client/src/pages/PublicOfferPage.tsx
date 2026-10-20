@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from "react";
 import { Sparkles, Gift, Star, Clock, Download, MessageCircle, ShoppingCart, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 import html2canvas from "html2canvas";
 import { trpc } from "@/lib/trpc";
@@ -9,7 +10,7 @@ import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry"
 import { buildLoyaltyPageHref } from "@/lib/loyaltyLookup";
 import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
 import { shouldDisableOfferPurchaseButton } from "@/lib/offerPurchaseUi";
-import { mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
+import { getPublicStoreOffer, mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
 
 interface SmartOffer {
   id: string;
@@ -28,6 +29,7 @@ interface SmartOffer {
   endAt?: number;
   qrCodeDataUrl?: string;
   loyaltyPoints?: number;
+  isActivated?: boolean;
 }
 
 interface CustomerLoyalty {
@@ -45,6 +47,7 @@ export default function PublicOfferPage() {
   const [loading, setLoading] = useState(true);
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
+  const [customerNote, setCustomerNote] = useState("");
   const [referralPhone, setReferralPhone] = useState("");
   const [customerCode, setCustomerCode] = useState("");
   const [isRegistered, setIsRegistered] = useState(false);
@@ -72,34 +75,18 @@ export default function PublicOfferPage() {
     setOfferId(id);
   }, []);
 
-  // استعلام تريكس لجلب العرض من الخادم السحابي
-  const { data: serverOfferJson, isLoading: serverLoading, isSuccess: serverOfferLookupSucceeded } = trpc.offers.get.useQuery(
-    { id: offerId || "" },
-    { enabled: !!offerId }
-  );
-
   useEffect(() => {
-    if (serverLoading) return;
-
-    if (serverOfferJson) {
-      try {
-        const parsed = JSON.parse(serverOfferJson);
-        setOffer(parsed);
-        setLoading(false);
-        return;
-      } catch (e) {}
-    }
-
-    // A successful server miss means the manager deliberately removed this
-    // coupon; do not resurrect it from a customer's stale local cache.
-    if (serverOfferLookupSucceeded) {
-      setOffer(null);
+    if (!offerId) return;
+    let active = true;
+    void getPublicStoreOffer(offerId).then(row => {
+      if (!active) return;
+      if (!row) { setOffer(null); setLoading(false); return; }
+      const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
-      return;
-    }
-
-    setLoading(false);
-  }, [serverOfferJson, serverLoading, serverOfferLookupSucceeded, offerId]);
+    }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
+    return () => { active = false; };
+  }, [offerId]);
 
   useEffect(() => {
     const profile = refreshedCustomerProfileQuery.data;
@@ -157,7 +144,7 @@ export default function PublicOfferPage() {
       return;
     }
     try {
-      const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code });
+      const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code, customerNote: customerNote.trim() || undefined });
       try {
         await mirrorPublicOfferOrder({ id: request.id, offerId: offer.id, customerName: customerRecord?.name || customerName, customerCode: code, customerPhone: customerRecord?.phone || customerPhone, pointsCost: offer.loyaltyPoints });
       } catch {
@@ -193,7 +180,7 @@ export default function PublicOfferPage() {
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
   };
 
-  if (loading || serverLoading) {
+  if (loading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-amber-50 to-orange-100 flex items-center justify-center p-4" dir="rtl">
         <div className="text-center space-y-3">
@@ -336,6 +323,7 @@ export default function PublicOfferPage() {
             )}
             {isRegistered && (
               <div className="space-y-2 pt-1">
+                <Textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} maxLength={1000} placeholder="ملاحظات اختيارية: توصيل أو استلام من المحل" className="bg-white text-xs" />
                 {offerPurchaseStatusQuery.data?.status === "pending" && (
                   <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-900">
                     طلبك وصل إلى المحل وبانتظار تأكيد إتمام الشراء. ستضاف النقاط إلى كودك بعد الموافقة.

@@ -79,7 +79,7 @@ describe("حماية المسارات المالية والحساسة", () => {
 
   it("لا يستعيد العرض أو العميل أو طلب الشراء من Web Storage", () => {
     expect(publicOfferSource).not.toMatch(/localStorage|sessionStorage|indexedDB/i);
-    expect(publicOfferSource).toContain("trpc.offers.get.useQuery");
+    expect(publicOfferSource).toContain("getPublicStoreOffer");
     expect(publicOfferSource).toContain("trpc.catalog.getPublicLoyaltyRewardLevels.useQuery");
   });
 });

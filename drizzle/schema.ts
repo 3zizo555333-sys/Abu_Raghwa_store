@@ -106,6 +106,7 @@ export const offerPurchaseRequests = mysqlTable("offer_purchase_requests", {
   offerPoints: int("offerPoints").default(0).notNull(),
   customerName: varchar("customerName", { length: 255 }).notNull(),
   customerPhone: varchar("customerPhone", { length: 32 }),
+  customerNote: text("customerNote"),
   customerCode: varchar("customerCode", { length: 48 }).notNull(),
   status: mysqlEnum("status", ["pending", "approved", "cancelled"]).default("pending").notNull(),
   loyaltyPointsAwarded: int("loyaltyPointsAwarded").default(0).notNull(),

@@ -73,8 +73,15 @@ export async function listStoreOffers(): Promise<CloudStoreOffer[]> {
 }
 
 export async function listActiveStoreOffers(): Promise<CloudStoreOffer[]> {
-  const offers = await listStoreOffers();
-  return offers.filter(offer => offer.status === "active");
+  assertCloudOnline();
+  const result = await getSupabaseClient().from("store_offers").select("*").eq("is_active", true).eq("status", "active").is("deleted_at", null).order("created_at", { ascending: false }).limit(200);
+  return (requireCloudResult(result) || []) as CloudStoreOffer[];
+}
+
+export async function getPublicStoreOffer(id: string): Promise<CloudStoreOffer | null> {
+  assertCloudOnline();
+  const result = await getSupabaseClient().from("store_offers").select("*").eq("id", id).eq("is_active", true).eq("status", "active").is("deleted_at", null).maybeSingle();
+  return (requireCloudResult(result) || null) as CloudStoreOffer | null;
 }
 
 export async function getLatestActiveStoreOffer(): Promise<CloudStoreOffer | null> {
