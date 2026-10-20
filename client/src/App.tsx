@@ -296,8 +296,8 @@ function App() {
               {/* Legacy snapshot synchronization is retired. Migrated pages use
                   typed Supabase tables/RPCs; remaining pages must not upload
                   local business-data snapshots. */}
-              {hasStaffSession && <VoiceCommandHandler enabled />}
-              {hasStaffSession && user && <CustomQuickShortcuts userId={user.id} role={user.role} />}
+              {!isPublicCustomerRoute && hasStaffSession && <VoiceCommandHandler enabled />}
+              {!isPublicCustomerRoute && hasStaffSession && user && <CustomQuickShortcuts userId={user.id} role={user.role} />}
               {isPublicCustomerRoute ? <Router key="public-customer" /> : <AccessControlGate><Router key={routeScopeKey} /></AccessControlGate>}
             </TooltipProvider>
           </ThemeProvider>

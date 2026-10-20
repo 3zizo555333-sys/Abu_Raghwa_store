@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Gift, Star, Clock, Download, MessageCircle, ShoppingCart, CheckCircle2 } from "lucide-react";
+import { Sparkles, Gift, Star, Clock, Download, MessageCircle, Share2, ShoppingCart, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -178,6 +178,18 @@ export default function PublicOfferPage() {
     const publicUrl = window.location.href;
     const msg = `🎁 *عرض حصري من محلات أبو رغوة للمنظفات* 🎁\n\n✨ *${offer.title}*\n📌 نوع العرض: ${offer.strategyName}\n📝 ${offer.description}\n\n💰 السعر القطاعي: ${offer.originalTotalRetail} ج.م\n🔥 *سعر العرض الحصري: ${offer.offerPrice} ج.م*\n📉 التوفير: ${offer.discountAmount} ج.م (${offer.discountPercent}% خصم)\n\n🔗 *افتح الكوبون واكتسب نقاط ولاء:*\n${publicUrl}\n\n📞 للتواصل: 01069035599\n🎁 هنسيب علامة في بيتك!`;
     window.open(`https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
+  const handleShareOffer = async () => {
+    if (!offer) return;
+    const url = window.location.href;
+    const text = `🎁 ${offer.title} من أبو رغوة\nوفر ${offer.discountAmount} ج.م واحصل على ${offer.loyaltyPoints} نقطة. افتح العرض من هنا:`;
+    if (navigator.share) {
+      try { await navigator.share({ title: offer.title, text, url }); } catch { /* أغلق المستخدم نافذة المشاركة */ }
+    } else {
+      await navigator.clipboard?.writeText(`${text}\n${url}`);
+      toast.success("تم نسخ رابط العرض لمشاركته مع أصدقائك");
+    }
   };
 
   if (loading) {
@@ -376,6 +388,12 @@ export default function PublicOfferPage() {
             className="w-full bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-black py-4 rounded-2xl shadow-xl flex items-center justify-center gap-2 text-base"
           >
             <Download className="w-5 h-5" /> تحميل الكوبون كصورة PNG على هاتفك 📥
+          </Button>
+          <Button
+            onClick={() => void handleShareOffer()}
+            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-3 rounded-2xl shadow-md flex items-center justify-center gap-2 text-sm"
+          >
+            <Share2 className="w-4 h-4" /> مشاركة العرض
           </Button>
           <Button
             onClick={handleShareWhatsApp}
