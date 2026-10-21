@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(12);
+select plan(13);
 
 select ok((select relrowsecurity from pg_class where oid='public.invoice_intents'::regclass), 'invoice intents retain RLS');
 select ok((select relforcerowsecurity from pg_class where oid='public.invoice_intents'::regclass), 'invoice intents retain forced RLS');
@@ -23,7 +23,14 @@ select ok(not exists (
   select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
   where n.nspname='public' and p.prosecdef
     and has_function_privilege('anon',p.oid,'EXECUTE')
+    and p.oid is distinct from to_regprocedure('public.get_public_loyalty_experience(text,text)')
 ), 'SECURITY DEFINER functions are not executable by anon');
+select ok(exists (
+  select 1 from pg_proc p join pg_namespace n on n.oid=p.pronamespace
+  where n.nspname='public' and p.oid=to_regprocedure('public.get_public_loyalty_experience(text,text)')
+    and p.prosecdef and has_function_privilege('anon',p.oid,'EXECUTE')
+    and coalesce(p.proconfig, '{}'::text[]) @> array['search_path=""']::text[]
+), 'the intentionally public loyalty-experience RPC remains narrowly scoped with an empty search_path');
 select ok(to_regprocedure('public.complete_invoice_intent(uuid,uuid)') is not null and to_regprocedure('public.create_apartment_inventory_items_bulk(uuid,uuid,jsonb)') is not null, 'atomic checkout and bulk RPCs remain available');
 
 select * from finish();
