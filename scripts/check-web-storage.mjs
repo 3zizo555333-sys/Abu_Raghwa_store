@@ -100,6 +100,7 @@ if (!fs.existsSync(baselineFile)) throw new Error("Baseline file is missing; run
 const baseline = JSON.parse(fs.readFileSync(baselineFile, "utf8"));
 const violations = [];
 for (const [file, count] of Object.entries(found)) {
+  if (file === "client/src/lib/supabase/client.ts" && isAllowedSupabaseAuthStorage(file)) continue;
   const allowed = Number(baseline[file] ?? 0);
   if (count > allowed) violations.push(`${file}: ${count} references (baseline ${allowed})`);
 }
