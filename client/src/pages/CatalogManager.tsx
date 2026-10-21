@@ -14,8 +14,9 @@ import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type Catalo
 import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
-import { getSignedProductImageUrl } from "@/lib/supabase/products";
+import { getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
+import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
 
 type CatalogOrder = {
   id: string;
@@ -75,7 +76,7 @@ export default function CatalogManager() {
     listCatalogDisplayData().then(data => {
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;
-      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, catalogVisible: false, loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl, imageStoragePath: product.imageStoragePath || undefined, version: product.version })));
+      setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.catalogCategory || product.category, company: product.catalogCompany || "أبو رغوة", catalogVisible: product.catalogVisible, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription, catalogDetailsUrl: product.catalogDetailsUrl, loyaltyPoints: product.catalogLoyaltyPoints, catalogImageUrl: product.imageUrl, imageStoragePath: product.imageStoragePath || undefined, version: product.version })));
       setRecipes((data.recipes as any[]).map(recipe => ({
         id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""),
         salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"),
@@ -220,9 +221,52 @@ export default function CatalogManager() {
 
   const updateRecipe = (id: string, patch: Partial<CatalogRecipe>) => setRecipes(current => (Array.isArray(current) ? current : []).map(recipe => recipe.id === id ? { ...recipe, ...patch } : recipe));
 
-  const saveRecipe = async (id: string) => {
-    const recipe = safeRecipes.find(item => item.id === id);
+  const saveRegisteredProductSettings = async (id: string, patch: Partial<CatalogProduct> = {}) => {
+    const original = safeProducts.find(item => item.id === id);
+    if (!original || typeof original.version !== "number") return toast.error("تعذر معرفة إصدار المنتج؛ حدّث الصفحة ثم أعد المحاولة.");
+    const next = { ...original, ...patch };
+    const detailsUrl = getSafeCatalogDetailsUrl(next.catalogDetailsUrl);
+    if (next.catalogDetailsUrl?.trim() && !detailsUrl) return toast.error("أدخل رابط تفاصيل يبدأ بـ http:// أو https://.");
+    setProducts(current => current.map(item => item.id === id ? next : item));
+    try {
+      const saved = await updateProductCatalogSettings({
+        id,
+        expectedVersion: original.version,
+        catalogVisible: next.catalogVisible === true,
+        catalogPrice: next.catalogPrice ?? null,
+        catalogOldPrice: next.catalogOldPrice ?? null,
+        catalogDescription: next.catalogDescription || "",
+        catalogDetailsUrl: detailsUrl,
+        catalogCategory: next.category || "",
+        catalogCompany: next.company || "أبو رغوة",
+        catalogLoyaltyPoints: Math.max(0, Math.floor(Number(next.loyaltyPoints) || 0)),
+      });
+      setProducts(current => current.map(item => item.id === id ? {
+        ...item,
+        version: saved.version,
+        catalogVisible: saved.catalogVisible,
+        catalogPrice: saved.catalogPrice ?? undefined,
+        catalogOldPrice: saved.catalogOldPrice ?? undefined,
+        catalogDescription: saved.catalogDescription,
+        catalogDetailsUrl: saved.catalogDetailsUrl,
+        category: saved.catalogCategory || saved.category,
+        company: saved.catalogCompany || "أبو رغوة",
+        loyaltyPoints: saved.catalogLoyaltyPoints,
+        catalogImageUrl: saved.imageUrl || item.catalogImageUrl,
+      } : item));
+      await removePersistentCloudCache("public-catalog-display-v1");
+      toast.success("تم حفظ إعدادات المنتج في الكتالوج");
+    } catch (error) {
+      setProducts(current => current.map(item => item.id === id ? original : item));
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات المنتج؛ أُعيدت القيمة السابقة.");
+    }
+  };
+
+  const saveRecipe = async (id: string, patch: Partial<CatalogRecipe> = {}) => {
+    const original = safeRecipes.find(item => item.id === id);
+    const recipe = original ? { ...original, ...patch } : undefined;
     if (!recipe || typeof recipe.version !== "number") return toast.error("تعذر معرفة إصدار التركيبة؛ حدّث الصفحة ثم أعد المحاولة.");
+    if (Object.keys(patch).length) updateRecipe(id, patch);
     const detailsUrl = getSafeCatalogDetailsUrl(recipe.catalogDetailsUrl);
     if (recipe.catalogDetailsUrl?.trim() && !detailsUrl) return toast.error("أدخل رابط تفاصيل يبدأ بـ http:// أو https://.");
     try {
@@ -237,8 +281,12 @@ export default function CatalogManager() {
         catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
         catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
         loyaltyPoints: saved.loyalty_points });
+      await removePersistentCloudCache("public-catalog-display-v1");
       toast.success("تم حفظ إعدادات التركيبة في Supabase");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات الكتالوج"); }
+    } catch (error) {
+      if (Object.keys(patch).length && original) updateRecipe(id, original);
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ إعدادات الكتالوج");
+    }
   };
 
   const addRegisteredProduct = () => {
@@ -503,7 +551,7 @@ export default function CatalogManager() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2"><label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={product.catalogVisible === true} onChange={event => updateProduct(product.id, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label>{product.catalogSource === "manual" && <Button size="sm" variant="outline" onClick={() => deleteManualProduct(product.id)} className="border-red-200 text-red-600 hover:bg-red-50"><Trash2 className="ml-1 h-3.5 w-3.5" />حذف اليدوي</Button>}</div>
+                      <div className="flex flex-wrap items-center gap-2"><label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={product.catalogVisible === true} onChange={event => product.catalogSource === "product" ? void saveRegisteredProductSettings(product.id, { catalogVisible: event.target.checked }) : void updateProduct(product.id, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label>{product.catalogSource === "manual" && <Button size="sm" variant="outline" onClick={() => deleteManualProduct(product.id)} className="border-red-200 text-red-600 hover:bg-red-50"><Trash2 className="ml-1 h-3.5 w-3.5" />حذف اليدوي</Button>}</div>
                     </div>
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-7">
                       <select value={product.category || ""} onChange={event => updateProduct(product.id, { category: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الفئة</option>{safeCategories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select>
@@ -514,6 +562,7 @@ export default function CatalogManager() {
                       <Input type="number" min="0" step="1" value={product.loyaltyPoints ?? ""} onChange={event => updateProduct(product.id, { loyaltyPoints: Math.max(0, Math.floor(Number(event.target.value) || 0)) })} placeholder="نقاط الولاء لكل وحدة" />
                       <Input value={product.catalogDetailsUrl ?? ""} onChange={event => updateProduct(product.id, { catalogDetailsUrl: event.target.value })} onBlur={event => updateProduct(product.id, { catalogDetailsUrl: getSafeCatalogDetailsUrl(event.target.value) })} placeholder="رابط فيديو أو منشور التعريف" dir="ltr" />
                     </div>
+                    {product.catalogSource === "product" && <Button type="button" size="sm" className="mt-3 bg-orange-600 hover:bg-orange-700" onClick={() => void saveRegisteredProductSettings(product.id)}>حفظ إعدادات المنتج في Supabase</Button>}
                   </div>
                 );
               })}

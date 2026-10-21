@@ -32,9 +32,17 @@ export type ProductRow = {
   quantity: number;
   min_quantity: number;
   image_id: string | null;
-  catalog_image_path: string | null;
-  loyalty_points: number;
-  version: number;
+	  catalog_image_path: string | null;
+	  loyalty_points: number;
+	catalog_visible: boolean;
+	catalog_price: number | null;
+	catalog_old_price: number | null;
+	catalog_description: string;
+	catalog_details_url: string;
+	catalog_category: string;
+	catalog_company: string;
+	catalog_loyalty_points: number;
+	  version: number;
   created_by: string | null;
   updated_by: string | null;
   created_at: string;
@@ -81,7 +89,7 @@ export type Database = {
       invoice_loyalty_points: Table<{ id: string; shop_id: string; invoice_id: string; customer_id: string | null; points_earned: number; created_at: string }>;
       invoice_returns: Table<{ id: string; shop_id: string; invoice_id: string; customer_id: string | null; idempotency_key: string; status: "completed"; refund_total: number; points_reversed: number; reason: string; created_by: string | null; created_at: string }>;
       invoice_return_items: Table<{ id: string; return_id: string; shop_id: string; invoice_item_id: string; product_id: string | null; product_name_snapshot: string; quantity: number; stock_quantity_delta: number; refund_amount: number; points_reversed: number; created_at: string }>;
-      loyalty_point_ledger: Table<{ id: string; shop_id: string; customer_id: string; invoice_id: string | null; invoice_item_id: string | null; return_id: string | null; points_delta: number; entry_type: "invoice_earned" | "return_reversed" | "manual_adjustment"; description: string; created_by: string | null; created_at: string }>;
+      loyalty_point_ledger: Table<{ id: string; shop_id: string; customer_id: string; invoice_id: string | null; invoice_item_id: string | null; return_id: string | null; points_delta: number; requested_points_delta: number | null; entry_type: "invoice_earned" | "return_reversed" | "manual_adjustment"; source: "cashier" | "catalog" | "offer" | "reward" | "referral" | "manual"; source_id: string | null; idempotency_key: string | null; description: string; created_by: string | null; created_at: string }>;
       audit_events: Table<{ id: number; shop_id: string; actor_id: string | null; action: string; entity_type: string; entity_id: string | null; changed_fields: string[]; details: Json; created_at: string }>;
       shop_change_events: Table<{ id: number; shop_id: string; entity_type: string; entity_id: string; operation: "INSERT" | "UPDATE" | "DELETE"; version: number | null; created_at: string }>;
       shortage_items: Table<{ id: string; shop_id: string; store_id: string; category_id: string | null; product_id: string | null; product_name_snapshot: string; item_name: string; current_quantity: number; min_quantity: number; shortage: number; quantity: number; unit: string; reported_at: string; status: "pending" | "ordered" | "received"; priority: "low" | "medium" | "high"; notes: string; category: string; image_url: string | null; customer_name: string | null; customer_phone: string | null; version: number; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
@@ -124,6 +132,7 @@ export type Database = {
       list_products_page: { Args: { p_shop_id: string; p_after_created_at?: string | null; p_after_id?: string | null; p_search?: string | null; p_category_id?: string | null; p_limit?: number }; Returns: Json };
       create_product: { Args: { p_shop_id: string; p_payload: Json }; Returns: ProductRow };
       update_product: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_payload: Json }; Returns: ProductRow };
+      update_product_catalog_settings: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_payload: Json }; Returns: ProductRow };
       soft_delete_products: { Args: { p_shop_id: string; p_product_ids: string[] }; Returns: number };
       register_product_image: { Args: { p_shop_id: string; p_product_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
       create_invoice_with_stock: { Args: { p_shop_id: string; p_idempotency_key: string; p_items: Json; p_sale_type?: string; p_payment_method?: string; p_customer_name?: string; p_customer_phone?: string; p_discount_type?: string; p_discount_value?: number }; Returns: Json };
@@ -161,7 +170,8 @@ create_invoice_return: { Args: { p_shop_id: string; p_invoice_id: string; p_idem
 	      create_apartment_inventory_items_bulk: { Args: { p_shop_id: string; p_request_id: string; p_items: Json }; Returns: Json };
 	      move_apartment_inventory_items_category: { Args: { p_shop_id: string; p_expected_items: Json; p_category: string }; Returns: Json };
 	      register_apartment_inventory_image: { Args: { p_shop_id: string; p_item_id: string; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: string };
-      save_formulation_with_ingredients: { Args: { p_shop_id: string; p_formulation_id: string | null; p_expected_version: number | null; p_formulation: Json; p_ingredients: Json }; Returns: Json };
+	      save_formulation_with_ingredients: { Args: { p_shop_id: string; p_formulation_id: string | null; p_expected_version: number | null; p_formulation: Json; p_ingredients: Json }; Returns: Json };
+	      save_supplier_invoice_v1: { Args: { p_store_id: string; p_category_id: string | null; p_supplier_name: string; p_invoice_date: string; p_image_url: string; p_notes: string; p_items: Json }; Returns: Json };
 	      register_formulation_image: { Args: { p_shop_id: string; p_formulation_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_content_type: string; p_size_bytes: number }; Returns: Json };
 	      register_public_formulation_image: { Args: { p_shop_id: string; p_formulation_id: string; p_expected_version: number; p_image_id: string; p_storage_path: string; p_public_url: string; p_content_type: string; p_size_bytes: number }; Returns: Json };
 	      set_shop_feature_lock_pin: { Args: { p_shop_id: string; p_feature_key: string; p_pin: string }; Returns: boolean };

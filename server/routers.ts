@@ -92,30 +92,44 @@ export const appRouter = router({
 
   invoiceOCR: router({
     parse: publicProcedure
-      .input(z.object({ imageUrl: z.string().url().max(4096), supplierName: z.string().max(180).optional(), invoiceDate: z.string().max(32).optional() }))
+      .input(z.object({ imageDataUrl: z.string().min(64).max(3_000_000), supplierName: z.string().max(180).optional(), invoiceDate: z.string().max(32).optional() }))
       .mutation(async ({ input }) => {
+        let image: ReturnType<typeof parseInvoiceDataUrl>;
+        try { image = parseInvoiceDataUrl(input.imageDataUrl); }
+        catch { throw new TRPCError({ code: "BAD_REQUEST", message: "صيغة صورة الفاتورة غير صالحة؛ التقط الصورة من الكاميرا أو اختر JPEG من المعرض." }); }
+        if (image.mimeType !== "image/jpeg" || image.bytes.length > 1_800_000) {
+          throw new TRPCError({ code: "BAD_REQUEST", message: "يجب إرسال صورة فاتورة JPEG مضغوطة لا تتجاوز 1.8 ميجابايت." });
+        }
         try {
           const response = await invokeLLM({
             model: "gemini-3-flash-preview",
-            maxTokens: 1600,
+            maxTokens: 2200,
             messages: [
-              { role: "system", content: "أنت قارئ فواتير مشتريات عربي دقيق. اقرأ الفاتورة المطبوعة أو المكتوبة بخط اليد. استخرج البنود الظاهرة فقط ولا تخترع أرقاماً. إذا كان الرقم غير مقروء استخدم 0 وثقة منخفضة. أعد JSON مطابقاً للمخطط فقط." },
+              { role: "system", content: "أنت قارئ فواتير مشتريات عربي دقيق. اقرأ الفاتورة المطبوعة أو المكتوبة بخط اليد. استخرج البنود الظاهرة فقط ولا تخترع أرقاماً. أعد كائن JSON فقط بالشكل {\"items\":[{\"name\":string,\"barcode\":string,\"quantity\":number,\"unitCost\":number,\"totalCost\":number,\"confidence\":number}],\"totalAmount\":number}. إذا لم تستطع قراءة قيمة استخدم 0 وثقة منخفضة. اجعل الكمية وسعر الوحدة والإجمالي أرقاماً صافية بلا عملة أو فواصل آلاف." },
               { role: "user", content: [
-                { type: "text", text: `اقرأ هذه الفاتورة. المورد: ${input.supplierName || "غير معروف"}. التاريخ: ${input.invoiceDate || "غير معروف"}. لكل بند أعد اسم الصنف والباركود إن ظهر والكمية وسعر شراء الوحدة والإجمالي.` },
-                { type: "image_url", image_url: { url: input.imageUrl, detail: "high" } },
+                { type: "text", text: `اقرأ هذه الفاتورة. المورد: ${input.supplierName || "غير معروف"}. التاريخ: ${input.invoiceDate || "غير معروف"}. استخرج لكل بند اسم الصنف والباركود إن ظهر والكمية وسعر شراء الوحدة والإجمالي.` },
+                { type: "image_url", image_url: { url: input.imageDataUrl, detail: "high" } },
               ] },
             ],
-            response_format: { type: "json_schema", json_schema: { name: "supplier_invoice", strict: true, schema: { type: "object", properties: { items: { type: "array", items: { type: "object", properties: { name: { type: "string" }, barcode: { type: "string" }, quantity: { type: "number" }, unitCost: { type: "number" }, totalCost: { type: "number" }, confidence: { type: "number" } }, required: ["name", "barcode", "quantity", "unitCost", "totalCost", "confidence"], additionalProperties: false } }, totalAmount: { type: "number" } }, required: ["items", "totalAmount"], additionalProperties: false } } },
+            response_format: { type: "json_object" },
           });
           const content = response.choices[0]?.message.content;
-          const parsed = typeof content === "string" ? JSON.parse(content) as { items?: unknown[]; totalAmount?: number } : {};
+          const text = typeof content === "string" ? content : Array.isArray(content) ? content.filter(part => part.type === "text").map(part => part.text).join("\n") : "";
+          if (!text.trim()) throw new Error("OCR returned an empty response");
+          const parsed = JSON.parse(text) as { items?: unknown[]; totalAmount?: number };
           const items = Array.isArray(parsed.items) ? parsed.items.map((item) => {
             const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
             return { name: String(row.name || "").trim(), barcode: String(row.barcode || "").trim(), quantity: Math.max(0, Number(row.quantity) || 0), unitCost: Math.max(0, Number(row.unitCost) || 0), totalCost: Math.max(0, Number(row.totalCost) || 0), confidence: Math.max(0, Math.min(1, Number(row.confidence) || 0)) };
           }).filter(item => item.name) : [];
+          if (!items.length) throw new Error("OCR returned no invoice items");
           return { items, totalAmount: Math.max(0, Number(parsed.totalAmount) || items.reduce((sum, item) => sum + item.totalCost, 0)) };
-        } catch {
-          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تحليل صورة الفاتورة الآن؛ راجع البنود يدوياً وأعد المحاولة." });
+        } catch (error) {
+          const message = error instanceof Error ? error.message : "unknown error";
+          console.error("[invoiceOCR.parse]", message.slice(0, 400));
+          if (/OPENAI_API_KEY is not configured|not configured/i.test(message)) {
+            throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة قراءة الفواتير غير مهيأة على الخادم؛ تحقّق من إعداد اتصال الذكاء الاصطناعي." });
+          }
+          throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذرت قراءة بنود الفاتورة. تأكد من وضوح الصورة واتصال الخدمة ثم أعد المحاولة." });
         }
       }),
   }),
@@ -235,13 +249,13 @@ export const appRouter = router({
       }),
     createOrder: publicProcedure
       .input(z.object({
-        id: z.string().min(6),
+        id: z.string().min(6).max(100),
         customerName: z.string().min(2).max(255),
         customerPhone: z.string().min(7).max(32),
         customerCode: z.string().max(48).optional(),
         address: z.string().max(1000).optional(),
         note: z.string().max(1000).optional(),
-        itemsJson: z.string().min(2),
+        itemsJson: z.string().min(2).max(100_000),
         totalAmount: z.number().nonnegative(),
         fulfillmentMethod: z.enum(["pickup", "delivery"]).default("pickup"),
         priceAdjustmentPercent: z.number().min(0).max(500).default(0),

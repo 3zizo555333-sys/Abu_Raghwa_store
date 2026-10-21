@@ -58,3 +58,14 @@ export async function writePersistentCloudCache<T>(key: string, value: T): Promi
     // A cache failure must never block the live Supabase path.
   }
 }
+
+export async function removePersistentCloudCache(key: string): Promise<void> {
+  try { browserStorage()?.removeItem(key); } catch { /* Storage may be unavailable. */ }
+  if (!canUseCache()) return;
+  try {
+    const cache = await window.caches.open(CACHE_NAME);
+    await cache.delete(new Request(`/__abu-raghwa-cache/${encodeURIComponent(key)}`));
+  } catch {
+    // Cache invalidation is best-effort; live Supabase reads remain authoritative.
+  }
+}

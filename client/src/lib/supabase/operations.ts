@@ -142,7 +142,7 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
   const id = await shopId();
   const client = getSupabaseClient();
   const [productResult, taxonomy, pricing, recipes] = await Promise.all([
-    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path").eq("shop_id", id).is("deleted_at", null).order("name").limit(200),
+    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points").eq("shop_id", id).is("deleted_at", null).order("name").limit(200),
     listCatalogTaxonomy(),
     getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
     client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version").eq("shop_id", id).is("deleted_at", null).limit(1000),
@@ -153,8 +153,14 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
     unit: row.unit_name,
     retailPrice: row.retail_price,
     wholesaleRetailPrice: row.retail_price,
-    category: row.category_name,
-    loyaltyPoints: row.loyalty_points,
+    category: row.catalog_category || row.category_name,
+    company: row.catalog_company || "أبو رغوة",
+    catalogVisible: row.catalog_visible,
+    catalogPrice: row.catalog_price,
+    catalogOldPrice: row.catalog_old_price,
+    catalogDescription: row.catalog_description,
+    catalogDetailsUrl: row.catalog_details_url,
+    loyaltyPoints: row.catalog_loyalty_points,
     imageUrl: options.includeProductImages === false || !row.catalog_image_path
       ? undefined
       : await getSignedProductImageUrl(row.catalog_image_path).catch(() => undefined),

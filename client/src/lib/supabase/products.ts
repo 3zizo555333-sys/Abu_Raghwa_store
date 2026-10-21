@@ -38,6 +38,14 @@ export type CloudProduct = {
   imageStoragePath?: string | null;
   imageUrl?: string;
   loyaltyPoints: number;
+  catalogVisible: boolean;
+  catalogPrice: number | null;
+  catalogOldPrice: number | null;
+  catalogDescription: string;
+  catalogDetailsUrl: string;
+  catalogCategory: string;
+  catalogCompany: string;
+  catalogLoyaltyPoints: number;
   version: number;
   createdAt: string;
   updatedAt: string;
@@ -155,6 +163,14 @@ export function mapProductRow(row: Partial<ProductRow> & Record<string, unknown>
     imageId: typeof row.image_id === "string" ? row.image_id : null,
     imageStoragePath: typeof row.catalog_image_path === "string" ? row.catalog_image_path : null,
     loyaltyPoints: numberOr(row.loyalty_points),
+    catalogVisible: row.catalog_visible === true,
+    catalogPrice: row.catalog_price == null ? null : numberOr(row.catalog_price),
+    catalogOldPrice: row.catalog_old_price == null ? null : numberOr(row.catalog_old_price),
+    catalogDescription: String(row.catalog_description ?? ""),
+    catalogDetailsUrl: String(row.catalog_details_url ?? ""),
+    catalogCategory: String(row.catalog_category ?? ""),
+    catalogCompany: String(row.catalog_company ?? ""),
+    catalogLoyaltyPoints: numberOr(row.catalog_loyalty_points),
     version: numberOr(row.version, 1), createdAt: String(row.created_at ?? ""), updatedAt: String(row.updated_at ?? ""),
   };
 }
@@ -356,6 +372,45 @@ export async function updateProduct(input: ProductInput & { id: string; expected
     p_payload: toProductPayload(input),
   });
   return mapProductRow(requireCloudResult(result) as unknown as ProductRow, shopId);
+}
+
+export type ProductCatalogSettings = {
+  catalogVisible: boolean;
+  catalogPrice: number | null;
+  catalogOldPrice: number | null;
+  catalogDescription: string;
+  catalogDetailsUrl: string;
+  catalogCategory: string;
+  catalogCompany: string;
+  catalogLoyaltyPoints: number;
+};
+
+export async function updateProductCatalogSettings(input: ProductCatalogSettings & { id: string; expectedVersion: number }): Promise<CloudProduct> {
+  assertCloudOnline();
+  const supabase = getSupabaseClient();
+  const { shopId } = await getActiveShopContext();
+  if (input.catalogPrice !== null && (!Number.isFinite(input.catalogPrice) || input.catalogPrice < 0)) throw new Error("سعر الكتالوج غير صالح.");
+  if (input.catalogOldPrice !== null && (!Number.isFinite(input.catalogOldPrice) || input.catalogOldPrice < 0)) throw new Error("السعر القديم غير صالح.");
+  const result = await supabase.rpc("update_product_catalog_settings", {
+    p_shop_id: shopId,
+    p_product_id: input.id,
+    p_expected_version: input.expectedVersion,
+    p_payload: {
+      catalog_visible: input.catalogVisible,
+      catalog_price: input.catalogPrice,
+      catalog_old_price: input.catalogOldPrice,
+      catalog_description: input.catalogDescription.slice(0, 4000),
+      catalog_details_url: input.catalogDetailsUrl.slice(0, 2048),
+      catalog_category: input.catalogCategory.slice(0, 120),
+      catalog_company: input.catalogCompany.slice(0, 180),
+      catalog_loyalty_points: Math.max(0, Math.trunc(input.catalogLoyaltyPoints)),
+    },
+  });
+  const product = mapProductRow(requireCloudResult(result) as unknown as ProductRow, shopId);
+  if (product.imageStoragePath) {
+    try { product.imageUrl = await getSignedProductImageUrl(product.imageStoragePath); } catch { /* Saved settings remain valid if image signing is temporarily unavailable. */ }
+  }
+  return product;
 }
 
 async function deleteProductsChunk(ids: string[]): Promise<number> {

@@ -1,11 +1,11 @@
 import { and, asc, desc, eq, gt, inArray, isNull, max, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
-import { InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers, customerLoyalty, globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders, offerPurchaseRequests } from "../drizzle/schema";
+import { InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers, globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders, offerPurchaseRequests } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
-import { planOfferPurchaseLedgerUpdate } from "./offerPurchaseLedger";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
+import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile, listSupabaseLoyaltyProfiles, type SupabaseLoyaltyTransaction } from "./supabaseLoyalty";
 
 export type { InsertStaffAccount } from "../drizzle/schema";
 export type UpdateStaffAccount = Partial<InsertStaffAccount>;
@@ -538,16 +538,45 @@ export type CatalogOrderInput = {
 export async function createCatalogOrder(order: CatalogOrderInput) {
   const db = await getDb();
   if (!db) throw new Error("قاعدة البيانات غير متاحة لتسجيل الطلب الآن");
-  const loyaltyProfile = await ensureCustomerLoyaltyProfile({ name: order.customerName, phone: order.customerPhone, customerCode: order.customerCode });
+  const orderItems = parseJsonArray<{ productId?: unknown; name?: unknown; unit?: unknown; price?: unknown; quantity?: unknown; loyaltyPoints?: unknown }>(order.itemsJson);
+  if (!orderItems.length || orderItems.length > 100) throw new Error("يجب أن يحتوي الطلب على صنف واحد إلى 100 صنف.");
+  const computedTotal = orderItems.reduce((sum, item) => {
+    const price = Number(item.price);
+    const quantity = Number(item.quantity);
+    if (typeof item.name !== "string" || !item.name.trim() || !Number.isFinite(price) || price < 0 || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) {
+      throw new Error("تحتوي العربة على بيانات منتج أو كمية غير صالحة.");
+    }
+    return sum + price * quantity;
+  }, 0);
+  if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(computedTotal - order.totalAmount) > 0.01) {
+    throw new Error("إجمالي الطلب لا يطابق بنود العربة.");
+  }
+
+  // Persist the order before any customer/loyalty side effect. Reusing the
+  // same client-generated ID makes a retry safe when the first response was lost.
   await db.insert(catalogOrders).values({
     ...order,
-    customerCode: loyaltyProfile?.customerCode || order.customerCode || null,
+    customerCode: null,
     address: order.address || null,
     note: order.note || null,
+    itemsJson: JSON.stringify(orderItems),
+    totalAmount: computedTotal,
     fulfillmentMethod: order.fulfillmentMethod || "pickup",
     priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
-  });
-  return { customerCode: loyaltyProfile?.customerCode || null };
+  }).onDuplicateKeyUpdate({ set: { id: order.id } });
+
+  let customerCode: string | null = null;
+  try {
+    const profile = await ensureSupabaseLoyaltyProfile({ name: order.customerName, phone: order.customerPhone, customerCode: order.customerCode });
+    customerCode = profile?.customer_code || null;
+    if (customerCode) await db.update(catalogOrders).set({ customerCode }).where(eq(catalogOrders.id, order.id));
+  } catch (error) {
+    console.warn("[Catalog] Order saved; customer loyalty setup will need retry", {
+      orderId: order.id,
+      reason: error instanceof Error ? error.message : "unknown loyalty error",
+    });
+  }
+  return { customerCode };
 }
 
 export async function listCatalogOrders(options: { includeArchived?: boolean } = {}) {
@@ -566,16 +595,13 @@ export async function archiveCatalogOrder(id: string) {
   if (order.archivedAt) return { success: true as const, pointsReversed: Number(order.archivedPointsReversed || 0) };
   const archivedAt = new Date();
   const earned = order.status === "delivered" ? Math.max(0, Math.trunc(Number(order.loyaltyPointsAwarded) || 0)) : 0;
+  let pointsReversed = 0;
   if (earned > 0) {
-    await saveCustomerLoyaltyTransaction({
-      phone: order.customerPhone,
-      customerCode: order.customerCode || undefined,
-      name: order.customerName,
-      transaction: { id: `catalog-order:${order.id}:archive:${new Date(order.updatedAt).getTime()}`, points: -earned, type: "deduction", source: "catalog", orderId: order.id, description: `عكس ${earned} نقطة عند أرشفة الطلب #${order.id.slice(-6).toUpperCase()}`, createdAt: new Date().toISOString() },
-    });
+    const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -earned, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:archive:${new Date(order.updatedAt).getTime()}`, description: `عكس ${earned} نقطة عند أرشفة الطلب #${order.id.slice(-6).toUpperCase()}` });
+    pointsReversed = Math.abs(Number(event.points_delta) || 0);
   }
-  await database.update(catalogOrders).set({ archivedAt: new Date(), archivedPointsReversed: earned }).where(eq(catalogOrders.id, id));
-  return { success: true as const, pointsReversed: earned };
+  await database.update(catalogOrders).set({ archivedAt, archivedPointsReversed: pointsReversed }).where(eq(catalogOrders.id, id));
+  return { success: true as const, pointsReversed };
 }
 
 export async function restoreCatalogOrder(id: string) {
@@ -587,12 +613,7 @@ export async function restoreCatalogOrder(id: string) {
   if (!order.archivedAt) return { success: true as const, pointsRestored: 0 };
   const points = Math.max(0, Math.trunc(Number(order.archivedPointsReversed) || 0));
   if (points > 0) {
-    await saveCustomerLoyaltyTransaction({
-      phone: order.customerPhone,
-      customerCode: order.customerCode || undefined,
-      name: order.customerName,
-      transaction: { id: `catalog-order:${order.id}:restore:${new Date(order.archivedAt).getTime()}`, points, type: "earned", source: "catalog", orderId: order.id, description: `استعادة ${points} نقطة بعد استعادة الطلب #${order.id.slice(-6).toUpperCase()}`, createdAt: new Date().toISOString() },
-    });
+    await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:restore:${new Date(order.archivedAt).getTime()}`, description: `استعادة ${points} نقطة بعد استعادة الطلب #${order.id.slice(-6).toUpperCase()}` });
   }
   await database.update(catalogOrders).set({ archivedAt: null, archivedPointsReversed: 0 }).where(eq(catalogOrders.id, id));
   return { success: true as const, pointsRestored: points };
@@ -611,15 +632,7 @@ export async function deleteCatalogOrder(id: string) {
 
 export type CatalogOrderStatus = "new" | "contacted" | "confirmed" | "preparing" | "delivered" | "cancelled";
 
-export type LoyaltyTransaction = {
-  id: string;
-  points: number;
-  type: "earned" | "deduction" | "reset";
-  source: "catalog" | "offer" | "sale" | "reward" | "manual";
-  description: string;
-  orderId?: string;
-  createdAt: string;
-};
+export type LoyaltyTransaction = SupabaseLoyaltyTransaction;
 
 function parseJsonArray<T>(value: unknown): T[] {
   if (typeof value !== "string") return [];
@@ -635,103 +648,28 @@ function normalizeCustomerPhone(phone?: string | null) {
   return String(phone || "").trim().replace(/[٠-٩]/g, digit => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/[\s-]/g, "");
 }
 
-const CUSTOMER_CODE_ALPHABET = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ";
-
-function generateCustomerCode() {
-  let code = "";
-  for (let index = 0; index < 4; index += 1) {
-    code += CUSTOMER_CODE_ALPHABET[Math.floor(Math.random() * CUSTOMER_CODE_ALPHABET.length)];
-  }
-  return code;
-}
-
-function normalizeLoyaltyTransaction(value: Partial<LoyaltyTransaction>): LoyaltyTransaction | null {
-  const points = Math.trunc(Number(value.points) || 0);
-  if (!value.id || !points) return null;
-  return {
-    id: String(value.id),
-    points,
-    type: value.type === "deduction" || value.type === "reset" ? value.type : "earned",
-    source: value.source === "catalog" || value.source === "sale" || value.source === "reward" || value.source === "manual" ? value.source : "offer",
-    description: String(value.description || (points > 0 ? `تم إضافة ${points} نقطة` : `تم خصم ${Math.abs(points)} نقطة`)),
-    ...(value.orderId ? { orderId: String(value.orderId) } : {}),
-    createdAt: String(value.createdAt || new Date().toISOString()),
-  };
-}
-
 type LoyaltyIdentifier = string | { phone?: string | null; customerCode?: string | null };
 
-async function getCustomerLoyaltyRow(identifier: LoyaltyIdentifier) {
-  const db = await getDb();
-  if (!db) return null;
-  const value = typeof identifier === "string" ? { phone: identifier } : identifier;
-  const normalizedPhone = normalizeCustomerPhone(value.phone);
-  const customerCode = String(value.customerCode || "").trim().toUpperCase();
-  if (!normalizedPhone && !customerCode) return null;
-  const identityFilter = customerCode ? eq(customerLoyalty.customerCode, customerCode) : eq(customerLoyalty.phone, normalizedPhone);
-  const rows = await db.select().from(customerLoyalty).where(identityFilter).limit(1);
-  return rows[0] || null;
-}
-
-async function saveCustomerLoyaltyTransaction(input: {
-  phone?: string | null;
-  customerCode?: string;
-  name: string;
-  transaction: LoyaltyTransaction;
-  usedCoupons?: string[];
-}) {
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة لنقاط الولاء الآن");
-  const phone = normalizeCustomerPhone(input.phone) || null;
-  const existing = await getCustomerLoyaltyRow({ phone, customerCode: input.customerCode });
-  const customerCode = existing?.customerCode || input.customerCode || generateCustomerCode();
-  const transaction = normalizeLoyaltyTransaction(input.transaction);
-  if (!transaction) throw new Error("حركة نقاط غير صحيحة");
-  const existingTransactions = existing ? parseJsonArray<LoyaltyTransaction>(existing.transactionsJson) : [];
-  if (existingTransactions.some(item => item.id === transaction.id)) return existing;
-  const nextPoints = Math.max(0, Number(existing?.points || 0) + transaction.points);
-  const usedCoupons = input.usedCoupons || (existing ? parseJsonArray<string>(existing.usedCoupons) : []);
-  const transactionsJson = JSON.stringify([transaction, ...existingTransactions].slice(0, 500));
-  if (existing) {
-    await db.update(customerLoyalty).set({ customerCode, phone: phone || existing.phone, name: input.name.trim() || existing.name, points: nextPoints, usedCoupons: JSON.stringify(usedCoupons), transactionsJson }).where(eq(customerLoyalty.customerCode, existing.customerCode));
-  } else {
-    await db.insert(customerLoyalty).values({ customerCode, phone, name: input.name.trim() || "عميل أبو رغوة", points: nextPoints, usedCoupons: JSON.stringify(usedCoupons), transactionsJson });
-  }
-  return await getCustomerLoyaltyRow({ customerCode });
-}
-
-async function ensureCustomerLoyaltyProfile(input: { name: string; phone?: string; customerCode?: string }) {
-  const existing = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
-  if (input.customerCode?.trim() && !existing) throw new Error("كود نقاط الولاء غير صحيح");
-  if (existing) return existing;
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة لنقاط الولاء الآن");
-  const customerCode = generateCustomerCode();
-  await db.insert(customerLoyalty).values({ customerCode, phone: normalizeCustomerPhone(input.phone) || null, name: input.name.trim() || "عميل أبو رغوة", points: 0, usedCoupons: "[]", transactionsJson: "[]" });
-  return getCustomerLoyaltyRow({ customerCode });
-}
-
 export async function registerOfferCustomer(input: { name: string; phone?: string; customerCode?: string; referralPhone?: string }) {
-  const found = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
-  if (input.customerCode?.trim() && !found) throw new Error("كود نقاط الولاء غير صحيح");
-  const profile = found || await ensureCustomerLoyaltyProfile({ name: input.name, phone: input.phone, customerCode: input.customerCode });
-  if (!profile) throw new Error("تعذر إنشاء بطاقة الولاء");
-  if (!found && input.referralPhone?.trim()) {
-    const referrer = await getCustomerLoyaltyRow({ phone: input.referralPhone });
-    if (referrer && referrer.customerCode !== profile.customerCode) {
-      const alreadyAwarded = parseJsonArray<LoyaltyTransaction>(referrer.transactionsJson).some(item => item.source === "manual" && item.orderId === profile.customerCode);
-      if (!alreadyAwarded) await saveCustomerLoyaltyTransaction({ phone: referrer.phone, customerCode: referrer.customerCode, name: referrer.name, transaction: { id: `referral:${referrer.customerCode}:${profile.customerCode}`, points: 50, type: "earned", source: "manual", orderId: profile.customerCode, description: `مكافأة دعوة الصديق (${profile.name})`, createdAt: new Date().toISOString() } });
+  const profileRow = await ensureSupabaseLoyaltyProfile({ name: input.name, phone: input.phone || "", customerCode: input.customerCode });
+  if (profileRow.created && input.referralPhone?.trim()) {
+    const referrer = await getSupabaseLoyaltyProfile({ phone: input.referralPhone });
+    if (referrer && normalizeCustomerPhone(referrer.phone) !== normalizeCustomerPhone(profileRow.phone)) {
+      await applySupabaseLoyaltyEvent({
+        phone: referrer.phone, name: referrer.name, pointsDelta: 50, source: "referral",
+        sourceId: profileRow.customer_code, idempotencyKey: `referral:${referrer.customerCode}:${profileRow.customer_code}`,
+        description: `مكافأة دعوة الصديق (${profileRow.full_name})`,
+      });
     }
   }
-  return getCustomerLoyaltyProfileFromRow(await getCustomerLoyaltyRow({ customerCode: profile.customerCode }));
+  return getSupabaseLoyaltyProfile({ customerCode: profileRow.customer_code });
 }
-
 export async function manuallyAwardReferralPoints(input: { phone?: string; customerCode?: string; friendName: string; points?: number }) {
-  const existing = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
+  const existing = await getSupabaseLoyaltyProfile({ phone: input.phone, customerCode: input.customerCode });
   if (!existing) throw new Error("العميل غير مسجل في دفتر الولاء");
   const points = Math.max(1, Math.trunc(Number(input.points) || 50));
-  const row = await saveCustomerLoyaltyTransaction({ phone: existing.phone, customerCode: existing.customerCode, name: existing.name, transaction: { id: `manual-referral:${existing.customerCode}:${Date.now()}:${randomUUID()}`, points, type: "earned", source: "manual", description: `مكافأة دعوة الصديق (${input.friendName.trim() || "صديق جديد"})`, createdAt: new Date().toISOString() } });
-  return { profile: getCustomerLoyaltyProfileFromRow(row), pointsAwarded: points };
+  const event = await applySupabaseLoyaltyEvent({ phone: existing.phone, name: existing.name, pointsDelta: points, source: "referral", sourceId: input.friendName.trim().slice(0, 160), idempotencyKey: `manual-referral:${randomUUID()}`, description: `مكافأة دعوة الصديق (${input.friendName.trim() || "صديق جديد"})` });
+  return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsAwarded: event.points_delta };
 }
 
 export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string; customerNote?: string }) {
@@ -772,8 +710,7 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
   const customerCode = input.customerCode.trim().toUpperCase();
 
   return database.transaction(async tx => {
-    const profiles = await tx.select().from(customerLoyalty).where(eq(customerLoyalty.customerCode, customerCode)).for("update").limit(1);
-    const profile = profiles[0];
+    const profile = await getSupabaseLoyaltyProfile({ customerCode });
     if (!profile) throw new Error("كود الولاء غير مسجل؛ سجّل بطاقة نقاطك أولًا");
     const existingRequests = await tx.select().from(offerPurchaseRequests).where(and(
       eq(offerPurchaseRequests.offerId, input.offerId),
@@ -819,31 +756,21 @@ export async function approveOfferPurchaseRequest(id: string) {
     if (request.status === "approved") return { success: true as const, alreadyApproved: true, awardedPoints: Number(request.loyaltyPointsAwarded || 0), customerCode: request.customerCode };
     if (request.status !== "pending") throw new Error("لا يمكن تأكيد طلب مرفوض أو ملغى");
 
-    const profiles = await tx.select().from(customerLoyalty).where(eq(customerLoyalty.customerCode, request.customerCode)).for("update").limit(1);
-    const profile = profiles[0];
+    const profile = await getSupabaseLoyaltyProfile({ customerCode: request.customerCode, phone: request.customerPhone });
     if (!profile) throw new Error("تعذر العثور على بطاقة ولاء العميل");
-    const ledgerUpdate = planOfferPurchaseLedgerUpdate({
-      requestId: request.id,
-      offerId: request.offerId,
-      customerCode: request.customerCode,
-      offerTitle: request.offerTitle,
-      offerPoints: request.offerPoints,
-      currentPoints: profile.points,
-      transactionsJson: profile.transactionsJson,
-      usedCouponsJson: profile.usedCoupons,
-    });
-
-    await tx.update(customerLoyalty).set({
-      points: ledgerUpdate.points,
-      usedCoupons: ledgerUpdate.usedCouponsJson,
-      transactionsJson: ledgerUpdate.transactionsJson,
-    }).where(eq(customerLoyalty.customerCode, profile.customerCode));
+    const plannedPoints = Math.max(0, Math.trunc(Number(request.offerPoints) || 0));
+    const event = plannedPoints > 0 ? await applySupabaseLoyaltyEvent({
+      phone: profile.phone, name: profile.name, pointsDelta: plannedPoints, source: "offer",
+      sourceId: request.id, idempotencyKey: `offer-purchase:${request.id}:earned`,
+      description: `${plannedPoints} نقطة بعد موافقة المحل على شراء العرض: ${request.offerTitle}`,
+    }) : null;
+    const awardedPoints = event ? Math.max(0, Number(event.points_delta) || 0) : 0;
     await tx.update(offerPurchaseRequests).set({
       status: "approved",
-      loyaltyPointsAwarded: ledgerUpdate.awardedPoints,
+      loyaltyPointsAwarded: awardedPoints,
       approvedAt: new Date(),
     }).where(eq(offerPurchaseRequests.id, request.id));
-    return { success: true as const, alreadyApproved: false, awardedPoints: ledgerUpdate.awardedPoints, customerCode: request.customerCode };
+    return { success: true as const, alreadyApproved: false, awardedPoints, customerCode: profile.customerCode };
   });
 }
 
@@ -870,30 +797,21 @@ export async function getCustomerOfferPurchaseStatus(input: { id: string; custom
   return rows[0] || null;
 }
 
-function getCustomerLoyaltyProfileFromRow(row: typeof customerLoyalty.$inferSelect | null) {
-  if (!row) return null;
-  return { name: row.name, customerCode: row.customerCode, phone: row.phone || "", points: Number(row.points || 0), usedCoupons: parseJsonArray<string>(row.usedCoupons), transactions: parseJsonArray<LoyaltyTransaction>(row.transactionsJson) };
-}
-
 export async function getCustomerLoyaltyProfile(identifier: LoyaltyIdentifier) {
-  return getCustomerLoyaltyProfileFromRow(await getCustomerLoyaltyRow(identifier));
+  return getSupabaseLoyaltyProfile(typeof identifier === "string" ? { phone: identifier } : identifier);
 }
-
 export async function listCustomerLoyalty() {
-  const db = await getDb();
-  if (!db) return [];
-  const rows = await db.select().from(customerLoyalty).orderBy(desc(customerLoyalty.updatedAt));
-  return rows.map(getCustomerLoyaltyProfileFromRow).filter(Boolean);
+  return listSupabaseLoyaltyProfiles();
 }
 
 export async function redeemLoyaltyReward(input: { phone?: string; customerCode?: string; giftName: string; points: number; mode: "deduct" | "reset" }) {
-  const existing = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
+  const existing = await getSupabaseLoyaltyProfile({ phone: input.phone, customerCode: input.customerCode });
   if (!existing) throw new Error("العميل غير مسجل في دفتر الولاء");
   const currentPoints = Math.max(0, Number(existing.points || 0));
   const pointsToDeduct = input.mode === "reset" ? currentPoints : Math.min(currentPoints, Math.max(0, Math.trunc(Number(input.points) || 0)));
   if (pointsToDeduct <= 0) throw new Error("رصيد العميل لا يكفي لاستبدال الهدية");
-  const row = await saveCustomerLoyaltyTransaction({ phone: existing.phone, customerCode: existing.customerCode, name: existing.name, transaction: { id: `reward:${existing.customerCode}:${Date.now()}:${Math.random().toString(36).slice(2, 7)}`, points: -pointsToDeduct, type: "deduction", source: "reward", description: `استبدال هدية: ${input.giftName}`, createdAt: new Date().toISOString() } });
-  return { profile: getCustomerLoyaltyProfileFromRow(row), pointsDeducted: pointsToDeduct };
+  const event = await applySupabaseLoyaltyEvent({ phone: existing.phone, name: existing.name, pointsDelta: -pointsToDeduct, source: "reward", sourceId: input.giftName.trim().slice(0, 160), idempotencyKey: `reward:${existing.customerCode}:${randomUUID()}`, description: `استبدال هدية: ${input.giftName}` });
+  return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsDeducted: Math.abs(Number(event.points_delta) || 0) };
 }
 
 async function getCatalogProductPoints() {
@@ -923,48 +841,33 @@ async function getPointsFromItems(itemsJson: string) {
 export async function recordDirectSaleLoyalty(input: { saleId: string; customerName: string; phone?: string; customerCode?: string; itemsJson: string }) {
   const name = input.customerName.trim();
   if (!name) return { profile: null, pointsAwarded: 0 };
-  const existing = await getCustomerLoyaltyRow({ phone: input.phone, customerCode: input.customerCode });
+  const existing = await getSupabaseLoyaltyProfile({ phone: input.phone, customerCode: input.customerCode });
   if (input.customerCode?.trim() && !existing) throw new Error("كود نقاط الولاء غير صحيح");
-  const identifier = existing?.customerCode || input.customerCode?.trim() || generateCustomerCode();
   const pointsAwarded = await getPointsFromItems(input.itemsJson);
   if (pointsAwarded > 0) {
-    const row = await saveCustomerLoyaltyTransaction({ phone: input.phone, customerCode: identifier, name, transaction: { id: `sale:${input.saleId}`, points: pointsAwarded, type: "earned", source: "sale", description: `نقاط شراء من الفاتورة #${input.saleId.slice(-6).toUpperCase()}`, orderId: input.saleId, createdAt: new Date().toISOString() } });
-    return { profile: getCustomerLoyaltyProfileFromRow(row), pointsAwarded };
+    const event = await applySupabaseLoyaltyEvent({ phone: input.phone || existing?.phone || "", name, pointsDelta: pointsAwarded, source: "cashier", sourceId: input.saleId, idempotencyKey: `cashier-sale:${input.saleId}`, description: `نقاط شراء من الفاتورة #${input.saleId.slice(-6).toUpperCase()}` });
+    return { profile: await getSupabaseLoyaltyProfile({ phone: input.phone }), pointsAwarded: Number(event.points_delta) || 0 };
   }
-  if (existing) return { profile: getCustomerLoyaltyProfileFromRow(existing), pointsAwarded: 0 };
-  const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة لنقاط الولاء الآن");
-  await db.insert(customerLoyalty).values({ customerCode: identifier, phone: normalizeCustomerPhone(input.phone) || null, name, points: 0, usedCoupons: "[]", transactionsJson: "[]" });
-  return { profile: getCustomerLoyaltyProfileFromRow(await getCustomerLoyaltyRow({ customerCode: identifier })), pointsAwarded: 0 };
+  const profile = existing || (input.phone ? await ensureSupabaseLoyaltyProfile({ phone: input.phone, name }) : null);
+  const customerCode = existing?.customerCode || (profile && "customer_code" in profile ? profile.customer_code : undefined);
+  return { profile: customerCode ? await getSupabaseLoyaltyProfile({ customerCode }) : null, pointsAwarded: 0 };
 }
 
 export async function reverseDirectSaleLoyalty(input: { returnId: string; saleId: string; customerName: string; phone?: string; customerCode?: string; points: number }) {
   const points = Math.max(0, Math.trunc(Number(input.points) || 0));
   if (!points) return { profile: await getCustomerLoyaltyProfile({ customerCode: input.customerCode, phone: input.phone }), pointsReversed: 0 };
-  const existing = await getCustomerLoyaltyRow({ customerCode: input.customerCode, phone: input.phone });
+  const existing = await getSupabaseLoyaltyProfile({ customerCode: input.customerCode, phone: input.phone });
   if (!existing) return { profile: null, pointsReversed: 0 };
-  const transaction = { id: `return:${input.returnId}`, points: -points, type: "deduction" as const, source: "sale" as const, orderId: input.saleId, description: `عكس ${points} نقطة بسبب مرتجع الفاتورة #${input.saleId.slice(-6).toUpperCase()}`, createdAt: new Date().toISOString() };
-  const before = parseJsonArray<LoyaltyTransaction>(existing.transactionsJson);
-  if (before.some(item => item.id === transaction.id)) return { profile: getCustomerLoyaltyProfileFromRow(existing), pointsReversed: 0 };
-  const row = await saveCustomerLoyaltyTransaction({ phone: existing.phone, customerCode: existing.customerCode, name: existing.name, transaction });
-  return { profile: getCustomerLoyaltyProfileFromRow(row), pointsReversed: points };
+  const event = await applySupabaseLoyaltyEvent({ phone: existing.phone, name: input.customerName || existing.name, pointsDelta: -points, source: "cashier", sourceId: input.saleId, idempotencyKey: `cashier-return:${input.returnId}`, description: `عكس ${points} نقطة بسبب مرتجع الفاتورة #${input.saleId.slice(-6).toUpperCase()}` });
+  return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsReversed: Math.abs(Number(event.points_delta) || 0) };
 }
 
 export async function restoreDirectSaleLoyalty(input: { restoreId: string; saleId: string; customerName: string; phone?: string; customerCode?: string; points: number }) {
   const points = Math.max(0, Math.trunc(Number(input.points) || 0));
-  const existing = await getCustomerLoyaltyRow({ customerCode: input.customerCode, phone: input.phone });
-  if (!points || !existing) return { profile: getCustomerLoyaltyProfileFromRow(existing), pointsRestored: 0 };
-  const transaction = {
-    id: `sale:${input.saleId}:restore:${input.restoreId}`,
-    points,
-    type: "earned" as const,
-    source: "sale" as const,
-    orderId: input.saleId,
-    description: `استعادة ${points} نقطة بعد استعادة الفاتورة #${input.saleId.slice(-6).toUpperCase()}`,
-    createdAt: new Date().toISOString(),
-  };
-  const row = await saveCustomerLoyaltyTransaction({ phone: existing.phone, customerCode: existing.customerCode, name: input.customerName || existing.name, transaction });
-  return { profile: getCustomerLoyaltyProfileFromRow(row), pointsRestored: points };
+  const existing = await getSupabaseLoyaltyProfile({ customerCode: input.customerCode, phone: input.phone });
+  if (!points || !existing) return { profile: existing, pointsRestored: 0 };
+  const event = await applySupabaseLoyaltyEvent({ phone: existing.phone, name: input.customerName || existing.name, pointsDelta: points, source: "cashier", sourceId: input.saleId, idempotencyKey: `cashier-return-restore:${input.restoreId}`, description: `استعادة ${points} نقطة بعد استعادة الفاتورة #${input.saleId.slice(-6).toUpperCase()}` });
+  return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsRestored: Number(event.points_delta) || 0 };
 }
 
 export async function updateCatalogOrderStatus(id: string, status: CatalogOrderStatus) {
@@ -974,16 +877,15 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
   const order = rows[0];
   if (!order) throw new Error("الطلب غير موجود");
   let awardedPoints = Number(order.loyaltyPointsAwarded || 0);
-  const customerIdentifier = { customerCode: order.customerCode || undefined, phone: order.customerPhone };
   if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
     const points = await getPointsFromItems(order.itemsJson);
     if (points > 0) {
-      await saveCustomerLoyaltyTransaction({ ...customerIdentifier, name: order.customerName, transaction: { id: `catalog-order:${order.id}:earned`, points, type: "earned", source: "catalog", orderId: order.id, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}`, createdAt: new Date().toISOString() } });
-      awardedPoints = points;
+      const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
+      awardedPoints = Math.max(0, Number(event.points_delta) || 0);
     }
   }
   if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0) {
-    await saveCustomerLoyaltyTransaction({ ...customerIdentifier, name: order.customerName, transaction: { id: `catalog-order:${order.id}:reversed`, points: -awardedPoints, type: "deduction", source: "catalog", orderId: order.id, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}`, createdAt: new Date().toISOString() } });
+    await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
     awardedPoints = 0;
   }
   await db.update(catalogOrders).set({ status, loyaltyPointsAwarded: awardedPoints }).where(eq(catalogOrders.id, id));
