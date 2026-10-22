@@ -9,6 +9,7 @@ export type StaffEmployee = {
   role: "supervisor" | "cashier" | "seller";
   salary: number;
   join_date: string;
+  hire_date: string;
   is_active: boolean;
 };
 export type StaffWithdrawal = {
@@ -27,7 +28,7 @@ export type StaffAttendance = { employee_id: string; attendance_date: string; st
 export async function listStaffFinanceData(shopId: string) {
   const supabase = getSupabaseClient();
   const [employeesResult, withdrawalsResult, attendanceResult] = await Promise.all([
-    supabase.from("staff_employees").select("id,name,phone,position,role,salary,join_date,is_active").eq("shop_id", shopId).is("deleted_at", null).order("name"),
+    supabase.from("staff_employees").select("id,name,phone,position,role,salary,join_date,hire_date,is_active").eq("shop_id", shopId).is("deleted_at", null).order("name"),
     supabase.from("staff_withdrawals").select("id,shop_id,employee_id,amount,description,status,requested_at,reviewed_at,reviewed_by").eq("shop_id", shopId).order("requested_at", { ascending: false }),
     supabase.from("staff_attendance").select("employee_id,attendance_date,status").eq("shop_id", shopId),
   ]);
@@ -43,7 +44,7 @@ export async function getCurrentStaffEmployee(shopId: string): Promise<StaffEmpl
   const { data: authResult, error: authError } = await supabase.auth.getUser();
   if (authError || !authResult.user) throw new Error("انتهت جلسة الدخول السحابية. سجّل الدخول مجدداً.");
   const email = authResult.user.email?.toLowerCase() ?? "";
-  const query = supabase.from("staff_employees").select("id,name,phone,position,role,salary,join_date,is_active").eq("shop_id", shopId).is("deleted_at", null);
+  const query = supabase.from("staff_employees").select("id,name,phone,position,role,salary,join_date,hire_date,is_active").eq("shop_id", shopId).is("deleted_at", null);
   const { data, error } = email
     ? await query.or(`auth_user_id.eq.${authResult.user.id},auth_email.ilike.${email}`).limit(2)
     : await query.eq("auth_user_id", authResult.user.id).limit(2);
@@ -61,6 +62,17 @@ export async function listOwnStaffWithdrawals(shopId: string, employeeId: string
     .eq("employee_id", employeeId)
     .order("requested_at", { ascending: false });
   return requireCloudResult({ data: data as StaffWithdrawal[] | null, error });
+}
+
+export async function listOwnStaffAttendance(shopId: string, employeeId: string) {
+  const { data, error } = await getSupabaseClient()
+    .from("staff_attendance")
+    .select("employee_id,attendance_date,status")
+    .eq("shop_id", shopId)
+    .eq("employee_id", employeeId)
+    .order("attendance_date", { ascending: false })
+    .limit(1000);
+  return requireCloudResult({ data: data as StaffAttendance[] | null, error });
 }
 
 export async function createStaffWithdrawal(input: { shopId: string; employeeId: string; amount: number; description: string }) {

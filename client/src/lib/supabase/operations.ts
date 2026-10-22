@@ -13,7 +13,7 @@ async function shopId() {
 
 export async function listStaffEmployees() {
   const id = await shopId();
-  return requireCloudResult(await getSupabaseClient().from("staff_employees").select("*").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000)) as Row<"staff_employees">[];
+  return requireCloudResult(await getSupabaseClient().from("staff_employees").select("id,shop_id,store_id,name,phone,position,role,salary,join_date,hire_date,is_active,metadata,auth_email,auth_user_id,created_at,updated_at,deleted_at").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000)) as Row<"staff_employees">[];
 }
 export async function listTaskStaffDirectory() {
   const id = await shopId();
@@ -22,7 +22,8 @@ export async function listTaskStaffDirectory() {
 export async function saveStaffEmployee(input: Omit<Insert<"staff_employees">, "shop_id" | "store_id"> & { id?: string; store_id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient();
   const payload = { ...input, shop_id: id, store_id: id } as Insert<"staff_employees">;
-  const result = input.id ? await client.from("staff_employees").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("staff_employees").insert(payload).select().single();
+  const columns = "id,shop_id,store_id,name,phone,position,role,salary,join_date,hire_date,is_active,metadata,auth_email,auth_user_id,created_at,updated_at,deleted_at";
+  const result = input.id ? await client.from("staff_employees").update(payload).eq("id", input.id).eq("shop_id", id).select(columns).single() : await client.from("staff_employees").insert(payload).select(columns).single();
   return requireCloudResult(result) as Row<"staff_employees">;
 }
 export async function softDeleteStaffEmployee(employeeId: string) {

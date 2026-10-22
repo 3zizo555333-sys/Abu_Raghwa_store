@@ -8,6 +8,7 @@ const homeSource = readFileSync(resolve(import.meta.dirname, "../client/src/page
 const paymentSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/PaymentGateway.tsx"), "utf8");
 const publicOfferSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/PublicOfferPage.tsx"), "utf8");
 const sellerAccessSource = readFileSync(resolve(import.meta.dirname, "../client/src/lib/sellerAccess.ts"), "utf8");
+const withdrawalsPageSource = readFileSync(resolve(import.meta.dirname, "../client/src/pages/StaffWithdrawals.tsx"), "utf8");
 
 const registryEntries = [...registrySource.matchAll(/^[ \t]*\["([^\"]+)", "([^\"]+)",/gm)];
 const expectedKey = (path: string) => `screen__${path.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "root"}`;
@@ -38,7 +39,7 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(keys.length).toBeGreaterThan(40);
     expect(new Set(keys).size).toBe(keys.length);
     const registeredPaths = new Set(registryEntries.map(match => match[1]));
-    const exemptPaths = new Set(["/auth", "/security-settings", "/public-offer", "/catalog-offers", "/catalog", "/loyalty", "/customer-display", "/led-display", "404"]);
+    const exemptPaths = new Set(["/auth", "/security-settings", "/public-offer", "/catalog-offers", "/catalog", "/loyalty", "/customer-display", "/led-display", "/my-withdrawals", "404"]);
     const appPaths = [...appSource.matchAll(/<Route path=\{"([^\"]+)"\} component=/g)].map(match => match[1]);
     expect(appPaths.filter(path => !exemptPaths.has(path) && !registeredPaths.has(path))).toEqual([]);
     for (const match of registryEntries) {
@@ -51,6 +52,13 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(appSource).toContain('path={"/auth"} component={Auth}');
     expect(appSource).toContain('path={"/security-settings"} component={withManagerRole(SecuritySettings)}');
     expect(appSource).toContain('path={"/loyalty"} component={LoyaltyPage}');
+  });
+
+  it("uses the authenticated employee PIN gate instead of a general screen PIN for personal/team withdrawals", () => {
+    expect(appSource).toContain('path={"/my-withdrawals"} component={StaffWithdrawals}');
+    expect(withdrawalsPageSource).toContain("verifyCurrentStaffPin");
+    expect(withdrawalsPageSource).toContain("PIN الموظف المكوّن من 4 أرقام");
+    expect(withdrawalsPageSource).toContain("canDelete = isFullAdmin");
   });
 
   it("يعرض المستخدم والدور من عضوية Supabase لا من Web Storage", () => {
