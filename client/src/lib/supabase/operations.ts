@@ -66,8 +66,8 @@ export async function createProductionRun(input: Omit<Insert<"production_runs">,
   return requireCloudResult(await getSupabaseClient().from("production_runs").insert({ ...input, shop_id: id }).select().single()) as Row<"production_runs">;
 }
 
-export async function getCatalogSetting<T = unknown>(key: string, fallback: T): Promise<T> {
-  const id = await shopId();
+export async function getCatalogSetting<T = unknown>(key: string, fallback: T, shopIdOverride?: string): Promise<T> {
+  const id = shopIdOverride || await shopId();
   const result = await getSupabaseClient().from("catalog_settings").select("value").eq("shop_id", id).eq("setting_key", key).maybeSingle();
   if (result.error) throw new Error(result.error.message);
   return (result.data?.value as T | undefined) ?? fallback;
@@ -76,8 +76,20 @@ export async function saveCatalogSetting(key: string, value: unknown) {
   assertCloudOnline(); const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("catalog_settings").upsert({ shop_id: id, setting_key: key, value: value as Database["public"]["Tables"]["catalog_settings"]["Insert"]["value"] }, { onConflict: "shop_id,setting_key" }).select().single()) as Row<"catalog_settings">;
 }
-export async function listCatalogTaxonomy() {
-  const id = await shopId(); const client = getSupabaseClient();
+export async function listCatalogTaxonomy(options: { publicOnly?: boolean; shopId?: string } = {}) {
+  const id = options.shopId || await shopId(); const client = getSupabaseClient();
+  if (options.publicOnly) {
+    const [categories, companies, products] = await Promise.all([
+      client.from("catalog_categories").select("id,shop_id,name,sort_order,deleted_at").eq("shop_id", id).is("deleted_at", null).order("sort_order").limit(1000),
+      client.from("catalog_companies").select("id,shop_id,name,deleted_at").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000),
+      client.from("catalog_manual_products").select("id,shop_id,name,unit,price,description,details_url,loyalty_points,is_visible,catalog_image_url,catalog_image_storage_path,deleted_at").eq("shop_id", id).eq("is_visible", true).is("deleted_at", null).order("name").limit(2000),
+    ]);
+    return {
+      categories: requireCloudResult(categories) as Row<"catalog_categories">[],
+      companies: requireCloudResult(companies) as Row<"catalog_companies">[],
+      products: requireCloudResult(products) as Row<"catalog_manual_products">[],
+    };
+  }
   const [categories, companies, products] = await Promise.all([
     client.from("catalog_categories").select("*").eq("shop_id", id).is("deleted_at", null).order("sort_order").limit(1000),
     client.from("catalog_companies").select("*").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000),
@@ -137,15 +149,39 @@ export async function listCatalogDisplayData(options: { includeProductImages?: b
   return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
 }
 
-/** Public customer catalog read. Intentionally selects no product cost, wholesale, or recipe secret columns. */
-export async function listPublicCatalogDisplayData(options: { includeProductImages?: boolean } = {}) {
-  const id = await shopId();
+const SHOP_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+async function resolvePublicCatalogShopId(requestedShopId?: string): Promise<string> {
+  if (requestedShopId) {
+    if (!SHOP_ID_PATTERN.test(requestedShopId)) throw new Error("رابط الكتالوج يحتوي على معرف متجر غير صالح.");
+    return requestedShopId;
+  }
+  const client = getSupabaseClient();
+  const [products, manualProducts, recipes] = await Promise.all([
+    client.from("products").select("shop_id").eq("catalog_visible", true).is("deleted_at", null).limit(5000),
+    client.from("catalog_manual_products").select("shop_id").eq("is_visible", true).is("deleted_at", null).limit(5000),
+    client.from("recipes").select("shop_id").eq("catalog_visible", true).is("deleted_at", null).limit(5000),
+  ]);
+  const rows = [
+    ...requireCloudResult(products),
+    ...requireCloudResult(manualProducts),
+    ...requireCloudResult(recipes),
+  ];
+  const shopIds = Array.from(new Set(rows.map(row => row.shop_id).filter(Boolean)));
+  if (shopIds.length === 1) return shopIds[0];
+  if (shopIds.length > 1) throw new Error("يوجد أكثر من متجر في الكتالوج؛ افتح الرابط الخاص بالمتجر المطلوب.");
+  throw new Error("لا توجد منتجات منشورة في الكتالوج حالياً.");
+}
+
+/** Public customer catalog read. It accepts a public shop ID and never requires a staff session. */
+export async function listPublicCatalogDisplayData(options: { includeProductImages?: boolean; shopId?: string } = {}) {
+  const id = await resolvePublicCatalogShopId(options.shopId);
   const client = getSupabaseClient();
   const [productResult, taxonomy, pricing, recipes] = await Promise.all([
-    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points").eq("shop_id", id).is("deleted_at", null).order("name").limit(200),
-    listCatalogTaxonomy(),
-    getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }),
-    client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version").eq("shop_id", id).is("deleted_at", null).limit(1000),
+    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).order("name").limit(200),
+    listCatalogTaxonomy({ publicOnly: true, shopId: id }),
+    getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }, id),
+    client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).limit(1000),
   ]);
   const products = await Promise.all(requireCloudResult(productResult).map(async row => ({
     id: row.id,
@@ -174,10 +210,10 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
     image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
     image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
   }));
-  return { registeredProducts: products, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
+  return { shopId: id, registeredProducts: products, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
 }
 
-export async function listCatalogRewards() {
-  const id = await shopId();
+export async function listCatalogRewards(shopIdOverride?: string) {
+  const id = shopIdOverride || await shopId();
   return requireCloudResult(await getSupabaseClient().from("loyalty_rewards").select("gift_name, points_required, is_active").eq("shop_id", id).eq("is_active", true).order("points_required").limit(100));
 }

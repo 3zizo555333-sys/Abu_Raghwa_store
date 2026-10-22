@@ -78,11 +78,12 @@ export default function PublicCatalogPage() {
       if (!active || !cached) return;
       applyCatalogSnapshot(cached);
     });
-    listPublicCatalogDisplayData().then(data => {
+    const requestedShopId = typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("shop_id") || undefined;
+    listPublicCatalogDisplayData({ shopId: requestedShopId }).then(data => {
       if (!active) return;
       void writePersistentCloudCache("public-catalog-display-v1", data);
       applyCatalogSnapshot(data);
-      return listCatalogRewards();
+      return listCatalogRewards(data.shopId);
     }).then(rows => { if (active && rows) setRewardLevels((rows as any[]).map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); }).catch(() => undefined);
     return () => { active = false; };
   }, []);

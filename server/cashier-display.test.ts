@@ -62,7 +62,10 @@ describe("PLU والكاشير وشاشة العملاء", () => {
     expect(products).toContain("createProductCategory");
     expect(products).toContain("updateProductCategory");
     expect(products).toContain("deleteProductCategory");
-    expect(products).not.toMatch(/from\("products"\)\.(?:insert|update|upsert|delete)/);
+    expect(products).toContain('supabase.from("products").update({');
+    expect(products).toContain('eq("version", input.expectedVersion)');
+    expect(products).toContain("catalog_visible: input.catalogVisible");
+    expect(products).not.toMatch(/from\("products"\)\.(?:insert|upsert|delete)/);
   });
 
   it("يجعل أصناف الصب بلا باركود الوضع الافتراضي ويعزل فئاتها عن وضع الدليل الكامل", () => {

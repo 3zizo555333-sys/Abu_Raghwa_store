@@ -391,22 +391,38 @@ export async function updateProductCatalogSettings(input: ProductCatalogSettings
   const { shopId } = await getActiveShopContext();
   if (input.catalogPrice !== null && (!Number.isFinite(input.catalogPrice) || input.catalogPrice < 0)) throw new Error("سعر الكتالوج غير صالح.");
   if (input.catalogOldPrice !== null && (!Number.isFinite(input.catalogOldPrice) || input.catalogOldPrice < 0)) throw new Error("السعر القديم غير صالح.");
+  const payload = {
+    catalog_visible: input.catalogVisible,
+    catalog_price: input.catalogPrice,
+    catalog_old_price: input.catalogOldPrice,
+    catalog_description: input.catalogDescription.slice(0, 4000),
+    catalog_details_url: input.catalogDetailsUrl.slice(0, 2048),
+    catalog_category: input.catalogCategory.slice(0, 120),
+    catalog_company: input.catalogCompany.slice(0, 180),
+    catalog_loyalty_points: Math.max(0, Math.trunc(input.catalogLoyaltyPoints)),
+  };
   const result = await supabase.rpc("update_product_catalog_settings", {
     p_shop_id: shopId,
     p_product_id: input.id,
     p_expected_version: input.expectedVersion,
-    p_payload: {
-      catalog_visible: input.catalogVisible,
-      catalog_price: input.catalogPrice,
-      catalog_old_price: input.catalogOldPrice,
-      catalog_description: input.catalogDescription.slice(0, 4000),
-      catalog_details_url: input.catalogDetailsUrl.slice(0, 2048),
-      catalog_category: input.catalogCategory.slice(0, 120),
-      catalog_company: input.catalogCompany.slice(0, 180),
-      catalog_loyalty_points: Math.max(0, Math.trunc(input.catalogLoyaltyPoints)),
-    },
+    p_payload: payload,
   });
-  const product = mapProductRow(requireCloudResult(result) as unknown as ProductRow, shopId);
+  let productRow: ProductRow;
+  if (result.error) {
+    // Keep the same RLS role check and optimistic concurrency protection on fallback.
+    const fallback = await supabase.from("products").update({
+      ...payload,
+      version: input.expectedVersion + 1,
+      updated_at: new Date().toISOString(),
+    }).eq("id", input.id).eq("shop_id", shopId).eq("version", input.expectedVersion).is("deleted_at", null).select("*").single();
+    if (fallback.error || !fallback.data) {
+      throw new Error(`تعذر حفظ إعدادات الكتالوج عبر المسار الأساسي أو البديل: ${fallback.error?.message || result.error.message}`);
+    }
+    productRow = fallback.data as unknown as ProductRow;
+  } else {
+    productRow = requireCloudResult(result) as unknown as ProductRow;
+  }
+  const product = mapProductRow(productRow, shopId);
   if (product.imageStoragePath) {
     try { product.imageUrl = await getSignedProductImageUrl(product.imageStoragePath); } catch { /* Saved settings remain valid if image signing is temporarily unavailable. */ }
   }

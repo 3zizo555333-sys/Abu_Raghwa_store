@@ -14,7 +14,7 @@ import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type Catalo
 import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
-import { getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
+import { getActiveShopContext, getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
 
@@ -50,6 +50,7 @@ export default function CatalogManager() {
   const [recipes, setRecipes] = useState<CatalogRecipe[]>([]);
   const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
+  const [catalogShopId, setCatalogShopId] = useState("");
   const [newCategory, setNewCategory] = useState("");
   const [newCompany, setNewCompany] = useState("");
   const [search, setSearch] = useState("");
@@ -63,9 +64,9 @@ export default function CatalogManager() {
   const [soundEnabled, setSoundEnabled] = useState(() => { try { return browserState.get("abu_catalog_order_sound") === "on"; } catch { return false; } });
   const knownOrderIds = useRef<Set<string> | null>(null);
   const hasCatalogAccess = Boolean(browserState.get("abu_staff_sync_token"));
-  const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog`;
-  const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup");
-  const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery");
+  const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
+  const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
+  const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
   const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("حسابك غير مخول لمتابعة طلبات الكتالوج") });
   const { data: orders = [], isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, refetchInterval: catalogSessionReady ? 10_000 : false, retry: false });
@@ -73,6 +74,7 @@ export default function CatalogManager() {
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
 
   useEffect(() => {
+    void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
     listCatalogDisplayData().then(data => {
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;

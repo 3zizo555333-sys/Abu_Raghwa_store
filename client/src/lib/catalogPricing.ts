@@ -20,6 +20,8 @@ export function getFulfillmentPrice(basePrice: number, mode: CatalogFulfillmentM
   return Number((price * (1 + normalizeDeliveryMarkupPercent(config.deliveryMarkupPercent) / 100)).toFixed(2));
 }
 
-export function buildCatalogFulfillmentUrl(origin: string, mode: CatalogFulfillmentMode) {
-  return `${origin.replace(/\/$/, "")}/catalog?mode=${mode}`;
+export function buildCatalogFulfillmentUrl(origin: string, mode: CatalogFulfillmentMode, shopId?: string) {
+  const params = new URLSearchParams({ mode });
+  if (shopId) params.set("shop_id", shopId);
+  return `${origin.replace(/\/$/, "")}/catalog?${params.toString()}`;
 }
