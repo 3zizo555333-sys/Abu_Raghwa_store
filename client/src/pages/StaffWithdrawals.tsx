@@ -125,7 +125,7 @@ export default function StaffWithdrawals() {
   const [, navigate] = useLocation();
   const access = useStaffAccess({ monitorMembership: true });
   const role = access.user?.role;
-  const isFullAdmin = role === "manager";
+  const isFullAdmin = role === "manager" || role === "admin";
   const canManageTeam = access.canViewSensitiveFinancials;
   const canEdit = canManageTeam;
   const canDelete = isFullAdmin;

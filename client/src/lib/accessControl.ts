@@ -14,11 +14,10 @@ export type AccessUser = {
 export const isUserAllowed = (user: AccessUser | undefined | null) =>
   Boolean(user && user.isApproved && !user.isBlocked);
 
-export const isManager = (user: AccessUser | undefined | null) => user?.role === "manager";
+export const isManager = (user: AccessUser | undefined | null) => user?.role === "manager" || user?.role === "admin";
 
-// The database stores the supervisor choice as `admin` for backward
-// compatibility. Supervisors have the manager's operational access; sellers
-// remain restricted to selling screens.
+// Supervisors retain team-level access after PIN verification; admin and
+// manager are both full-administration roles. Sellers remain restricted.
 export const hasSupervisorAccess = (user: AccessUser | undefined | null) =>
   Boolean(user && (user.role === "manager" || user.role === "admin" || user.role === "supervisor"));
 

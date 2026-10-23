@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { isManager } from "../client/src/lib/accessControl";
 
 const projectRoot = resolve(import.meta.dirname, "..");
 
@@ -26,7 +27,7 @@ describe("صلاحيات عرض البائع", () => {
     const app = readFileSync(resolve(projectRoot, "client/src/App.tsx"), "utf8");
     const dashboard = readFileSync(resolve(projectRoot, "client/src/pages/Dashboard.tsx"), "utf8");
 
-    expect(access).toContain('user?.role === "manager"');
+    expect(access).toContain('user?.role === "manager" || user?.role === "admin"');
     expect(access).toContain('user.role === "manager" || user.role === "admin" || user.role === "supervisor"');
     expect(gate).toContain("if (isManager(user))");
     expect(gate).toContain("if (canViewSensitiveFinancials)");
@@ -36,6 +37,22 @@ describe("صلاحيات عرض البائع", () => {
     expect(app).toContain('component={withManagerRole(withPasswordProtection(UserManagement');
     expect(app).toContain('component={withManagerRole(SecuritySettings)}');
     expect(app).toContain('path={"/employees"} component={withManagerRole(withPasswordProtection(Employees');
+  });
+
+  it("يعامل manager وadmin كإدارة كاملة ويُبقي supervisor خارجها", () => {
+    const user = (role: "manager" | "admin" | "supervisor" | "seller") => ({
+      id: role,
+      email: `${role}@example.com`,
+      role,
+      createdDate: "2026-01-01",
+      lastLogin: "2026-01-01",
+      deviceIds: [],
+      isApproved: true,
+    });
+    expect(isManager(user("manager"))).toBe(true);
+    expect(isManager(user("admin"))).toBe(true);
+    expect(isManager(user("supervisor"))).toBe(false);
+    expect(isManager(user("seller"))).toBe(false);
   });
 
   it("يُبقي للبائع واجهة تنقل محدودة لمسارات البيع والكتالوج والعروض العامة", () => {
@@ -56,7 +73,7 @@ describe("صلاحيات عرض البائع", () => {
   it("لا يطلب استعلام الكتالوج العام أعمدة التكلفة أو ملاحظات التركيبات الداخلية", () => {
     const operations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/operations.ts"), "utf8");
     const displayQuery = operations.slice(operations.indexOf("export async function listPublicCatalogDisplayData"), operations.indexOf("export async function listCatalogRewards"));
-    expect(displayQuery).toContain('select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points")');
+    expect(displayQuery).toContain('select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points, catalog_category_id, catalog_company_id, catalog_promo_type, catalog_bulk_min_quantity, catalog_bulk_unit_price")');
     expect(displayQuery).toContain('catalog_description, catalog_details_url, catalog_category, catalog_company, version');
     expect(displayQuery).not.toContain('select("*")');
     expect(displayQuery).not.toContain("cost_price");
