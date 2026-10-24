@@ -61,6 +61,18 @@ export async function ensureSupabaseLoyaltyProfile(input: { phone: string; name:
   return data as { id: string; shop_id: string; customer_code: string; full_name: string; phone: string; current_points: number; created: boolean };
 }
 
+export async function validateCatalogCouponServer(input: { code: string; orderAmount: number }) {
+  const code = input.code.trim();
+  const orderAmount = Number(input.orderAmount);
+  if (!code) return { valid: false, error_code: "coupon_not_found" } as const;
+  if (!Number.isFinite(orderAmount) || orderAmount < 0) throw new Error("قيمة الطلب غير صالحة للتحقق من الكوبون");
+  const client = getAdminClient();
+  const shopId = await getShopId(client);
+  const { data, error } = await client.rpc("validate_catalog_coupon", { p_shop_id: shopId, p_code: code, p_order_amount: orderAmount });
+  throwRpcError("تعذر التحقق من كوبون الكتالوج", error);
+  return (data || { valid: false, error_code: "coupon_not_found" }) as { valid: boolean; discount_amount?: number; final_amount?: number; min_order_amount?: number; error_code?: string };
+}
+
 export async function getSupabaseLoyaltyProfile(identifier: { phone?: string | null; customerCode?: string | null }): Promise<SupabaseLoyaltyProfile | null> {
   const client = getAdminClient();
   const phone = normalizeLoyaltyPhone(identifier.phone);

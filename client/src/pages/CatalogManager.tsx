@@ -17,6 +17,7 @@ import { uploadCloudProductImage } from "@/lib/supabase/productImages";
 import { getActiveShopContext, getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
+import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
 
 type CatalogOrder = {
   id: string;
@@ -444,6 +445,7 @@ export default function CatalogManager() {
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-20" dir="rtl">
       <div className="mx-auto max-w-7xl space-y-6">
+        <CatalogCouponsManager />
         <header className="overflow-hidden rounded-3xl bg-gradient-to-l from-orange-600 via-orange-500 to-amber-400 p-6 text-white shadow-xl">
           <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>

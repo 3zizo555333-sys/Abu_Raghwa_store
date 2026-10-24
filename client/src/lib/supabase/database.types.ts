@@ -112,7 +112,8 @@ export type Database = {
 	      catalog_settings: Table<{ id: string; shop_id: string; setting_key: string; value: Json; created_at: string; updated_at: string }>;
 	      catalog_categories: Table<{ id: string; shop_id: string; name: string; sort_order: number; created_at: string; updated_at: string; deleted_at: string | null }>;
 	      catalog_companies: Table<{ id: string; shop_id: string; name: string; created_at: string; updated_at: string; deleted_at: string | null }>;
-	      catalog_manual_products: Table<{ id: string; shop_id: string; category_id: string | null; company_id: string | null; name: string; unit: string; price: number; description: string; details_url: string; loyalty_points: number; is_visible: boolean; catalog_image_url: string; catalog_image_storage_path: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      catalog_manual_products: Table<{ id: string; shop_id: string; category_id: string | null; company_id: string | null; name: string; unit: string; price: number; description: string; details_url: string; loyalty_points: number; is_visible: boolean; catalog_image_url: string; catalog_image_storage_path: string | null; created_at: string; updated_at: string; deleted_at: string | null }>;
+      catalog_coupons: Table<{ id: string; shop_id: string; code: string; title: string; description: string; discount_type: "percentage" | "fixed"; discount_value: number; min_order_amount: number; max_discount_amount: number | null; valid_from: string | null; valid_until: string | null; is_active: boolean; created_at: string; updated_at: string }>;
       shop_feature_state: Table<{ shop_id: string; feature_key: "abu_raghwa_tasks" | "abu_raghwa_employees" | "points_system_employees" | "abu_raghwa_penalty_rules" | "abu_raghwa_penalty_logs" | "abu_raghwa_invoice_categories_v2" | "abu_raghwa_saved_offers" | "abu_reward_levels" | "abu_raghwa_custom_strategies" | "abu_gift_delivery_logs" | "abu_raghwa_scale_settings" | "abu_raghwa_custom_voice_commands"; payload: Json; version: number; updated_by: string | null; created_at: string; updated_at: string }>;
       user_quick_shortcuts: Table<{ user_id: string; store_id: string; shortcut_paths: Json; updated_at: string }>;
 	      shop_credit_accounts: Table<{ id: string; shop_id: string; party_type: "customer" | "supplier"; name: string; phone: string; notes: string; created_by: string | null; created_at: string; updated_at: string; deleted_at: string | null; legacy_source_id: string | null }>;
@@ -163,6 +164,8 @@ export type Database = {
       admin_set_employee_pin_access: { Args: { p_employee_id: string; p_enabled: boolean }; Returns: Json };
       staff_employee_pin_is_verified: { Args: { p_shop_id: string; p_employee_id?: string | null }; Returns: boolean };
       verify_current_staff_pin: { Args: { p_shop_id: string; p_pin: string }; Returns: Json };
+      list_active_catalog_coupons: { Args: { p_shop_id: string }; Returns: Array<Database["public"]["Tables"]["catalog_coupons"]["Row"]> };
+      validate_catalog_coupon: { Args: { p_shop_id: string; p_code: string; p_order_amount: number }; Returns: Json };
       award_completed_task_points: { Args: { p_shop_id: string; p_task_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };
       apply_staff_point_adjustment: { Args: { p_shop_id: string; p_employee_id: string; p_points_delta: number; p_entry_type: string; p_source_id: string; p_description: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };
       redeem_staff_reward: { Args: { p_shop_id: string; p_employee_id: string; p_reward_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };

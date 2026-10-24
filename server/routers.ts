@@ -257,6 +257,7 @@ export const appRouter = router({
         note: z.string().max(1000).optional(),
         itemsJson: z.string().min(2).max(100_000),
         totalAmount: z.number().nonnegative(),
+        couponCode: z.string().trim().max(40).optional(),
         fulfillmentMethod: z.enum(["pickup", "delivery"]).default("pickup"),
         priceAdjustmentPercent: z.number().min(0).max(500).default(0),
       }))

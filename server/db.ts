@@ -5,7 +5,7 @@ import { InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers, glo
 import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
-import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile, listSupabaseLoyaltyProfiles, type SupabaseLoyaltyTransaction } from "./supabaseLoyalty";
+import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile, listSupabaseLoyaltyProfiles, validateCatalogCouponServer, type SupabaseLoyaltyTransaction } from "./supabaseLoyalty";
 
 export type { InsertStaffAccount } from "../drizzle/schema";
 export type UpdateStaffAccount = Partial<InsertStaffAccount>;
@@ -531,6 +531,7 @@ export type CatalogOrderInput = {
   note?: string;
   itemsJson: string;
   totalAmount: number;
+  couponCode?: string;
   fulfillmentMethod?: "pickup" | "delivery";
   priceAdjustmentPercent?: number;
 };
@@ -548,8 +549,14 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     }
     return sum + price * quantity;
   }, 0);
-  if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(computedTotal - order.totalAmount) > 0.01) {
-    throw new Error("إجمالي الطلب لا يطابق بنود العربة.");
+  let finalTotal = computedTotal;
+  if (order.couponCode?.trim()) {
+    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal });
+    if (!coupon.valid) throw new Error(coupon.error_code === "min_order_not_met" ? `الحد الأدنى للكوبون هو ${coupon.min_order_amount || 0} ج.م` : "الكوبون غير صالح أو منتهي.");
+    finalTotal = Math.max(0, Number(coupon.final_amount ?? computedTotal));
+  }
+  if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) {
+    throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
   }
 
   // Persist the order before any customer/loyalty side effect. Reusing the
@@ -560,7 +567,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     address: order.address || null,
     note: order.note || null,
     itemsJson: JSON.stringify(orderItems),
-    totalAmount: computedTotal,
+    totalAmount: finalTotal,
     fulfillmentMethod: order.fulfillmentMethod || "pickup",
     priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
   }).onDuplicateKeyUpdate({ set: { id: order.id } });
