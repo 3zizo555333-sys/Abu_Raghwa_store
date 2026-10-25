@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "app": "abu-raghwa-store",
+  "routes": [
+    {"path": "/", "name": "الرئيسية"},
+    {"path": "/catalog", "name": "الكتالوج العام"},
+    {"path": "/catalog-manager", "name": "إدارة الكتالوج", "access": "manager"},
+    {"path": "/smart-offers", "name": "العروض الذكية", "access": "manager"},
+    {"path": "/my-withdrawals", "name": "سحوباتي", "access": "staff-pin"},
+    {"path": "/staff-management", "name": "إدارة الموظفين", "access": "manager"}
+  ]
+}
