@@ -13,13 +13,14 @@ import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
 import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
 import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
+import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
 
 type CatalogOrder = {
   id: string;
@@ -85,6 +86,7 @@ export default function CatalogManager() {
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
   const [manualDeletePending, setManualDeletePending] = useState(false);
+  const [taxonomyImageUploading, setTaxonomyImageUploading] = useState<string | null>(null);
 
   useEffect(() => {
     void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
@@ -104,8 +106,8 @@ export default function CatalogManager() {
         catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined,
         notes: String(recipe.description || ""),
       })));
-      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name })));
-      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name })));
+      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name, imageUrl: row.image_url || undefined, imageStoragePath: row.image_storage_path || undefined })));
+      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, imageUrl: row.image_url || undefined, imageStoragePath: row.image_storage_path || undefined })));
       setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
       setPricingConfig(pricing);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
@@ -236,7 +238,7 @@ export default function CatalogManager() {
     if (!name) return;
     if (safeCategories.some(category => category.name === name)) return toast.error("هذه الفئة موجودة بالفعل");
     const saved = await saveCatalogCategory({ name, sort_order: safeCategories.length });
-    setCategories([...safeCategories, { id: saved.id, name: saved.name }]);
+    setCategories([...safeCategories, { id: saved.id, name: saved.name, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
     setNewCategory("");
     toast.success("تمت إضافة الفئة للكتالوج");
   };
@@ -246,9 +248,37 @@ export default function CatalogManager() {
     if (!name) return;
     if (safeCompanies.some(company => company.name === name)) return toast.error("هذه الشركة موجودة بالفعل");
     const saved = await saveCatalogCompany({ name });
-    setCompanies([...safeCompanies, { id: saved.id, name: saved.name }]);
+    setCompanies([...safeCompanies, { id: saved.id, name: saved.name, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
     setNewCompany("");
     toast.success("تمت إضافة الشركة للكتالوج");
+  };
+
+  const deleteTaxonomy = async (kind: CatalogTaxonomyKind, id: string) => {
+    if (!window.confirm("سيتم إخفاء هذا العنصر من الكتالوج مع إبقاء المنتجات المرتبطة به. هل تريد المتابعة؟")) return;
+    try {
+      if (kind === "categories") await deleteCatalogCategory(id); else await deleteCatalogCompany(id);
+      if (kind === "categories") setCategories(current => current.filter(item => item.id !== id));
+      else setCompanies(current => current.filter(item => item.id !== id));
+      toast.success("تمت إزالة العنصر من التصنيفات");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إزالة العنصر"); }
+  };
+
+  const uploadTaxonomyImage = async (kind: CatalogTaxonomyKind, entity: CatalogCategory | CatalogCompany, file?: File) => {
+    if (!file) return;
+    setTaxonomyImageUploading(entity.id);
+    try {
+      const uploaded = await uploadCatalogTaxonomyImage(kind, entity.id, file);
+      if (entity.imageStoragePath) void removeCatalogTaxonomyImage(entity.imageStoragePath).catch(() => undefined);
+      if (kind === "categories") {
+        await saveCatalogCategory({ id: entity.id, name: entity.name, sort_order: safeCategories.findIndex(item => item.id === entity.id), image_url: uploaded.publicUrl, image_storage_path: uploaded.storagePath });
+        setCategories(current => current.map(item => item.id === entity.id ? { ...item, imageUrl: uploaded.publicUrl, imageStoragePath: uploaded.storagePath } : item));
+      } else {
+        await saveCatalogCompany({ id: entity.id, name: entity.name, image_url: uploaded.publicUrl, image_storage_path: uploaded.storagePath });
+        setCompanies(current => current.map(item => item.id === entity.id ? { ...item, imageUrl: uploaded.publicUrl, imageStoragePath: uploaded.storagePath } : item));
+      }
+      toast.success("تم حفظ الصورة وتحديث الكتالوج");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفع الصورة"); }
+    finally { setTaxonomyImageUploading(null); }
   };
 
   const updateProduct = async (id: string, patch: Partial<CatalogProduct>) => {
@@ -532,8 +562,8 @@ export default function CatalogManager() {
 
         <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
           <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><FolderPlus className="text-orange-600" />الفئات والشركات</CardTitle><CardDescription>أضف المسميات التي تناسب محلك مثل مسحوق، ورقيات، مستحضرات تجميل، ثم اربط المنتجات بها.</CardDescription></CardHeader><CardContent className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-3"><div className="flex gap-2"><Input value={newCategory} onChange={event => setNewCategory(event.target.value)} placeholder="اسم فئة جديدة" onKeyDown={event => event.key === "Enter" && addCategory()} /><Button onClick={addCategory} className="bg-orange-600 hover:bg-orange-700"><Plus /></Button></div><div className="flex flex-wrap gap-2">{safeCategories.length ? safeCategories.map(category => <span key={category.id} className="rounded-full bg-orange-50 px-3 py-1 text-xs font-bold text-orange-800">{category.name}<button className="mr-2 text-orange-500" onClick={() => setCategories(safeCategories.filter(item => item.id !== category.id))}>×</button></span>) : <p className="text-xs text-slate-500">لم تضف فئات بعد.</p>}</div></div>
-            <div className="space-y-3"><div className="flex gap-2"><Input value={newCompany} onChange={event => setNewCompany(event.target.value)} placeholder="اسم شركة جديدة" onKeyDown={event => event.key === "Enter" && addCompany()} /><Button onClick={addCompany} className="bg-blue-600 hover:bg-blue-700"><Plus /></Button></div><div className="flex flex-wrap gap-2">{safeCompanies.length ? safeCompanies.map(company => <span key={company.id} className="rounded-full bg-blue-50 px-3 py-1 text-xs font-bold text-blue-800">{company.name}<button className="mr-2 text-blue-500" onClick={() => setCompanies(safeCompanies.filter(item => item.id !== company.id))}>×</button></span>) : <p className="text-xs text-slate-500">لم تضف شركات بعد.</p>}</div></div>
+            <div className="space-y-3"><div className="flex gap-2"><Input value={newCategory} onChange={event => setNewCategory(event.target.value)} placeholder="اسم فئة جديدة" onKeyDown={event => event.key === "Enter" && addCategory()} /><Button onClick={addCategory} className="bg-orange-600 hover:bg-orange-700"><Plus /></Button></div><div className="space-y-2">{safeCategories.length ? safeCategories.map(category => <div key={category.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-orange-100 bg-orange-50/60 p-2"><span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{category.imageUrl ? <img src={category.imageUrl} alt="" className="h-full w-full object-cover" /> : <Package className="h-4 w-4 text-orange-500" />}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-orange-950">{category.name}</span><label className="cursor-pointer rounded-lg bg-orange-600 px-2 py-1.5 text-[10px] font-black text-white">📷 كاميرا<input type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === category.id} onChange={event => { void uploadTaxonomyImage("categories", category, event.target.files?.[0]); event.target.value = ""; }} /></label><label className="cursor-pointer rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-[10px] font-black text-orange-700">🖼️ معرض<input type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === category.id} onChange={event => { void uploadTaxonomyImage("categories", category, event.target.files?.[0]); event.target.value = ""; }} /></label><button className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="إزالة الفئة" onClick={() => void deleteTaxonomy("categories", category.id)}><Trash2 className="h-4 w-4" /></button></div>) : <p className="text-xs text-slate-500">لم تضف فئات بعد.</p>}</div></div>
+            <div className="space-y-3"><div className="flex gap-2"><Input value={newCompany} onChange={event => setNewCompany(event.target.value)} placeholder="اسم شركة جديدة" onKeyDown={event => event.key === "Enter" && addCompany()} /><Button onClick={addCompany} className="bg-blue-600 hover:bg-blue-700"><Plus /></Button></div><div className="space-y-2">{safeCompanies.length ? safeCompanies.map(company => <div key={company.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/60 p-2"><span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{company.imageUrl ? <img src={company.imageUrl} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-4 w-4 text-blue-500" />}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-blue-950">{company.name}</span><label className="cursor-pointer rounded-lg bg-blue-600 px-2 py-1.5 text-[10px] font-black text-white">📷 كاميرا<input type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === company.id} onChange={event => { void uploadTaxonomyImage("companies", company, event.target.files?.[0]); event.target.value = ""; }} /></label><label className="cursor-pointer rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[10px] font-black text-blue-700">🖼️ معرض<input type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === company.id} onChange={event => { void uploadTaxonomyImage("companies", company, event.target.files?.[0]); event.target.value = ""; }} /></label><button className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="إزالة الشركة" onClick={() => void deleteTaxonomy("companies", company.id)}><Trash2 className="h-4 w-4" /></button></div>) : <p className="text-xs text-slate-500">لم تضف شركات بعد.</p>}</div></div>
           </CardContent></Card>
 
           <Card className="border-0 bg-slate-950 text-white shadow-sm"><CardContent className="flex flex-col items-center gap-3 p-6 text-center"><span className="rounded-2xl bg-white/10 p-3"><QrCode className="h-7 w-7 text-amber-300" /></span><h2 className="text-xl font-black">QR ورابط كتالوج المحل</h2><p className="text-xs text-slate-300">استخدم QR للطباعة، أو انشر الرابط الظاهر أدناه في فيسبوك؛ الزبون يضغطه من هاتفه ويدخل الكتالوج فورًا.</p>{qrCodeDataUrl && <img src={qrCodeDataUrl} alt="باركود كتالوج أبو رغوة" className="h-44 w-44 rounded-2xl bg-white p-2" />}<div className="w-full rounded-xl border border-white/15 bg-white/10 p-2 text-right"><p className="mb-1 text-[11px] font-bold text-amber-200">رابط الكتالوج للنشر:</p><Input value={catalogUrl} readOnly dir="ltr" onFocus={event => event.currentTarget.select()} className="h-9 border-white/20 bg-white text-left text-xs text-slate-900" /></div><div className="flex flex-wrap justify-center gap-2"><Button size="sm" onClick={copyCatalogLink} className="bg-white text-slate-950 hover:bg-slate-100"><Copy className="ml-1 h-3.5 w-3.5" />نسخ الرابط</Button><Button size="sm" onClick={shareOnFacebook} className="bg-[#1877F2] text-white hover:bg-[#166FE5]"><span className="ml-1 grid h-4 w-4 place-items-center rounded-sm bg-white text-[10px] font-black text-[#1877F2]">f</span>نشر على Facebook</Button><Button size="sm" onClick={shareCatalog} className="bg-orange-500 text-white hover:bg-orange-600"><Share2 className="ml-1 h-3.5 w-3.5" />مشاركة</Button><Button size="sm" onClick={printQr} variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"><Printer className="ml-1 h-3.5 w-3.5" />طباعة</Button><Button size="sm" onClick={downloadQr} variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white">تحميل QR</Button></div></CardContent></Card>
