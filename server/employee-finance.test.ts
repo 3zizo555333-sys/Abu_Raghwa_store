@@ -26,8 +26,13 @@ describe("حسابات الموظفين وسلامة بطاقة العامل", (
 
   it("يحسب المستحق والسحوبات حسب أيام العمل", () => {
     const summary = buildEmployeeFinanceSummary({ id: "e1", name: "عامل", salary: 3000, joinDate: "2026-08-01" }, [{ employeeId: "e1", date: "2026-08-01", status: "present" }, { employeeId: "e1", date: "2026-08-02", status: "present" }], [{ id: "w1", employeeId: "e1", amount: 50, description: "مصاريف", requestedAt: "2026-08-03T10:00:00.000Z", requestedByEmail: "card", status: "approved" }, { id: "w2", employeeId: "e1", amount: 25, description: "طلب", requestedAt: "2026-08-03T11:00:00.000Z", requestedByEmail: "card", status: "pending" }], new Date("2026-08-20T10:00:00.000Z"));
-    expect(summary).toMatchObject({ workedDays: 20, dailyRate: 100, earnedAmount: 2000, approvedWithdrawals: 50, registeredWithdrawals: 75, remainingAmount: 1950 });
+    expect(summary).toMatchObject({ workedDays: 19, dailyRate: 100, earnedAmount: 1900, approvedWithdrawals: 50, registeredWithdrawals: 75, remainingAmount: 1850 });
     expect(getMonthKey("٢٠/٠٨/٢٠٢٦")).toBe("2026-08");
+  });
+
+  it("يحسب 30 يوماً بين 25 سبتمبر و25 أكتوبر دون حضور يومي", () => {
+    const summary = buildEmployeeFinanceSummary({ id: "e2", name: "عامل آخر", salary: 6000, joinDate: "2026-09-25" }, [], [], new Date("2026-10-25T12:00:00.000Z"));
+    expect(summary).toMatchObject({ workedDays: 30, dailyRate: 200, earnedAmount: 6000, remainingAmount: 6000 });
   });
 
   it("يفتح العامل بطاقته بكلمة مرور المدير فقط، بلا بريد إلكتروني", async () => {

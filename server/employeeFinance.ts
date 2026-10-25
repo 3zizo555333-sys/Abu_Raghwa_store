@@ -111,7 +111,7 @@ export function buildEmployeeFinanceSummary(employee: FinanceEmployee, attendanc
   const currentDay = startOfDay(now);
   const joinedAt = parseBusinessDate(employee.joinDate);
   const automaticWorkedDays = joinedAt && startOfDay(joinedAt) <= currentDay
-    ? Math.floor((currentDay.getTime() - startOfDay(joinedAt).getTime()) / 86_400_000) + 1
+    ? Math.floor((currentDay.getTime() - startOfDay(joinedAt).getTime()) / 86_400_000)
     : 0;
   // الموظف صاحب تاريخ بداية مسجل لا يحتاج إدخال حضور يومي حتى يبدأ عداده.
   // أما السجلات القديمة بلا تاريخ بداية فتظل تعتمد على الحضور المسجل كي لا يتغير حسابها فجأة.

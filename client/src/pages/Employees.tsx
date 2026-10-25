@@ -9,6 +9,8 @@ import { toast } from "sonner";
 import { normalizeAttendance, normalizeEmployees, type AttendanceRecord, type EmployeeRecord } from "@/lib/employeeData";
 import { trpc } from "@/lib/trpc";
 import { deleteStaffEmployee, listStaffAttendance, listStaffEmployees, saveStaffAttendance, saveStaffEmployee } from "@/lib/supabase/operations";
+import { listStaffFinanceData, type StaffWithdrawal } from "@/lib/supabase/staffWithdrawals";
+import { getSupabaseClient } from "@/lib/supabase/client";
 import { listStaffPasswordResetRequests, managerSetStaffPassword, type PasswordResetRequest } from "@/lib/supabase/passwordResets";
 import { adminSetStaffEmployeePin, listStaffEmployeePinStatuses, setStaffEmployeePinAccess, type StaffPinStatus } from "@/lib/supabase/staffEmployeePins";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
@@ -19,6 +21,18 @@ type FinanceRecord = { employee: EmployeeRecord; pinConfigured: boolean; cardAct
 
 const money = (value: number) => `${Number(value || 0).toFixed(2)} ج.م`;
 const todayIso = () => new Date().toISOString().slice(0, 10);
+function calculateAutomaticEmployeeSummary(employee: EmployeeRecord, withdrawals: StaffWithdrawal[], now = new Date()): FinanceSummary {
+  const hireDate = String(employee.joinDate || "").slice(0, 10);
+  const joined = /^\d{4}-\d{2}-\d{2}$/.test(hireDate) ? new Date(`${hireDate}T00:00:00`) : null;
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const joinedDay = joined ? new Date(joined.getFullYear(), joined.getMonth(), joined.getDate()) : null;
+  const workedDays = joinedDay && joinedDay <= today ? Math.floor((today.getTime() - joinedDay.getTime()) / 86_400_000) : 0;
+  const dailyRate = Math.max(0, Number(employee.salary) || 0) / 30;
+  const employeeWithdrawals = withdrawals.filter(item => item.employee_id === employee.id);
+  const approvedWithdrawals = employeeWithdrawals.filter(item => item.status === "approved").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  const pendingWithdrawals = employeeWithdrawals.filter(item => item.status === "pending").reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return { workedDays, dailyRate, earnedAmount: workedDays * dailyRate, approvedWithdrawals, pendingWithdrawals, remainingAmount: workedDays * dailyRate - approvedWithdrawals };
+}
 
 function FinanceCounter({ summary }: { summary: FinanceSummary }) {
   const cards = [["اشتغل", `${summary.workedDays} يوم`, "bg-blue-50 text-blue-900"], ["المستحق", money(summary.earnedAmount), "bg-emerald-50 text-emerald-900"], ["السحوبات", money(summary.approvedWithdrawals + summary.pendingWithdrawals), "bg-orange-50 text-orange-900"], ["الباقي", money(summary.remainingAmount), "bg-violet-50 text-violet-900"]];
@@ -37,6 +51,7 @@ export default function Employees() {
   const managerLoginAttemptedForUser = useRef<string | null>(null);
   const [storedEmployees, setStoredEmployees] = useState<EmployeeRecord[]>([]);
   const [storedAttendance, setStoredAttendance] = useState<AttendanceRecord[]>([]);
+  const [cloudWithdrawals, setCloudWithdrawals] = useState<StaffWithdrawal[]>([]);
   const employees = normalizeEmployees(storedEmployees);
   const attendance = normalizeAttendance(storedAttendance);
   const isManager = staffAccess.canViewSensitiveFinancials;
@@ -58,11 +73,21 @@ export default function Employees() {
   const [settingPinFor, setSettingPinFor] = useState<string | null>(null);
 
   useEffect(() => {
-    Promise.all([listStaffEmployees(), listStaffAttendance()]).then(([employeeRows, attendanceRows]) => {
+    if (!staffAccess.shopId) return;
+    Promise.all([listStaffEmployees(), listStaffAttendance(), listStaffFinanceData(staffAccess.shopId)]).then(([employeeRows, attendanceRows, financeData]) => {
       setStoredEmployees(employeeRows.map(row => ({ id: row.id, name: row.name, phone: row.phone, authEmail: row.auth_email || "", position: row.position, role: row.role, salary: row.salary, joinDate: row.join_date })));
       setStoredAttendance(attendanceRows.map(row => ({ id: row.id, employeeId: row.employee_id, date: row.attendance_date, checkIn: row.check_in || "", checkOut: row.check_out || "", status: row.status === "leave" ? "absent" : row.status })));
+      setCloudWithdrawals(financeData.withdrawals);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل بيانات الموظفين السحابية"));
-  }, []);
+  }, [staffAccess.shopId]);
+  useEffect(() => {
+    if (!staffAccess.shopId) return;
+    const supabase = getSupabaseClient();
+    const channel = supabase.channel(`employees-withdrawals:${staffAccess.shopId}`).on("postgres_changes", { event: "*", schema: "public", table: "staff_withdrawals", filter: `shop_id=eq.${staffAccess.shopId}` }, () => {
+      void listStaffFinanceData(staffAccess.shopId as string).then(data => setCloudWithdrawals(data.withdrawals)).catch(() => undefined);
+    }).subscribe();
+    return () => { void supabase.removeChannel(channel); };
+  }, [staffAccess.shopId]);
 
   useEffect(() => {
     if (!isManager) return;
@@ -152,11 +177,15 @@ export default function Employees() {
       setIsSavingEmployee(false);
     }
   };
-  const records = ((managerOverview.data || []) as FinanceRecord[]).filter(record => !deletedEmployeeIds.has(record.employee.id));
+  const legacyRecords = ((managerOverview.data || []) as FinanceRecord[]).filter(record => !deletedEmployeeIds.has(record.employee.id));
+  const records = employees.filter(employee => !deletedEmployeeIds.has(employee.id)).map(employee => {
+    const legacy = legacyRecords.find(record => record.employee.id === employee.id);
+    return { employee, pinConfigured: legacy?.pinConfigured || false, cardActive: legacy?.cardActive || false, summary: calculateAutomaticEmployeeSummary(employee, cloudWithdrawals), withdrawals: cloudWithdrawals.filter(item => item.employee_id === employee.id).map(item => ({ id: item.id, amount: Number(item.amount), description: item.description, requestedAt: item.requested_at, status: item.status })) } satisfies FinanceRecord;
+  });
   const forgotPinRequests = ((managerOverview.data?.[0] as any)?.forgotPinRequests || []) as Array<{ id: string; employeeName: string; createdAt: string }>;
   const recordsById = new Map(records.map(record => [record.employee.id, record]));
   const resetRequestByEmployeeId = new Map(passwordResetRequests.filter(request => request.employee_id).map(request => [request.employee_id as string, request]));
-  const displayedEmployees = [...employees]; records.forEach(record => { if (!displayedEmployees.some(item => item.id === record.employee.id)) displayedEmployees.push(record.employee); });
+  const displayedEmployees = [...employees]; legacyRecords.forEach(record => { if (!displayedEmployees.some(item => item.id === record.employee.id)) displayedEmployees.push(record.employee); });
   const checkIn = async (employeeId: string) => { const today = new Date().toISOString().slice(0, 10); if (attendance.some(item => item.employeeId === employeeId && item.date === today)) return toast.error("تم تسجيل الحضور بالفعل"); const saved = await saveStaffAttendance({ id: crypto.randomUUID(), employee_id: employeeId, attendance_date: today, check_in: new Date().toISOString(), check_out: null, status: "present", notes: "" }); setStoredAttendance(current => [...current, { id: saved.id, employeeId: saved.employee_id, date: saved.attendance_date, checkIn: saved.check_in || "", checkOut: saved.check_out || "", status: saved.status === "leave" ? "absent" : saved.status }]); };
 
   if (staffAccess.isLoading) return <main className="grid min-h-screen place-items-center bg-slate-50 p-5" dir="rtl"><p className="rounded-xl bg-white p-5 shadow">جارٍ التحقق من صلاحيات المتجر...</p></main>;

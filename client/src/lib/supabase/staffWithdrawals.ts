@@ -25,6 +25,10 @@ export type StaffWithdrawal = {
 };
 export type StaffAttendance = { employee_id: string; attendance_date: string; status: string };
 
+export async function bindCurrentStaffEmployee(shopId: string) {
+  return requireCloudResult(await getSupabaseClient().rpc("bind_staff_employee_auth", { p_shop_id: shopId }));
+}
+
 export async function listStaffFinanceData(shopId: string) {
   const supabase = getSupabaseClient();
   const [employeesResult, withdrawalsResult, attendanceResult] = await Promise.all([
