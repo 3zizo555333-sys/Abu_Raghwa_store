@@ -21,11 +21,29 @@ function getOfferImages(data: PromoOfferData) {
   return { bannerImage, itemImages };
 }
 
+function dateValue(value: string | number | null | undefined) {
+  if (value == null || value === "") return null;
+  const parsed = typeof value === "number" ? value : Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function isRenderableOffer(offer: CloudStoreOffer) {
+  const data = getOfferData(offer);
+  const title = String(offer.banner_title || data.title || offer.title || "").trim();
+  const description = String(offer.public_description || data.description || "").trim();
+  const offerPrice = Number(offer.offer_price ?? 0);
+  const now = Date.now();
+  const startsAt = dateValue(offer.starts_at);
+  const endsAt = dateValue(offer.ends_at);
+  return Boolean(offer.id && title && (description || offerPrice > 0) && Number.isFinite(offerPrice) && offerPrice > 0
+    && (!startsAt || startsAt <= now) && (!endsAt || endsAt > now));
+}
+
 export function PromoCarousel({ offers }: PromoCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const touchStartX = useRef<number | null>(null);
-  const visibleOffers = useMemo(() => offers.filter(offer => offer.status === "active" && !offer.deleted_at), [offers]);
+  const visibleOffers = useMemo(() => offers.filter(offer => offer.status === "active" && !offer.deleted_at && isRenderableOffer(offer)), [offers]);
 
   useEffect(() => {
     if (activeIndex >= visibleOffers.length) setActiveIndex(0);
@@ -50,7 +68,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
 
   return <section aria-label="العروض النشطة" className="w-full px-3 py-3 sm:px-5 sm:py-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
     <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl bg-gradient-to-l from-orange-500 via-amber-400 to-yellow-300 p-1 shadow-lg">
-      <div className="relative overflow-hidden rounded-[0.85rem] bg-slate-950" style={{ touchAction: "pan-y" }}>
+      <div className="relative overflow-hidden rounded-[0.85rem] bg-gradient-to-l from-orange-500 via-amber-400 to-yellow-300" style={{ touchAction: "pan-y" }}>
         <div className="flex transition-transform duration-500 ease-out" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
@@ -64,7 +82,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
               <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /></div>
               <div className="relative z-10 flex h-full items-center gap-2 sm:gap-6">
                 <div className="min-w-0 flex-1 sm:max-w-[58%]"><span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-black text-amber-100"><Sparkles className="h-3 w-3" /> عروض أبو رغوة</span><h2 className="mt-2 line-clamp-1 text-xl font-black leading-tight sm:text-3xl">{title}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-orange-50 sm:text-sm">{description}</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-black sm:mt-3 sm:gap-2 sm:text-xs">{savings > 0 && <span className="rounded-lg bg-white/15 px-2 py-1.5">وفّر {savings.toLocaleString("ar-EG")} ج.م</span>}{discount > 0 && <span className="rounded-lg bg-green-400 px-2 py-1.5 text-green-950">وفر {discount}%</span>}{points > 0 && <span className="rounded-lg bg-purple-300 px-2 py-1.5 text-purple-950"><Gift className="ml-1 inline h-3 w-3" />+{points}</span>}<Button type="button" size="sm" onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)} className="h-8 rounded-lg bg-white px-3 text-xs font-black text-orange-700 hover:bg-orange-50">اطلب دلوقتي</Button></div></div>
-                <div className="relative flex h-full w-[34%] shrink-0 items-center justify-center sm:w-[36%]">{bannerImage ? <img src={bannerImage} alt="" className="max-h-[150px] max-w-full object-contain drop-shadow-[0_12px_10px_rgba(0,0,0,.35)]" /> : itemImages.length ? <div className="flex items-end justify-center gap-0.5 sm:gap-2">{itemImages.map((image, imageIndex) => <img key={`${offer.id}-${imageIndex}`} src={image} alt="" className="h-20 w-16 object-contain drop-shadow-[0_10px_8px_rgba(0,0,0,.35)] sm:h-32 sm:w-24" />)}</div> : <Gift className="h-16 w-16 text-amber-200/70" />}</div>
+                <div className="relative flex h-full w-[34%] shrink-0 items-center justify-center sm:w-[36%]">{bannerImage ? <img src={bannerImage} alt="" onError={event => { event.currentTarget.style.display = "none"; }} className="max-h-[150px] max-w-full object-contain drop-shadow-[0_12px_10px_rgba(0,0,0,.35)]" /> : itemImages.length ? <div className="flex items-end justify-center gap-0.5 sm:gap-2">{itemImages.map((image, imageIndex) => <img key={`${offer.id}-${imageIndex}`} src={image} alt="" onError={event => { event.currentTarget.style.display = "none"; }} className="h-20 w-16 object-contain drop-shadow-[0_10px_8px_rgba(0,0,0,.35)] sm:h-32 sm:w-24" />)}</div> : <Gift className="h-16 w-16 text-amber-200/70" />}</div>
               </div>
             </article>;
           })}
