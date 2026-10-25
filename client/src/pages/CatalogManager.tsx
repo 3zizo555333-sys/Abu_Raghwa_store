@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Switch } from "@/components/ui/switch";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
 import { getActiveShopContext, getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
@@ -73,6 +75,8 @@ export default function CatalogManager() {
   const { data: orders = [], isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, refetchInterval: catalogSessionReady ? 10_000 : false, retry: false });
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => refetchOrders() });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
+  const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
+  const [manualDeletePending, setManualDeletePending] = useState(false);
 
   useEffect(() => {
     void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
@@ -318,9 +322,22 @@ export default function CatalogManager() {
     toast.success("تمت إضافة المنتج اليدوي إلى الكتالوج");
   };
 
-  const deleteManualProduct = (id: string) => {
-    setManualProducts(current => (Array.isArray(current) ? current : []).filter(product => product.id !== id));
-    toast.success("تم حذف المنتج اليدوي من الكتالوج فقط");
+  const confirmDeleteManualProduct = async () => {
+    const product = manualProductToDelete;
+    if (!product) return;
+    setManualDeletePending(true);
+    try {
+      await deleteCatalogManualProduct(product.id);
+      setManualProducts(current => (Array.isArray(current) ? current : []).filter(item => item.id !== product.id));
+      await removePersistentCloudCache("public-catalog-display-v1");
+      if (product.catalogImageStoragePath) await removeCatalogManualProductImage(product.catalogImageStoragePath).catch(() => undefined);
+      setManualProductToDelete(null);
+      toast.success("تم حذف المنتج اليدوي من Supabase والكتالوج");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حذف المنتج اليدوي؛ تحقق من صلاحيات المدير واتصال Supabase.");
+    } finally {
+      setManualDeletePending(false);
+    }
   };
 
   const handleProductImage = async (file: File | undefined, productId: string) => {
@@ -555,7 +572,7 @@ export default function CatalogManager() {
                           </div>
                         </div>
                       </div>
-                      <div className="flex flex-wrap items-center gap-2"><label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={product.catalogVisible === true} onChange={event => product.catalogSource === "product" ? void saveRegisteredProductSettings(product.id, { catalogVisible: event.target.checked }) : void updateProduct(product.id, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label>{product.catalogSource === "manual" && <Button size="sm" variant="outline" onClick={() => deleteManualProduct(product.id)} className="border-red-200 text-red-600 hover:bg-red-50"><Trash2 className="ml-1 h-3.5 w-3.5" />حذف اليدوي</Button>}</div>
+                      <div className="flex flex-wrap items-center gap-2">{product.catalogSource === "manual" ? <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><Switch checked={product.catalogVisible === true} onCheckedChange={checked => void updateProduct(product.id, { catalogVisible: checked })} aria-label={`${product.catalogVisible ? "إخفاء" : "إظهار"} ${product.name} في الكتالوج`} />{product.catalogVisible ? "ظاهر في الكتالوج" : "مخفي من الكتالوج"}</label> : <label className="flex items-center gap-2 text-xs font-bold text-slate-700"><input type="checkbox" checked={product.catalogVisible === true} onChange={event => void saveRegisteredProductSettings(product.id, { catalogVisible: event.target.checked })} />ظاهر في الكتالوج</label>}{product.catalogSource === "manual" && <Button size="icon" variant="outline" onClick={() => setManualProductToDelete(product)} className="h-8 w-8 border-red-200 text-red-600 hover:bg-red-50" aria-label={`حذف المنتج اليدوي ${product.name}`} title="حذف المنتج اليدوي"><Trash2 className="h-3.5 w-3.5" /></Button>}</div>
                     </div>
                     <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-7">
                       <select value={product.category || ""} onChange={event => updateProduct(product.id, { category: event.target.value })} className="rounded-xl border bg-white p-2 text-sm"><option value="">اختر الفئة</option>{safeCategories.map(category => <option key={category.id} value={category.name}>{category.name}</option>)}</select>
@@ -594,6 +611,18 @@ export default function CatalogManager() {
 
         <Card className="border-0 shadow-sm"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle className="flex items-center gap-2"><History className="text-orange-600" />طلبات الكتالوج</CardTitle><CardDescription>هذه الطلبات تصل عند ضغط العميل «إرسال الطلب»، ثم تواصل معه لتأكيد التجهيز والتوصيل.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader><CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : (orders as CatalogOrder[]).length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات من الكتالوج بعد.</p> : <div className="space-y-3">{(orders as CatalogOrder[]).map(order => { let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = []; try { items = JSON.parse(order.itemsJson); } catch {} const status = STATUS_LABELS[order.status]; const isDelivery = order.fulfillmentMethod === "delivery"; return <article key={order.id} className="rounded-2xl border border-slate-200 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div><div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map(item => <p key={item.name}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => window.open(`https://wa.me/2${order.customerPhone.replace(/^0/, "")}`, "_blank")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next || updateOrderStatus.isPending} onClick={() => updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div></article>; })}</div>}</CardContent></Card>
         {(orders as CatalogOrder[]).length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{(orders as CatalogOrder[]).map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} disabled={updateOrderStatus.isPending} onChange={event => updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
+        <AlertDialog open={Boolean(manualProductToDelete)} onOpenChange={open => { if (!open && !manualDeletePending) setManualProductToDelete(null); }}>
+          <AlertDialogContent dir="rtl">
+            <AlertDialogHeader>
+              <AlertDialogTitle>تأكيد حذف المنتج اليدوي</AlertDialogTitle>
+              <AlertDialogDescription>هل تريد حذف «{manualProductToDelete?.name}» نهائياً من Supabase والكتالوج؟ لا يمكن التراجع عن هذا الإجراء.</AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={manualDeletePending}>إلغاء</AlertDialogCancel>
+              <AlertDialogAction disabled={manualDeletePending} onClick={event => { event.preventDefault(); void confirmDeleteManualProduct(); }} className="bg-red-600 hover:bg-red-700">{manualDeletePending ? "جارٍ الحذف..." : "تأكيد الحذف"}</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </main>
   );

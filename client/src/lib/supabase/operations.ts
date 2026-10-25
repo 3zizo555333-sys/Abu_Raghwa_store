@@ -110,6 +110,10 @@ export async function saveCatalogManualProduct(input: Omit<Insert<"catalog_manua
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_manual_products">;
   return requireCloudResult(input.id ? await client.from("catalog_manual_products").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_manual_products").insert(payload).select().single()) as Row<"catalog_manual_products">;
 }
+export async function deleteCatalogManualProduct(productId: string) {
+  assertCloudOnline(); const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().from("catalog_manual_products").delete().eq("id", productId).eq("shop_id", id).select("id").single()) as Pick<Row<"catalog_manual_products">, "id">;
+}
 
 export async function saveCatalogFormulation(input: {
   id: string; version: number; catalog_visible: boolean; catalog_price?: number | null;
