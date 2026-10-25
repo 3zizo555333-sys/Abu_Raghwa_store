@@ -204,7 +204,7 @@ function Router() {
       <Route path={"/catalog-offers"} component={CatalogOffersPage} />
       <Route path={"/loyalty"} component={LoyaltyPage} />
       <Route path={"/catalog"} component={PublicCatalogPage} />
-      <Route path={"/catalog-manager"} component={withSupervisorRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
+      <Route path={"/catalog-manager"} component={withManagerRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
       <Route path={"/customer-display"} component={CustomerDisplay} />
       <Route path={"/led-display"} component={LedDisplay} />
       <Route path={"/voice"} component={withSupervisorRole(withPasswordProtection(VoiceAssistant, 'screen__voice', 'المساعد الصوتي'))} />
