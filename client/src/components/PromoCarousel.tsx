@@ -50,7 +50,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   }, [activeIndex, visibleOffers.length]);
   useEffect(() => {
     if (visibleOffers.length < 2 || isPaused) return;
-    const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 5000);
+    const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 2000);
     return () => window.clearInterval(timer);
   }, [isPaused, visibleOffers.length]);
 
@@ -69,7 +69,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   return <section aria-label="العروض النشطة" className="w-full px-3 py-3 sm:px-5 sm:py-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
     <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl bg-gradient-to-l from-orange-500 via-amber-400 to-yellow-300 p-1 shadow-lg">
       <div className="relative overflow-hidden rounded-[0.85rem] bg-gradient-to-l from-orange-500 via-amber-400 to-yellow-300" style={{ touchAction: "pan-y" }}>
-        <div className="flex transition-transform duration-500 ease-out" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+        <div dir="ltr" className="flex w-full transition-transform duration-500 ease-out" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
             const { bannerImage, itemImages } = getOfferImages(data);
@@ -78,7 +78,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             const points = Number(data.loyaltyPoints || 0);
             const title = offer.banner_title || data.title || offer.title;
             const description = offer.public_description || data.description || "وفّر أكثر مع عروضنا المختارة لفترة محدودة.";
-            return <article key={offer.id} aria-hidden={index !== activeIndex} className="relative min-w-full h-[176px] overflow-hidden bg-gradient-to-l from-slate-950 via-orange-950 to-orange-700 px-4 py-4 text-white sm:h-[190px] sm:px-8 sm:py-5">
+            return <article dir="rtl" key={offer.id} aria-hidden={index !== activeIndex} className="relative min-w-full flex-[0_0_100%] h-[176px] overflow-hidden bg-gradient-to-l from-orange-600 via-amber-500 to-yellow-400 px-4 py-4 text-white sm:h-[190px] sm:px-8 sm:py-5">
               <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /></div>
               <div className="relative z-10 flex h-full items-center gap-2 sm:gap-6">
                 <div className="min-w-0 flex-1 sm:max-w-[58%]"><span className="inline-flex items-center gap-1 rounded-full bg-white/15 px-2.5 py-1 text-[10px] font-black text-amber-100"><Sparkles className="h-3 w-3" /> عروض أبو رغوة</span><h2 className="mt-2 line-clamp-1 text-xl font-black leading-tight sm:text-3xl">{title}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-orange-50 sm:text-sm">{description}</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-black sm:mt-3 sm:gap-2 sm:text-xs">{savings > 0 && <span className="rounded-lg bg-white/15 px-2 py-1.5">وفّر {savings.toLocaleString("ar-EG")} ج.م</span>}{discount > 0 && <span className="rounded-lg bg-green-400 px-2 py-1.5 text-green-950">وفر {discount}%</span>}{points > 0 && <span className="rounded-lg bg-purple-300 px-2 py-1.5 text-purple-950"><Gift className="ml-1 inline h-3 w-3" />+{points}</span>}<Button type="button" size="sm" onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)} className="h-8 rounded-lg bg-white px-3 text-xs font-black text-orange-700 hover:bg-orange-50">اطلب دلوقتي</Button></div></div>
