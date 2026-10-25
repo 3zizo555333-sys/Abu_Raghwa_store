@@ -34,6 +34,7 @@ interface Product {
   retailPrice: number;
   wholesaleRetailPrice?: number;
   bulkPrice: number;
+  imageUrl?: string;
 }
 
 interface Recipe {
@@ -43,6 +44,7 @@ interface Recipe {
   totalCost: number;
   costPerUnit?: number;
   productionQuantity?: number;
+  imageUrl?: string;
 }
 
 interface SmartOffer {
@@ -50,7 +52,7 @@ interface SmartOffer {
   title: string;
   bannerTitle?: string;
   strategyName: string;
-  items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
+  items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe"; imageUrl?: string }>;
   originalTotalRetail: number;
   totalCostPrice: number;
   offerPrice: number;
@@ -66,6 +68,7 @@ interface SmartOffer {
   scanCount?: number;
   isActivated?: boolean;
   loyaltyPoints?: number;
+  bannerImageUrl?: string;
 }
 
 interface OfferStrategy {
@@ -155,13 +158,13 @@ function buildOfferCandidates(products: Product[], recipes: Recipe[]): OfferCand
     .map(product => {
       const cost = getPieceCost(product);
       const retailSector = getPieceSalePrice(product);
-      return { id: product.id, name: product.name, costPrice: cost, retailPrice: retailSector > 0 ? retailSector : Math.round(cost * 1.25), type: "product" as const };
+      return { id: product.id, name: product.name, costPrice: cost, retailPrice: retailSector > 0 ? retailSector : Math.round(cost * 1.25), type: "product" as const, imageUrl: product.imageUrl };
     })
     .filter(item => item.retailPrice > item.costPrice);
   const validRecipes: OfferCandidate[] = recipes
     .map(recipe => {
       const cost = Number(recipe.costPerUnit) || ((Number(recipe.totalCost) || 0) / Math.max(1, Number(recipe.productionQuantity) || 1));
-      return { id: recipe.id, name: recipe.name, costPrice: cost, retailPrice: Number(recipe.salePrice) || 0, type: "recipe" as const };
+      return { id: recipe.id, name: recipe.name, costPrice: cost, retailPrice: Number(recipe.salePrice) || 0, type: "recipe" as const, imageUrl: recipe.imageUrl };
     })
     .filter(item => item.retailPrice > item.costPrice);
   return [...validProducts, ...validRecipes];
@@ -261,7 +264,7 @@ export default function SmartOffers() {
 
   useEffect(() => {
     let active = true;
-    void listCatalogDisplayData({ includeProductImages: false }).then(data => {
+    void listCatalogDisplayData({ includeProductImages: true }).then(data => {
       if (!active) return;
       setProducts(data.registeredProducts.map(product => ({
         id: product.id, code: String(product.code || ""), name: product.name, unit: product.unit,
@@ -269,12 +272,12 @@ export default function SmartOffers() {
         wholesalePricePerUnit: Number(product.wholesalePricePerUnit ?? product.wholesaleRetailPrice ?? product.retailPrice ?? 0),
         wholesalePricePerPiece: Number(product.wholesalePricePerPiece ?? product.wholesaleRetailPrice ?? product.retailPrice ?? 0),
         wholesalePrice: product.wholesaleRetailPrice,
-        retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, bulkPrice: product.bulkPrice,
+        retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, bulkPrice: product.bulkPrice, imageUrl: product.imageUrl || undefined,
       })));
       setRecipes((data.recipes as any[]).map(recipe => ({
         id: String(recipe.id), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0),
         totalCost: Number(recipe.total_cost || 0), costPerUnit: recipe.cost_per_unit == null ? undefined : Number(recipe.cost_per_unit),
-        productionQuantity: recipe.production_quantity == null ? undefined : Number(recipe.production_quantity),
+        productionQuantity: recipe.production_quantity == null ? undefined : Number(recipe.production_quantity), imageUrl: recipe.image_signed_url || recipe.image_url || undefined,
       })));
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل بيانات العروض من Supabase."));
     return () => { active = false; };
@@ -549,7 +552,7 @@ export default function SmartOffers() {
         id: createOfferId("offer"),
         title: `عرض ${rand.name}`,
         strategyName: currentStrategyObj.name,
-        items: [{ name: rand.name, costPrice: rand.costPrice, retailPrice: rand.retailPrice, offerPrice: rand.retailPrice, type: rand.type }],
+        items: [{ name: rand.name, costPrice: rand.costPrice, retailPrice: rand.retailPrice, offerPrice: rand.retailPrice, type: rand.type, imageUrl: rand.imageUrl }],
         originalTotalRetail: rand.retailPrice,
         totalCostPrice: rand.costPrice,
         offerPrice: rand.retailPrice,
@@ -624,7 +627,7 @@ export default function SmartOffers() {
       id: createOfferId("manual_offer"),
       title: manualTitle.trim() || `عرض يدوي على ${selectedItem.name}`,
       strategyName: `عرض يدوي — ${label}`,
-      items: [{ name: selectedItem.name, costPrice: selectedItem.costPrice, retailPrice: selectedItem.retailPrice, offerPrice: result.offerPrice, type: selectedItem.type }],
+      items: [{ name: selectedItem.name, costPrice: selectedItem.costPrice, retailPrice: selectedItem.retailPrice, offerPrice: result.offerPrice, type: selectedItem.type, imageUrl: selectedItem.imageUrl }],
       originalTotalRetail: selectedItem.retailPrice,
       totalCostPrice: selectedItem.costPrice,
       offerPrice: result.offerPrice,
@@ -712,6 +715,15 @@ export default function SmartOffers() {
       const parsedDate = field === "startDate" || field === "endDate" ? parseLegacyOfferDate(value) : null;
       return { ...previous, [field]: value, ...(parsedDate ? field === "startDate" ? { startAt: parsedDate } : { endAt: parsedDate } : {}) };
     });
+  };
+  const handleBannerImageUpload = (file?: File) => {
+    if (!file || !file.type.startsWith("image/")) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === "string" ? reader.result : "";
+      if (result) setCurrentOffer(previous => previous ? { ...previous, bannerImageUrl: result } : previous);
+    };
+    reader.readAsDataURL(file);
   };
   const updateCurrentOfferItemPrice = (index: number, value: string) => {
     const price = Number(value);
@@ -1452,6 +1464,7 @@ export default function SmartOffers() {
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان العرض</label><Input value={currentOffer.title} onChange={event => updateCurrentOfferField("title", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان البانر المخصص</label><div className="flex gap-2"><Input value={currentOffer.bannerTitle || ""} onChange={event => updateCurrentOfferField("bannerTitle", event.target.value)} placeholder="مثال: دلوقتي هتلاقي عروض التوفير" /><Button type="button" size="sm" disabled={generateOfferBannerTitle.isLoading} onClick={() => void handleGenerateBannerTitle()} className="shrink-0 bg-indigo-600 text-white hover:bg-indigo-700">✨ توليد بالذكاء الاصطناعي</Button></div></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">وصف العرض</label><Input value={currentOffer.description} onChange={event => updateCurrentOfferField("description", event.target.value)} /></div>
+                    <div className="rounded-xl border border-orange-200 bg-orange-50 p-3"><label className="mb-2 block text-xs font-bold text-orange-950">صورة البانر الإعلانية (اختيارية)</label><div className="flex flex-wrap items-center gap-2"><label className="inline-flex cursor-pointer items-center rounded-lg bg-orange-600 px-3 py-2 text-xs font-black text-white hover:bg-orange-700">رفع صورة مخصصة<input type="file" accept="image/*" className="hidden" onChange={event => { handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label>{currentOffer.bannerImageUrl && <Button type="button" size="sm" variant="outline" onClick={() => setCurrentOffer(previous => previous ? { ...previous, bannerImageUrl: undefined } : previous)}>استخدام صور المنتجات</Button>}</div>{currentOffer.bannerImageUrl && <img src={currentOffer.bannerImageUrl} alt="معاينة بانر العرض" className="mt-2 h-20 w-full rounded-lg object-cover" />}</div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>
                     <p className="text-[11px] text-indigo-700 md:col-span-2">يمكن تعديل كل قيمة يدوياً ثم الضغط على «حفظ التعديلات السحابية» أو «تأكيد وتفعيل العرض».</p>
@@ -1461,7 +1474,9 @@ export default function SmartOffers() {
                     <h4 className="font-bold text-gray-800 text-sm">مكونات العرض وأسعار المنتجات:</h4>
                     {currentOffer.items.map((item, idx) => (
                       <div key={idx} className="bg-white p-4 rounded-xl border flex flex-col md:flex-row justify-between items-center gap-3">
-                        <div>
+                        <div className="flex min-w-0 items-center gap-3">
+                          {item.imageUrl && <img src={item.imageUrl} alt="" className="h-12 w-12 shrink-0 rounded-lg object-contain" />}
+                          <div>
                           <p className="font-extrabold text-gray-900 text-base">{item.name}</p>
                           <p className="text-xs text-gray-500">السعر القطاعي: <strong className="text-blue-600">{item.retailPrice} ج.م</strong></p>
                         </div>
@@ -1469,6 +1484,7 @@ export default function SmartOffers() {
                           <label className="mb-1 block text-xs font-bold text-slate-600">سعر الصنف في العرض</label>
                           <Input type="number" min="0" value={item.offerPrice} onChange={event => updateCurrentOfferItemPrice(idx, event.target.value)} className="w-32 text-left font-black text-green-700" />
                         </div>
+                      </div>
                       </div>
                     ))}
                   </div>

@@ -4,9 +4,10 @@ export type OfferCandidate = {
   costPrice: number;
   retailPrice: number;
   type: "product" | "recipe";
+  imageUrl?: string;
 };
 
-export type OfferLine = Pick<OfferCandidate, "name" | "costPrice" | "retailPrice" | "type"> & {
+export type OfferLine = Pick<OfferCandidate, "name" | "costPrice" | "retailPrice" | "type" | "imageUrl"> & {
   offerPrice: number;
 };
 
