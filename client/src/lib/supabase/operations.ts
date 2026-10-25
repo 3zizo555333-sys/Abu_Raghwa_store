@@ -121,8 +121,9 @@ export async function saveCatalogFormulation(input: {
   catalog_category: string; catalog_company: string; loyalty_points: number;
 }) {
   assertCloudOnline(); const id = await shopId();
+  const catalogVisible = input.catalog_visible === true;
   const result = await getSupabaseClient().from("recipes").update({
-    catalog_visible: input.catalog_visible,
+    catalog_visible: catalogVisible,
     catalog_price: input.catalog_price ?? null,
     catalog_old_price: input.catalog_old_price ?? null,
     catalog_description: input.catalog_description,
@@ -210,7 +211,7 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
   let signedImages = new Map<string, string>();
   const imagePaths = recipeRows.map(row => row.image_url).filter(isFormulationImageStoragePath);
   try { signedImages = await getSignedFormulationImageUrls(imagePaths); } catch { /* Keep catalog rows usable while private Storage is temporarily unavailable. */ }
-  const catalogRecipes = recipeRows.map(row => ({
+  const catalogRecipes = recipeRows.filter(row => row.catalog_visible === true && row.deleted_at == null).map(row => ({
     ...row,
     image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
     image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,

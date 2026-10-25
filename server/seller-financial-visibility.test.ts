@@ -83,4 +83,12 @@ describe("صلاحيات عرض البائع", () => {
     expect(displayQuery).not.toContain("password_hash");
     expect(displayQuery).not.toContain("notes");
   });
+
+  it("يفرض الرؤية الصريحة للتركيبات في القراءة العامة والواجهة", () => {
+    const operations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/operations.ts"), "utf8");
+    const publicPage = readFileSync(resolve(projectRoot, "client/src/pages/PublicCatalogPage.tsx"), "utf8");
+    expect(operations).toContain("recipeRows.filter(row => row.catalog_visible === true && row.deleted_at == null)");
+    expect(publicPage).toContain("recipe.catalog_visible === true && recipe.deleted_at == null");
+    expect(publicPage).toContain('const PUBLIC_CATALOG_CACHE_KEY = "public-catalog-display-v3"');
+  });
 });

@@ -298,7 +298,7 @@ export default function CatalogManager() {
         loyaltyPoints: saved.catalogLoyaltyPoints,
         catalogImageUrl: saved.imageUrl || item.catalogImageUrl,
       } : item));
-      await removePersistentCloudCache("public-catalog-display-v2");
+      await removePersistentCloudCache("public-catalog-display-v3");
       toast.success("تم حفظ إعدادات المنتج في الكتالوج");
     } catch (error) {
       setProducts(current => current.map(item => item.id === id ? original : item));
@@ -325,7 +325,7 @@ export default function CatalogManager() {
         catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
         catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
         loyaltyPoints: saved.loyalty_points });
-      await removePersistentCloudCache("public-catalog-display-v2");
+      await removePersistentCloudCache("public-catalog-display-v3");
       toast.success("تم حفظ إعدادات التركيبة في Supabase");
     } catch (error) {
       if (Object.keys(patch).length && original) updateRecipe(id, original);
@@ -375,7 +375,7 @@ export default function CatalogManager() {
     try {
       await deleteCatalogManualProduct(product.id);
       setManualProducts(current => (Array.isArray(current) ? current : []).filter(item => item.id !== product.id));
-      await removePersistentCloudCache("public-catalog-display-v2");
+      await removePersistentCloudCache("public-catalog-display-v3");
       if (product.catalogImageStoragePath) await removeCatalogManualProductImage(product.catalogImageStoragePath).catch(() => undefined);
       setManualProductToDelete(null);
       toast.success("تم حذف المنتج اليدوي من Supabase والكتالوج");
