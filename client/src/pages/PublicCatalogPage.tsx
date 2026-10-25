@@ -259,14 +259,13 @@ export default function PublicCatalogPage() {
 
   return (
     <main className="min-h-screen max-w-full overflow-x-hidden bg-[#f7f9ff] pb-28 text-slate-900" dir="rtl">
-      <header className="sticky top-0 z-30 border-b border-blue-100 bg-white/95 backdrop-blur">
+      <PromoCarousel offers={promoOffers} />
+      <header className="relative z-20 border-b border-blue-100 bg-white/95 shadow-sm backdrop-blur">
         <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3">
           <div className="flex min-w-0 items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-400 text-white shadow-lg"><Sparkles className="h-5 w-5" /></span><div className="min-w-0"><h1 className="truncate text-lg font-black text-blue-950">أبو رغوة</h1><p className="truncate text-[10px] font-bold text-orange-600">{fulfillmentLabel}</p></div></div>
           <div className="flex max-w-full flex-wrap items-center justify-end gap-2"><Button variant="outline" onClick={openLoyalty} className="rounded-xl border-amber-200 text-amber-700 hover:bg-amber-50"><Star className="ml-1 h-4 w-4" />نقاطي</Button><Button variant="outline" onClick={openMyOrders} className="rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50"><ClipboardList className="ml-1 h-4 w-4" />طلباتي{savedOrders.length > 0 && <span className="mr-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">{savedOrders.length}</span>}</Button><Button onClick={() => setCartOpen(true)} className="relative rounded-xl bg-blue-600 px-4 hover:bg-blue-700"><ShoppingBag className="ml-1 h-4 w-4" />السلة{cartCount > 0 && <span className="absolute -left-2 -top-2 grid h-5 min-w-5 place-items-center rounded-full bg-orange-500 px-1 text-[10px] font-black text-white">{cartCount}</span>}</Button></div>
         </div>
       </header>
-      <PromoCarousel offers={promoOffers} />
-
       <section className="mx-auto max-w-7xl px-4 pt-5">
         <div className="rounded-[2rem] bg-white p-4 shadow-sm ring-1 ring-slate-100 sm:p-5">
           <div className="mb-4 flex items-center justify-between"><div><p className="text-xs font-black text-orange-600">اختيارات أبو رغوة</p><h2 className="mt-1 text-xl font-black">العروض والخصومات السريعة</h2></div><Percent className="h-7 w-7 text-orange-500" /></div>

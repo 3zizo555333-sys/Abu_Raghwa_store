@@ -214,3 +214,26 @@
 
   .thermal-receipt * { box-shadow: none !important; }
 }
+
+@keyframes abu-foam-float {
+  0%, 100% { transform: translate3d(0, 18px, 0) scale(0.92); opacity: 0.24; }
+  50% { transform: translate3d(12px, -20px, 0) scale(1.05); opacity: 0.38; }
+}
+.foam-bubble {
+  position: absolute;
+  pointer-events: none;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 9999px;
+  background: radial-gradient(circle at 32% 28%, rgba(255,255,255,.5), rgba(255,255,255,.08) 48%, rgba(255,255,255,0) 72%);
+  box-shadow: inset 0 0 10px rgba(255,255,255,.18), 0 0 12px rgba(255,255,255,.08);
+  animation: abu-foam-float 7s ease-in-out infinite;
+  will-change: transform, opacity;
+}
+.foam-bubble-a { width: 54px; height: 54px; left: 8%; top: 12%; animation-delay: -1s; }
+.foam-bubble-b { width: 24px; height: 24px; left: 24%; top: 68%; animation-duration: 5.5s; animation-delay: -3s; }
+.foam-bubble-c { width: 78px; height: 78px; left: 42%; top: -24px; animation-duration: 8.5s; animation-delay: -4s; }
+.foam-bubble-d { width: 34px; height: 34px; right: 16%; top: 18%; animation-duration: 6s; animation-delay: -2s; }
+.foam-bubble-e { width: 46px; height: 46px; right: 7%; bottom: 8%; animation-duration: 9s; animation-delay: -5s; }
+@media (prefers-reduced-motion: reduce) {
+  .foam-bubble { animation: none; opacity: .28; }
+}
