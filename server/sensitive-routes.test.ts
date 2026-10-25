@@ -56,9 +56,10 @@ describe("حماية المسارات المالية والحساسة", () => {
 
   it("uses the authenticated employee PIN gate instead of a general screen PIN for personal/team withdrawals", () => {
     expect(appSource).toContain('path={"/my-withdrawals"} component={StaffWithdrawals}');
-    expect(withdrawalsPageSource).toContain("verifyCurrentStaffPin");
+    expect(withdrawalsPageSource).toContain("verifyStaffPinAccess");
     expect(withdrawalsPageSource).toContain("PIN الموظف المكوّن من 4 أرقام");
-    expect(withdrawalsPageSource).toContain("canDelete = isFullAdmin");
+    expect(withdrawalsPageSource).toContain("const requiresPin = true");
+    expect(withdrawalsPageSource).toContain("canDelete = canManageTeam");
   });
 
   it("يعرض المستخدم والدور من عضوية Supabase لا من Web Storage", () => {

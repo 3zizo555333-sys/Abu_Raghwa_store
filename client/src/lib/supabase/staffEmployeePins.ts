@@ -58,3 +58,17 @@ export async function verifyCurrentStaffPin(shopId: string, pin: string): Promis
   }
   return response.employee;
 }
+
+export async function verifyStaffPinAccess(shopId: string, pin: string): Promise<StaffPinEmployee> {
+  const normalizedPin = normalizeEmployeePin(pin);
+  if (normalizedPin.length !== 4) throw new Error("أدخل PIN مكوّناً من 4 أرقام.");
+  const result = await getSupabaseClient().rpc("verify_staff_pin_access", {
+    p_shop_id: shopId,
+    p_pin: normalizedPin,
+  });
+  const response = requireCloudResult(result) as { success?: boolean; locked?: boolean; employee?: StaffPinEmployee };
+  if (!response.success || !response.employee) {
+    throw new Error(response.locked ? "تم قفل محاولات PIN مؤقتاً؛ أعد المحاولة بعد 15 دقيقة." : "رمز PIN غير صحيح أو لا يوجد سجل موظف نشط مرتبط بهذا الحساب.");
+  }
+  return response.employee;
+}

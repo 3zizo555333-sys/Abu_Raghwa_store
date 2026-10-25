@@ -109,11 +109,9 @@ export function buildEmployeeFinanceSummary(employee: FinanceEmployee, attendanc
   const monthKey = getMonthKey(now);
   const attendanceDays = attendance.filter(item => item.employeeId === employee.id && item.status === "present" && getMonthKey(item.date) === monthKey).length;
   const currentDay = startOfDay(now);
-  const monthStart = new Date(currentDay.getFullYear(), currentDay.getMonth(), 1);
   const joinedAt = parseBusinessDate(employee.joinDate);
-  const eligibleStart = joinedAt ? new Date(Math.max(startOfDay(joinedAt).getTime(), monthStart.getTime())) : null;
-  const automaticWorkedDays = eligibleStart && eligibleStart <= currentDay
-    ? Math.floor((currentDay.getTime() - eligibleStart.getTime()) / 86_400_000) + 1
+  const automaticWorkedDays = joinedAt && startOfDay(joinedAt) <= currentDay
+    ? Math.floor((currentDay.getTime() - startOfDay(joinedAt).getTime()) / 86_400_000) + 1
     : 0;
   // الموظف صاحب تاريخ بداية مسجل لا يحتاج إدخال حضور يومي حتى يبدأ عداده.
   // أما السجلات القديمة بلا تاريخ بداية فتظل تعتمد على الحضور المسجل كي لا يتغير حسابها فجأة.
@@ -121,9 +119,9 @@ export function buildEmployeeFinanceSummary(employee: FinanceEmployee, attendanc
   const monthlySalary = asAmount(employee.salary);
   const dailyRate = monthlySalary / 30;
   const earnedAmount = workedDays * dailyRate;
-  const monthlyWithdrawals = withdrawals.filter(item => item.employeeId === employee.id && getMonthKey(item.requestedAt) === monthKey);
-  const approvedWithdrawals = monthlyWithdrawals.filter(item => item.status === "approved").reduce((total, item) => total + item.amount, 0);
-  const pendingWithdrawals = monthlyWithdrawals.filter(item => item.status === "pending").reduce((total, item) => total + item.amount, 0);
+  const employeeWithdrawals = withdrawals.filter(item => item.employeeId === employee.id);
+  const approvedWithdrawals = employeeWithdrawals.filter(item => item.status === "approved").reduce((total, item) => total + item.amount, 0);
+  const pendingWithdrawals = employeeWithdrawals.filter(item => item.status === "pending").reduce((total, item) => total + item.amount, 0);
   const registeredWithdrawals = approvedWithdrawals + pendingWithdrawals;
-  return { monthKey, monthlySalary, dailyRate, workedDays, attendanceDays, automaticWorkedDays, calculationMode: joinedAt ? "start_date" as const : "attendance" as const, earnedAmount, approvedWithdrawals, pendingWithdrawals, registeredWithdrawals, remainingAmount: earnedAmount - registeredWithdrawals };
+  return { monthKey, monthlySalary, dailyRate, workedDays, attendanceDays, automaticWorkedDays, calculationMode: joinedAt ? "hire_date" as const : "attendance" as const, earnedAmount, approvedWithdrawals, pendingWithdrawals, registeredWithdrawals, remainingAmount: earnedAmount - approvedWithdrawals };
 }

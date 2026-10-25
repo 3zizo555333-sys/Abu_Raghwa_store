@@ -6,11 +6,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
-import { normalizeEmployeePin, verifyCurrentStaffPin, type StaffPinEmployee } from "@/lib/supabase/staffEmployeePins";
+import { normalizeEmployeePin, verifyStaffPinAccess, type StaffPinEmployee } from "@/lib/supabase/staffEmployeePins";
 import { createStaffWithdrawal, deleteStaffWithdrawal, listOwnStaffAttendance, listOwnStaffWithdrawals, listStaffFinanceData, reviewStaffWithdrawal, updateStaffWithdrawal, type StaffAttendance, type StaffEmployee, type StaffWithdrawal } from "@/lib/supabase/staffWithdrawals";
 
 type Summary = { daily: number; monthly: number; pending: number; approved: number };
-type PersonalSummary = { attendanceDays: number; withdrawalsTotal: number; remainingSalary: number };
+type PersonalSummary = { workedDays: number; earnedAmount: number; withdrawalsTotal: number; remainingSalary: number };
 const PIN_SESSION_MS = 8 * 60 * 60 * 1000;
 const money = (value: number) => `${Number(value || 0).toFixed(2)} ج.م`;
 const dateOnly = (value: string) => value.slice(0, 10);
@@ -39,21 +39,20 @@ function calculatePersonalSummary(employee: StaffEmployee | StaffPinEmployee, at
     .filter(row => row.employee_id === employee.id && monthKey(row.attendance_date) === currentMonth && (row.status === "present" || row.status === "late"))
     .map(row => dateOnly(row.attendance_date))).size;
   const joinDate = String(employee.hire_date || employee.join_date || "").slice(0, 10);
-  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
   const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const joined = joinDate ? new Date(`${joinDate}T00:00:00`) : null;
-  const eligibleStart = joined && joined > monthStart ? joined : monthStart;
   const workedDays = joined
-    ? Math.max(0, eligibleStart <= today ? Math.floor((today.getTime() - eligibleStart.getTime()) / 86_400_000) + 1 : 0)
+    ? Math.max(0, joined <= today ? Math.floor((today.getTime() - joined.getTime()) / 86_400_000) + 1 : 0)
     : attendanceDays;
-  const monthlyWithdrawals = withdrawals
-    .filter(row => row.employee_id === employee.id && monthKey(row.requested_at) === currentMonth && row.status !== "rejected")
+  const approvedWithdrawals = withdrawals
+    .filter(row => row.employee_id === employee.id && row.status === "approved")
     .reduce((sum, row) => sum + Number(row.amount || 0), 0);
   const earnedAmount = Math.max(0, Number(employee.salary || 0)) / 30 * workedDays;
   return {
-    attendanceDays,
-    withdrawalsTotal: monthlyWithdrawals,
-    remainingSalary: earnedAmount - monthlyWithdrawals,
+    workedDays,
+    earnedAmount,
+    withdrawalsTotal: approvedWithdrawals,
+    remainingSalary: earnedAmount - approvedWithdrawals,
   };
 }
 
@@ -71,11 +70,12 @@ function SummaryCards({ items }: { items: StaffWithdrawal[] }) {
 function PersonalSummaryCards({ employee, attendance, withdrawals }: { employee: StaffEmployee | StaffPinEmployee; attendance: StaffAttendance[]; withdrawals: StaffWithdrawal[] }) {
   const summary = calculatePersonalSummary(employee, attendance, withdrawals);
   const cards: Array<[string, string, string]> = [
-    ["أيام الحضور هذا الشهر", `${summary.attendanceDays} يوم`, "bg-blue-50 text-blue-900"],
-    ["سحوبات الشهر", money(summary.withdrawalsTotal), "bg-orange-50 text-orange-900"],
-    ["المتبقي من راتبي", money(summary.remainingSalary), "bg-violet-50 text-violet-900"],
+    ["أيام العمل الفعلية", `${summary.workedDays} يوم`, "bg-blue-50 text-blue-900"],
+    ["الراتب المستحق", money(summary.earnedAmount), "bg-emerald-50 text-emerald-900"],
+    ["إجمالي السحوبات المعتمدة", money(summary.withdrawalsTotal), "bg-orange-50 text-orange-900"],
+    ["الرصيد المتبقي", money(summary.remainingSalary), "bg-violet-50 text-violet-900"],
   ];
-  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">{cards.map(([label, value, tone]) => <div key={label} className={`rounded-2xl p-4 ${tone}`}><p className="text-xs font-bold opacity-70">{label}</p><p className="mt-1 text-lg font-black">{value}</p></div>)}</div>;
+  return <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">{cards.map(([label, value, tone]) => <div key={label} className={`rounded-2xl p-4 ${tone}`}><p className="text-xs font-bold opacity-70">{label}</p><p className="mt-1 text-lg font-black">{value}</p></div>)}</div>;
 }
 
 function WithdrawalCard({
@@ -128,9 +128,9 @@ export default function StaffWithdrawals() {
   const isFullAdmin = role === "manager" || role === "admin";
   const canManageTeam = access.canViewSensitiveFinancials;
   const canEdit = canManageTeam;
-  const canDelete = isFullAdmin;
-  const canReview = isFullAdmin;
-  const requiresPin = !isFullAdmin;
+  const canDelete = canManageTeam;
+  const canReview = canManageTeam;
+  const requiresPin = true;
   const [pin, setPin] = useState("");
   const [pinEmployee, setPinEmployee] = useState<StaffPinEmployee | null>(null);
   const [pinExpiresAt, setPinExpiresAt] = useState<number | null>(null);
@@ -228,7 +228,7 @@ export default function StaffWithdrawals() {
     if (!access.shopId || pin.length !== 4 || pinBusy) return;
     setPinBusy(true);
     try {
-      const employee = await verifyCurrentStaffPin(access.shopId, pin);
+      const employee = await verifyStaffPinAccess(access.shopId, pin);
       setPinEmployee(employee);
       setPinExpiresAt(Date.now() + PIN_SESSION_MS);
       setPin("");
@@ -308,5 +308,5 @@ export default function StaffWithdrawals() {
 
   if (!canManageTeam && pinEmployee) return <main className="min-h-screen bg-slate-50 p-4" dir="rtl"><div className="mx-auto max-w-3xl space-y-4"><header className="flex items-center justify-between rounded-2xl bg-white p-5"><div><p className="font-bold text-violet-700">سحوباتي — حسابي فقط</p><h1 className="text-2xl font-black">{pinEmployee.name}</h1><p className="text-sm text-slate-500">بياناتك وحدك ظاهرة هنا. لا يمكن تعديل السحوبات أو حذفها.</p></div><Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-1 h-4 w-4" />عودة</Button></header><PersonalSummaryCards employee={pinEmployee} attendance={attendance} withdrawals={withdrawals} /><NewWithdrawalForm employeeName={pinEmployee.name} busy={busy} onSubmit={(amount, description) => void saveNew(pinEmployee.id, amount, description)} /><Card><CardHeader><CardTitle>سجل سحوباتي</CardTitle><CardDescription>سجلاتك الشخصية فقط؛ أزرار التعديل والحذف غير متاحة لحساب العامل.</CardDescription></CardHeader><CardContent className="space-y-2">{withdrawals.length ? withdrawals.map(item => <WithdrawalCard key={item.id} item={item} canEdit={false} canDelete={false} canReview={false} onReview={() => undefined} onEdit={() => undefined} onDelete={() => undefined} />) : <p className="rounded-xl bg-slate-50 p-4 text-center text-sm text-slate-500">لا توجد سحوبات مسجلة.</p>}</CardContent></Card></div></main>;
 
-  return <main className="min-h-screen bg-slate-50 p-4" dir="rtl"><div className="mx-auto max-w-7xl space-y-5"><header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-5"><div><p className="font-bold text-violet-700">السحوبات والعهد</p><h1 className="text-3xl font-black">{isFullAdmin ? "قائمة سحوبات الموظفين" : "إدارة سحوبات الفريق"}</h1><p className="text-sm text-slate-600">{isFullAdmin ? "المدير: إضافة وتصفية وتعديل وحذف واعتماد السحوبات." : "المشرف: إضافة وتعديل سحوبات الفريق؛ الحذف والاعتماد للمدير فقط."}</p></div><Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-1 h-4 w-4" />عودة</Button></header><SummaryCards items={withdrawals} /><Card><CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_180px]"><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="تصفية باسم الموظف" /><Input type="date" value={dateFilter} onChange={event => setDateFilter(event.target.value)} /></CardContent></Card><div className="grid gap-4 lg:grid-cols-[300px_1fr]">{employees.map(employee => <Card key={employee.id} className="h-fit"><CardHeader><CardTitle>{employee.name}</CardTitle><CardDescription>{employee.position || "موظف"} · {employee.is_active ? "نشط" : "موقوف"}</CardDescription></CardHeader><CardContent><NewWithdrawalForm employeeName={employee.name} busy={busy} onSubmit={(amount, description) => void saveNew(employee.id, amount, description)} /></CardContent></Card>)}<Card className="lg:col-start-2 lg:row-start-1"><CardHeader><CardTitle>السجل السحابي ({visibleWithdrawals.length})</CardTitle></CardHeader><CardContent className="space-y-2">{visibleWithdrawals.length ? visibleWithdrawals.map(item => <WithdrawalCard key={item.id} item={item} canEdit={canEdit} canDelete={canDelete} canReview={canReview} onReview={(id, status) => void review(id, status)} onEdit={setEditing} onDelete={id => void remove(id)} />) : <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">لا توجد نتائج مطابقة.</p>}</CardContent></Card></div></div>{editing && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><Card className="w-full max-w-md"><CardHeader><CardTitle>تعديل السحبة</CardTitle><CardDescription>يمكن للمشرف تعديل المبلغ والسبب. تغيير حالة الاعتماد للمدير فقط.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="number" min="0.01" value={String(editing.amount)} onChange={event => setEditing({ ...editing, amount: Number(event.target.value) })} /><Input value={editing.description} onChange={event => setEditing({ ...editing, description: event.target.value })} /><div className="flex gap-2"><Button disabled={busy || !canEdit} onClick={() => void edit()}>حفظ التعديل</Button><Button variant="outline" onClick={() => setEditing(null)}>إلغاء</Button></div></CardContent></Card></div>}</main>;
+  return <main className="min-h-screen bg-slate-50 p-4" dir="rtl"><div className="mx-auto max-w-7xl space-y-5"><header className="flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-white p-5"><div><p className="font-bold text-violet-700">السحوبات والعهد</p><h1 className="text-3xl font-black">{isFullAdmin ? "قائمة سحوبات الموظفين" : "إدارة سحوبات الفريق"}</h1><p className="text-sm text-slate-600">{isFullAdmin ? "المدير: إضافة وتصفية وتعديل وحذف واعتماد السحوبات." : "المشرف بعد تحقق PIN: إضافة وتعديل وتسوية وحذف سحوبات الفريق."}</p></div><Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-1 h-4 w-4" />عودة</Button></header><SummaryCards items={withdrawals} /><Card><CardContent className="grid gap-3 p-4 md:grid-cols-[1fr_180px]"><Input value={search} onChange={event => setSearch(event.target.value)} placeholder="تصفية باسم الموظف" /><Input type="date" value={dateFilter} onChange={event => setDateFilter(event.target.value)} /></CardContent></Card><div className="grid gap-4 lg:grid-cols-[300px_1fr]">{employees.map(employee => <Card key={employee.id} className="h-fit"><CardHeader><CardTitle>{employee.name}</CardTitle><CardDescription>{employee.position || "موظف"} · {employee.is_active ? "نشط" : "موقوف"}</CardDescription></CardHeader><CardContent><NewWithdrawalForm employeeName={employee.name} busy={busy} onSubmit={(amount, description) => void saveNew(employee.id, amount, description)} /></CardContent></Card>)}<Card className="lg:col-start-2 lg:row-start-1"><CardHeader><CardTitle>السجل السحابي ({visibleWithdrawals.length})</CardTitle></CardHeader><CardContent className="space-y-2">{visibleWithdrawals.length ? visibleWithdrawals.map(item => <WithdrawalCard key={item.id} item={item} canEdit={canEdit} canDelete={canDelete} canReview={canReview} onReview={(id, status) => void review(id, status)} onEdit={setEditing} onDelete={id => void remove(id)} />) : <p className="rounded-xl bg-slate-50 p-6 text-center text-sm text-slate-500">لا توجد نتائج مطابقة.</p>}</CardContent></Card></div></div>{editing && <div className="fixed inset-0 z-50 grid place-items-center bg-black/40 p-4"><Card className="w-full max-w-md"><CardHeader><CardTitle>تعديل السحبة</CardTitle><CardDescription>يمكن للمشرف بعد PIN تعديل المبلغ والسبب وتسوية الحالة، كما يمكن للمدير ذلك.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="number" min="0.01" value={String(editing.amount)} onChange={event => setEditing({ ...editing, amount: Number(event.target.value) })} /><Input value={editing.description} onChange={event => setEditing({ ...editing, description: event.target.value })} /><div className="flex gap-2"><Button disabled={busy || !canEdit} onClick={() => void edit()}>حفظ التعديل</Button><Button variant="outline" onClick={() => setEditing(null)}>إلغاء</Button></div></CardContent></Card></div>}</main>;
 }

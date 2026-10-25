@@ -164,6 +164,7 @@ export type Database = {
       admin_set_employee_pin_access: { Args: { p_employee_id: string; p_enabled: boolean }; Returns: Json };
       staff_employee_pin_is_verified: { Args: { p_shop_id: string; p_employee_id?: string | null }; Returns: boolean };
       verify_current_staff_pin: { Args: { p_shop_id: string; p_pin: string }; Returns: Json };
+      verify_staff_pin_access: { Args: { p_shop_id: string; p_pin: string }; Returns: Json };
       list_active_catalog_coupons: { Args: { p_shop_id: string }; Returns: Array<Database["public"]["Tables"]["catalog_coupons"]["Row"]> };
       validate_catalog_coupon: { Args: { p_shop_id: string; p_code: string; p_order_amount: number }; Returns: Json };
       award_completed_task_points: { Args: { p_shop_id: string; p_task_id: string }; Returns: Database["public"]["Tables"]["staff_points_ledger"]["Row"] };

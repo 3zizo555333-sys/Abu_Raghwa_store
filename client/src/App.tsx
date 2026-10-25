@@ -194,6 +194,7 @@ function Router() {
       <Route path={"/reports"} component={withSupervisorRole(withPasswordProtection(Reports, 'screen__reports', 'التقارير المالية'))} />
       <Route path={"/advanced-reports"} component={withSupervisorRole(withPasswordProtection(SalesInventory, 'screen__advanced_reports', 'جرد المبيعات والأرباح'))} />
       <Route path={"/employees"} component={withManagerRole(withPasswordProtection(Employees, 'screen__employees', 'إدارة الموظفين'))} />
+      <Route path={"/staff-management"} component={withManagerRole(withPasswordProtection(Employees, 'screen__staff_management', 'إدارة الموظفين'))} />
       <Route path={"/my-withdrawals"} component={StaffWithdrawals} />
       <Route path={"/tasks"} component={withSupervisorRole(withPasswordProtection(Tasks, 'screen__tasks', 'المهام'))} />
       <Route path={"/points-system"} component={withSupervisorRole(withPasswordProtection(PointsSystem, 'screen__points_system', 'نظام النقاط'))} />
