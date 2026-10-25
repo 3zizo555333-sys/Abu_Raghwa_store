@@ -9,6 +9,7 @@ import { CATALOG_PHONE, CATALOG_WHATSAPP, catalogProductMatchesSearch, getCatalo
 import { getCatalogFulfillmentMode, getFulfillmentPrice, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { trpc } from "@/lib/trpc";
 import { listPublicCatalogDisplayData, listCatalogRewards } from "@/lib/supabase/operations";
+import { subscribeToShopChanges } from "@/lib/supabase/products";
 import { listActiveStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { PromoCarousel } from "@/components/PromoCarousel";
 import { listActiveCatalogCoupons, validateCatalogCoupon, type CatalogCoupon, type CatalogCouponValidation } from "@/lib/supabase/catalogCoupons";
@@ -23,6 +24,7 @@ const DEFAULT_LOYALTY_REWARDS: LoyaltyRewardLevel[] = [
   { points: 200, giftName: "هدية كبرى خاصة", confirmed: true },
 ];
 const CUSTOMER_ORDERS_KEY = "abu_catalog_customer_orders";
+const PUBLIC_CATALOG_CACHE_KEY = "public-catalog-display-v2";
 const CUSTOMER_STATUS = {
   new: { label: "تم استلام طلبك", detail: "وصل الطلب إلى إدارة أبو رغوة للمراجعة.", className: "bg-amber-100 text-amber-800" },
   contacted: { label: "تم التواصل", detail: "تمت مراجعة الطلب والتواصل معك.", className: "bg-blue-100 text-blue-800" },
@@ -69,27 +71,35 @@ export default function PublicCatalogPage() {
   const [couponResult, setCouponResult] = useState<CatalogCouponValidation | null>(null);
   const [activeCoupons, setActiveCoupons] = useState<CatalogCoupon[]>([]);
   const applyCatalogSnapshot = (data: any) => {
-    setProducts((data.registeredProducts || []).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, company: product.company, catalogVisible: product.catalogVisible === true, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription || "", catalogDetailsUrl: product.catalogDetailsUrl || "", loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
-    setManualProducts((data.manualProducts || []).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
-    setRecipes((data.recipes || []).map((recipe: any) => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
+    setProducts((data.registeredProducts || []).filter((product: any) => product.catalogVisible === true && product.deleted_at == null).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, company: product.company, catalogVisible: true, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription || "", catalogDetailsUrl: product.catalogDetailsUrl || "", loyaltyPoints: product.loyaltyPoints, catalogImageUrl: product.imageUrl })));
+    setManualProducts((data.manualProducts || []).filter((row: any) => row.is_visible === true && row.deleted_at == null).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: true, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
+    setRecipes((data.recipes || []).filter((recipe: any) => recipe.catalog_visible === true && recipe.deleted_at == null).map((recipe: any) => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
     setCategories((data.categories || []).map((row: any) => ({ id: row.id, name: row.name })));
     setCompanies((data.companies || []).map((row: any) => ({ id: row.id, name: row.name })));
     setPricingConfig((data.pricing || { deliveryMarkupPercent: 0 }) as CatalogPricingConfig);
   };
   useEffect(() => {
     let active = true;
-    void readPersistentCloudCache<any>("public-catalog-display-v1").then(cached => {
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    void readPersistentCloudCache<any>(PUBLIC_CATALOG_CACHE_KEY).then(cached => {
       if (!active || !cached) return;
       applyCatalogSnapshot(cached);
     });
     const requestedShopId = typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("shop_id") || undefined;
     listPublicCatalogDisplayData({ shopId: requestedShopId }).then(data => {
       if (!active) return;
-      void writePersistentCloudCache("public-catalog-display-v1", data);
+      void writePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY, data);
       applyCatalogSnapshot(data);
+      void subscribeToShopChanges(data.shopId, () => {
+        void listPublicCatalogDisplayData({ shopId: data.shopId }).then(fresh => {
+          if (!active) return;
+          void writePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY, fresh);
+          applyCatalogSnapshot(fresh);
+        }).catch(() => undefined);
+      }).then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); }).catch(() => undefined);
       return Promise.all([listCatalogRewards(data.shopId), listActiveCatalogCoupons(data.shopId)]);
     }).then(result => { if (!active || !result) return; const [rows, coupons] = result as [any[], CatalogCoupon[]]; setRewardLevels(rows.map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); setActiveCoupons(coupons); }).catch(() => undefined);
-    return () => { active = false; };
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
   }, []);
   useEffect(() => {
     let active = true;

@@ -73,8 +73,10 @@ describe("صلاحيات عرض البائع", () => {
   it("لا يطلب استعلام الكتالوج العام أعمدة التكلفة أو ملاحظات التركيبات الداخلية", () => {
     const operations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/operations.ts"), "utf8");
     const displayQuery = operations.slice(operations.indexOf("export async function listPublicCatalogDisplayData"), operations.indexOf("export async function listCatalogRewards"));
-    expect(displayQuery).toContain('select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points")');
-    expect(displayQuery).toContain('catalog_description, catalog_details_url, catalog_category, catalog_company, version');
+    expect(displayQuery).toContain('select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points, deleted_at")');
+    expect(displayQuery).toContain('catalog_description, catalog_details_url, catalog_category, catalog_company, version, deleted_at');
+    expect(displayQuery.match(/eq\("catalog_visible", true\)/g)?.length).toBeGreaterThanOrEqual(2);
+    expect(displayQuery.match(/is\("deleted_at", null\)/g)?.length).toBeGreaterThanOrEqual(2);
     expect(displayQuery).not.toContain('select("*")');
     expect(displayQuery).not.toContain("cost_price");
     expect(displayQuery).not.toContain("wholesale_price_per_unit");

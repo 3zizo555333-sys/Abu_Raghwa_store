@@ -183,10 +183,10 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
   const id = await resolvePublicCatalogShopId(options.shopId);
   const client = getSupabaseClient();
   const [productResult, taxonomy, pricing, recipes] = await Promise.all([
-    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).order("name").limit(200),
+    client.from("products").select("id, name, unit_name, retail_price, category_name, loyalty_points, catalog_image_path, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, catalog_loyalty_points, deleted_at").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).order("name").limit(200),
     listCatalogTaxonomy({ publicOnly: true, shopId: id }),
     getCatalogSetting("pricing", { deliveryMarkupPercent: 0 }, id),
-    client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).limit(1000),
+    client.from("recipes").select("id, shop_id, name, retail_price, production_unit, loyalty_points, image_url, catalog_visible, catalog_price, catalog_old_price, catalog_description, catalog_details_url, catalog_category, catalog_company, version, deleted_at").eq("shop_id", id).eq("catalog_visible", true).is("deleted_at", null).limit(1000),
   ]);
   const products = await Promise.all(requireCloudResult(productResult).map(async row => ({
     id: row.id,

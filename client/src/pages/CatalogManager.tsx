@@ -16,7 +16,7 @@ import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type Catalo
 import { deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
-import { getActiveShopContext, getSignedProductImageUrl, updateProductCatalogSettings } from "@/lib/supabase/products";
+import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
 import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
@@ -59,6 +59,14 @@ export default function CatalogManager() {
   const [search, setSearch] = useState("");
   const [selectedProductId, setSelectedProductId] = useState("");
   const [selectedProductDetailsUrl, setSelectedProductDetailsUrl] = useState("");
+  const [pickerSearch, setPickerSearch] = useState("");
+  const [pickerCategoryId, setPickerCategoryId] = useState("");
+  const [pickerProducts, setPickerProducts] = useState<CloudProduct[]>([]);
+  const [pickerCategories, setPickerCategories] = useState<ProductCategory[]>([]);
+  const [pickerCursor, setPickerCursor] = useState<ProductCursor | null>(null);
+  const [pickerHasMore, setPickerHasMore] = useState(false);
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const pickerRequestId = useRef(0);
   const [manualDraft, setManualDraft] = useState({ name: "", price: "", unit: "قطعة", category: "", company: "", description: "", detailsUrl: "", loyaltyPoints: "" });
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
   const [pickupQrCodeDataUrl, setPickupQrCodeDataUrl] = useState("");
@@ -80,6 +88,7 @@ export default function CatalogManager() {
 
   useEffect(() => {
     void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
+    void listProductCategories().then(setPickerCategories).catch(() => undefined);
     listCatalogDisplayData().then(data => {
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;
@@ -101,6 +110,34 @@ export default function CatalogManager() {
       setPricingConfig(pricing);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
   }, []);
+
+  const loadPickerProducts = async (reset = true) => {
+    if (pickerLoading && reset === false) return;
+    const requestId = ++pickerRequestId.current;
+    setPickerLoading(true);
+    try {
+      const page = await listProductsPage({
+        search: pickerSearch,
+        categoryId: pickerCategoryId || null,
+        cursor: reset ? null : pickerCursor,
+        limit: 50,
+        includeImages: false,
+      });
+      if (requestId !== pickerRequestId.current) return;
+      setPickerProducts(current => reset ? page.items : [...current, ...page.items]);
+      setPickerCursor(page.next_cursor);
+      setPickerHasMore(page.has_more);
+    } catch (error) {
+      if (requestId === pickerRequestId.current) toast.error(error instanceof Error ? error.message : "تعذر تحميل منتجات المخزون");
+    } finally {
+      if (requestId === pickerRequestId.current) setPickerLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadPickerProducts(true); }, 250);
+    return () => window.clearTimeout(timer);
+  }, [pickerSearch, pickerCategoryId]);
 
   const enableOrderSound = () => {
     try {
@@ -261,7 +298,7 @@ export default function CatalogManager() {
         loyaltyPoints: saved.catalogLoyaltyPoints,
         catalogImageUrl: saved.imageUrl || item.catalogImageUrl,
       } : item));
-      await removePersistentCloudCache("public-catalog-display-v1");
+      await removePersistentCloudCache("public-catalog-display-v2");
       toast.success("تم حفظ إعدادات المنتج في الكتالوج");
     } catch (error) {
       setProducts(current => current.map(item => item.id === id ? original : item));
@@ -288,7 +325,7 @@ export default function CatalogManager() {
         catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
         catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
         loyaltyPoints: saved.loyalty_points });
-      await removePersistentCloudCache("public-catalog-display-v1");
+      await removePersistentCloudCache("public-catalog-display-v2");
       toast.success("تم حفظ إعدادات التركيبة في Supabase");
     } catch (error) {
       if (Object.keys(patch).length && original) updateRecipe(id, original);
@@ -297,11 +334,20 @@ export default function CatalogManager() {
   };
 
   const addRegisteredProduct = () => {
-    const product = safeProducts.find(item => item.id === selectedProductId);
+    const pickerProduct = pickerProducts.find(item => item.id === selectedProductId);
+    const product = safeProducts.find(item => item.id === selectedProductId) || (pickerProduct ? {
+      id: pickerProduct.id, catalogSource: "product" as const, name: pickerProduct.name, unit: pickerProduct.unit,
+      retailPrice: pickerProduct.retailPrice, wholesaleRetailPrice: pickerProduct.wholesaleRetailPrice,
+      category: pickerProduct.catalogCategory || pickerProduct.category, company: pickerProduct.catalogCompany || "أبو رغوة",
+      catalogVisible: pickerProduct.catalogVisible, catalogPrice: pickerProduct.catalogPrice ?? undefined,
+      catalogOldPrice: pickerProduct.catalogOldPrice ?? undefined, catalogDescription: pickerProduct.catalogDescription,
+      catalogDetailsUrl: pickerProduct.catalogDetailsUrl, loyaltyPoints: pickerProduct.catalogLoyaltyPoints,
+      version: pickerProduct.version,
+    } : undefined);
     if (!product) return toast.error("اختر منتجاً مسجلاً من القائمة أولاً");
     const catalogDetailsUrl = getSafeCatalogDetailsUrl(selectedProductDetailsUrl);
     if (selectedProductDetailsUrl.trim() && !catalogDetailsUrl) return toast.error("اكتب رابط فيديو أو منشور يبدأ بـ https:// أو http://");
-    updateProduct(product.id, { catalogVisible: true, ...(catalogDetailsUrl ? { catalogDetailsUrl } : {}) });
+    void saveRegisteredProductSettings(product.id, { catalogVisible: true, ...(catalogDetailsUrl ? { catalogDetailsUrl } : {}) });
     setSelectedProductId("");
     setSelectedProductDetailsUrl("");
     toast.success(`تمت إضافة ${product.name} إلى الكتالوج`);
@@ -329,7 +375,7 @@ export default function CatalogManager() {
     try {
       await deleteCatalogManualProduct(product.id);
       setManualProducts(current => (Array.isArray(current) ? current : []).filter(item => item.id !== product.id));
-      await removePersistentCloudCache("public-catalog-display-v1");
+      await removePersistentCloudCache("public-catalog-display-v2");
       if (product.catalogImageStoragePath) await removeCatalogManualProductImage(product.catalogImageStoragePath).catch(() => undefined);
       setManualProductToDelete(null);
       toast.success("تم حذف المنتج اليدوي من Supabase والكتالوج");
@@ -521,10 +567,27 @@ export default function CatalogManager() {
         <section className="grid gap-5 lg:grid-cols-2">
           <Card className="border border-orange-100 shadow-sm">
             <CardHeader><CardTitle className="flex items-center gap-2"><Package className="text-orange-600" />إضافة منتج مسجل</CardTitle><CardDescription>اختر من جميع منتجات المخزون المسجلة، ثم أضفه للكتالوج مع رابط فيديو أو منشور تعريف اختياري.</CardDescription></CardHeader>
-            <CardContent className="grid gap-3 sm:grid-cols-[1fr_1fr_auto]">
-              <select value={selectedProductId} onChange={event => setSelectedProductId(event.target.value)} className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">اختر منتجاً من قائمة المنتجات ({safeProducts.length})</option>{safeProducts.map(product => <option key={product.id} value={product.id}>{product.name} — {getCatalogPrice(product)} ج.م</option>)}</select>
-              <Input value={selectedProductDetailsUrl} onChange={event => setSelectedProductDetailsUrl(event.target.value)} placeholder="رابط فيديو أو منشور التعريف (اختياري)" dir="ltr" />
-              <Button onClick={addRegisteredProduct} className="h-11 bg-orange-600 hover:bg-orange-700"><Plus className="ml-1 h-4 w-4" />إضافة للكتالوج</Button>
+            <CardContent className="space-y-3">
+              <div className="grid gap-2 sm:grid-cols-[1fr_220px]">
+                <div className="relative"><Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" /><Input value={pickerSearch} onChange={event => setPickerSearch(event.target.value)} placeholder="ابحث بالاسم أو الباركود في كامل المخزون" className="pr-9" /></div>
+                <select value={pickerCategoryId} onChange={event => setPickerCategoryId(event.target.value)} className="h-11 rounded-xl border border-slate-200 bg-white px-3 text-sm"><option value="">كل الفئات</option>{pickerCategories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
+              </div>
+              <div className="max-h-64 space-y-2 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-2">
+                {pickerLoading && pickerProducts.length === 0 && <p className="p-4 text-center text-sm text-slate-500">جاري البحث في كامل قاعدة البيانات...</p>}
+                {!pickerLoading && pickerProducts.length === 0 && <p className="p-4 text-center text-sm text-slate-500">لا توجد منتجات مطابقة.</p>}
+                {pickerProducts.map(product => <button key={product.id} type="button" onClick={() => setSelectedProductId(product.id)} className={`flex w-full items-center justify-between gap-3 rounded-lg border p-3 text-right transition ${selectedProductId === product.id ? "border-orange-500 bg-orange-50" : "border-white bg-white hover:border-orange-300"}`}>
+                  <span className="min-w-0"><span className="block truncate font-black text-slate-900">{product.name}</span><span className="block truncate text-xs text-slate-500">{product.category} · {product.barcode || product.code || "بدون باركود"}</span></span>
+                  <span className="shrink-0 text-left"><span className="block text-sm font-black text-orange-700">{getCatalogPrice({ retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, catalogPrice: product.catalogPrice } as CatalogProduct)} ج.م</span><span className={`block text-[11px] font-bold ${product.catalogVisible ? "text-emerald-700" : "text-slate-500"}`}>{product.catalogVisible ? "مضاف للكتالوج" : "غير مضاف"}</span></span>
+                </button>)}
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                {pickerHasMore && <Button type="button" variant="outline" disabled={pickerLoading} onClick={() => void loadPickerProducts(false)}>{pickerLoading ? "جاري التحميل..." : "تحميل منتجات أخرى"}</Button>}
+                <span className="text-xs text-slate-500">تم تحميل {pickerProducts.length} منتجاً{pickerHasMore ? " — توجد نتائج أخرى" : ""}</span>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                <Input value={selectedProductDetailsUrl} onChange={event => setSelectedProductDetailsUrl(event.target.value)} placeholder="رابط فيديو أو منشور التعريف (اختياري)" dir="ltr" />
+                <Button onClick={addRegisteredProduct} disabled={!selectedProductId} className="h-11 bg-orange-600 hover:bg-orange-700"><Plus className="ml-1 h-4 w-4" />إضافة للكتالوج</Button>
+              </div>
             </CardContent>
           </Card>
           <Card className="border border-blue-100 shadow-sm">
