@@ -91,4 +91,32 @@ describe("صلاحيات عرض البائع", () => {
     expect(publicPage).toContain("recipe.catalog_visible === true && recipe.deleted_at == null");
     expect(publicPage).toContain('const PUBLIC_CATALOG_CACHE_KEY = "public-catalog-display-v3"');
   });
+
+  it("يحافظ على البيانات عند الإخفاء ويعيد الإظهار عند الحفظ", () => {
+    const operations = readFileSync(resolve(projectRoot, "client/src/lib/supabase/operations.ts"), "utf8");
+    const products = readFileSync(resolve(projectRoot, "client/src/lib/supabase/products.ts"), "utf8");
+    const manager = readFileSync(resolve(projectRoot, "client/src/pages/CatalogManager.tsx"), "utf8");
+    const publicPage = readFileSync(resolve(projectRoot, "client/src/pages/PublicCatalogPage.tsx"), "utf8");
+    expect(operations).toContain("catalog_visible: catalogVisible");
+    expect(operations).not.toContain("delete().eq(\"id\", input.id)");
+    expect(products).toContain("catalog_visible: input.catalogVisible");
+    expect(products).not.toContain("from(\"products\").delete");
+    expect(manager).toContain("catalogVisible: event.target.checked");
+    expect(manager).toContain("catalog_visible: recipe.catalogVisible === true");
+    expect(publicPage).toContain("product.catalogVisible === true");
+    expect(publicPage).toContain("recipe.catalog_visible === true && recipe.deleted_at == null");
+    expect(publicPage).toContain("[...(Array.isArray(categories) ? categories : [])");
+    expect(publicPage).toContain("[...(Array.isArray(companies) ? companies : [])");
+
+    const visible = (rows: Array<{ catalog_visible: boolean; deleted_at: string | null }>) => rows.filter(row => row.catalog_visible === true && row.deleted_at == null);
+    const product = { catalog_visible: true, deleted_at: null };
+    const recipe = { catalog_visible: true, deleted_at: null };
+    expect(visible([product, recipe])).toHaveLength(2);
+    product.catalog_visible = false;
+    recipe.catalog_visible = false;
+    expect(visible([product, recipe])).toHaveLength(0);
+    product.catalog_visible = true;
+    recipe.catalog_visible = true;
+    expect(visible([product, recipe])).toHaveLength(2);
+  });
 });
