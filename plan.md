@@ -69,3 +69,8 @@
 - تحققت من منح `anon`: `catalog_manual_products` يتيح أعمدة العرض الضرورية فقط، بما فيها `category_id` و`company_id`، دون منح كتابة.
 - عدد الصفوف الحية عند الفحص: 30 فئة، 146 شركة، و3 منتجات يدوية غير مرئية/محذوفة حسب الإسقاط العام، ولم تُعدّل بيانات الأعمال.
 - مشروع Vercel `abu_raghwa_store` مرتبط بالمستودع، وآخر نشر إنتاجي قبل هذا التغيير كان `READY`، مع حماية SSO مفعلة على نطاقات Vercel الافتراضية.
+
+### نتيجة النشر
+- commit النشر هو `7cab8e9e96507020b60fce80a65fc222dc0e3995` على `main`، ونشر Vercel `dpl_ERoLf4nQQ5Dunrw2c83vDnWdTfeZ` أصبح `READY` على Production.
+- فحص `https://aburaghwastore.vercel.app/catalog` أعاد `200` بصفحة HTML، وفحص `/api/health` أعاد `200` و`{"status":"ok"}`، كما أعاد `/manus-routes.json` حالة `200` بصيغة JSON.
+- رابط deployment المباشر محمي بإعداد SSO الحالي في Vercel، بينما alias الإنتاج الأساسي يعمل؛ لم أغيّر إعداد الحماية حفاظاً على الاستقرار.
