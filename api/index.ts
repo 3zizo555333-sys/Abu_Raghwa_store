@@ -2,7 +2,6 @@ import express from "express";
 import type { NextFunction, Request, Response } from "express";
 import { createApiApp } from "../server/_core/app";
 import { restoreVercelRoutedPath } from "../server/_core/vercelHandler";
-import { catalogMediaUploadRoute } from "../server/catalogMediaUpload";
 
 // Vercel's Express integration expects the Express application itself as the
 // default export. This also avoids depending on a hand-written Node adapter
@@ -18,7 +17,14 @@ api.use((req, res, next) => {
     res.status(400).json({ error: "Invalid API request" });
   }
 });
-api.all("/catalog/upload-media", catalogMediaUploadRoute);
+api.all("/catalog/upload-media", async (req, res, next) => {
+  try {
+    const { catalogMediaUploadRoute } = await import("../server/catalogMediaUpload");
+    return catalogMediaUploadRoute(req, res);
+  } catch (error) {
+    return next(error);
+  }
+});
 api.use(createApiApp());
 api.use((_req, res) => {
   res.status(404).json({ error: "Not found" });
