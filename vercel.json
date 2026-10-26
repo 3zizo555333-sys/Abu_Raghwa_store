@@ -13,6 +13,10 @@
   },
   "routes": [
     {
+      "src": "^/api/catalog/upload-media$",
+      "dest": "/api/catalog/upload-media.ts"
+    },
+    {
       "src": "^/manus-storage(?:/(?<path>.*))?$",
       "dest": "/api/index.ts?__vercel_path=manus-storage/$path"
     },
