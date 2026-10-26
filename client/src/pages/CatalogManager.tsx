@@ -297,13 +297,11 @@ export default function CatalogManager() {
     if (!file) return;
     setTaxonomyImageUploading(entity.id);
     try {
-      const uploaded = await uploadCatalogTaxonomyImage(kind, entity.id, file);
+      const uploaded = await uploadCatalogTaxonomyImage(kind, entity.id, entity.name, file);
       if (entity.imageStoragePath) void removeCatalogTaxonomyImage(entity.imageStoragePath).catch(() => undefined);
       if (kind === "categories") {
-        await saveCatalogCategory({ id: entity.id, name: entity.name, sort_order: safeCategories.findIndex(item => item.id === entity.id), image_url: uploaded.publicUrl, image_storage_path: uploaded.storagePath });
         setCategories(current => current.map(item => item.id === entity.id ? { ...item, imageUrl: uploaded.publicUrl, imageStoragePath: uploaded.storagePath } : item));
       } else {
-        await saveCatalogCompany({ id: entity.id, name: entity.name, image_url: uploaded.publicUrl, image_storage_path: uploaded.storagePath });
         setCompanies(current => current.map(item => item.id === entity.id ? { ...item, imageUrl: uploaded.publicUrl, imageStoragePath: uploaded.storagePath } : item));
       }
       toast.success("تم حفظ الصورة وتحديث الكتالوج");
