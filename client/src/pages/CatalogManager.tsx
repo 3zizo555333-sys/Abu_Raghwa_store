@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -87,6 +88,10 @@ export default function CatalogManager() {
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
   const [manualDeletePending, setManualDeletePending] = useState(false);
   const [taxonomyImageUploading, setTaxonomyImageUploading] = useState<string | null>(null);
+  const [taxonomyManagerOpen, setTaxonomyManagerOpen] = useState<CatalogTaxonomyKind | null>(null);
+  const [taxonomySearch, setTaxonomySearch] = useState("");
+  const [showTaxonomyAddForm, setShowTaxonomyAddForm] = useState(false);
+  const [editingTaxonomy, setEditingTaxonomy] = useState<{ kind: CatalogTaxonomyKind; id: string; name: string } | null>(null);
 
   useEffect(() => {
     void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
@@ -226,6 +231,11 @@ export default function CatalogManager() {
   const safeRecipes = useMemo(() => Array.isArray(recipes) ? recipes.filter(Boolean) : [], [recipes]);
   const safeCategories = useMemo(() => Array.isArray(categories) ? categories.filter(Boolean) : [], [categories]);
   const safeCompanies = useMemo(() => Array.isArray(companies) ? companies.filter(Boolean) : [], [companies]);
+  const filteredTaxonomyItems = useMemo(() => {
+    const source = taxonomyManagerOpen === "categories" ? safeCategories : safeCompanies;
+    const query = taxonomySearch.trim().toLocaleLowerCase("ar-EG");
+    return query ? source.filter(item => item.name.toLocaleLowerCase("ar-EG").includes(query)) : source;
+  }, [safeCategories, safeCompanies, taxonomyManagerOpen, taxonomySearch]);
   const managedProducts = useMemo(() => [...safeProducts, ...safeManualProducts], [safeProducts, safeManualProducts]);
   const catalogRecipes = useMemo(() => safeRecipes.map(recipeToCatalogProduct), [safeRecipes]);
   const filteredProducts = useMemo(() => managedProducts.filter(product => `${product.name ?? ""} ${product.category ?? ""} ${product.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [managedProducts, search]);
@@ -251,6 +261,26 @@ export default function CatalogManager() {
     setCompanies([...safeCompanies, { id: saved.id, name: saved.name, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
     setNewCompany("");
     toast.success("تمت إضافة الشركة للكتالوج");
+  };
+
+  const updateTaxonomyName = async (kind: CatalogTaxonomyKind, entity: CatalogCategory | CatalogCompany, nextName: string) => {
+    const name = nextName.trim();
+    if (!name) return toast.error("اكتب اسماً صحيحاً أولاً");
+    const source = kind === "categories" ? safeCategories : safeCompanies;
+    if (source.some(item => item.id !== entity.id && item.name === name)) return toast.error("هذا الاسم موجود بالفعل");
+    try {
+      if (kind === "categories") {
+        await saveCatalogCategory({ id: entity.id, name, sort_order: safeCategories.findIndex(item => item.id === entity.id), image_url: entity.imageUrl || undefined, image_storage_path: entity.imageStoragePath || null });
+        setCategories(current => current.map(item => item.id === entity.id ? { ...item, name } : item));
+      } else {
+        await saveCatalogCompany({ id: entity.id, name, image_url: entity.imageUrl || undefined, image_storage_path: entity.imageStoragePath || null });
+        setCompanies(current => current.map(item => item.id === entity.id ? { ...item, name } : item));
+      }
+      setEditingTaxonomy(null);
+      toast.success("تم حفظ الاسم وتحديث الكتالوج");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ الاسم");
+    }
   };
 
   const deleteTaxonomy = async (kind: CatalogTaxonomyKind, id: string) => {
@@ -564,14 +594,64 @@ export default function CatalogManager() {
           <Card className="border-0 shadow-sm"><CardContent className="flex items-center gap-3 p-5"><span className="rounded-2xl bg-blue-100 p-3 text-blue-700"><Phone /></span><div><p className="text-xs text-slate-500">رقم الكتالوج للتواصل</p><p className="text-lg font-black text-slate-900" dir="ltr">{CATALOG_PHONE}</p></div></CardContent></Card>
         </section>
 
-        <section className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><FolderPlus className="text-orange-600" />الفئات والشركات</CardTitle><CardDescription>أضف المسميات التي تناسب محلك مثل مسحوق، ورقيات، مستحضرات تجميل، ثم اربط المنتجات بها.</CardDescription></CardHeader><CardContent className="grid gap-6 md:grid-cols-2">
-            <div className="space-y-3"><div className="flex gap-2"><Input value={newCategory} onChange={event => setNewCategory(event.target.value)} placeholder="اسم فئة جديدة" onKeyDown={event => event.key === "Enter" && addCategory()} /><Button onClick={addCategory} className="bg-orange-600 hover:bg-orange-700"><Plus /></Button></div><div className="space-y-2">{safeCategories.length ? safeCategories.map(category => <div key={category.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-orange-100 bg-orange-50/60 p-2"><span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{category.imageUrl ? <img src={category.imageUrl} alt="" className="h-full w-full object-cover" /> : <Package className="h-4 w-4 text-orange-500" />}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-orange-950">{category.name}</span><label className="cursor-pointer rounded-lg bg-orange-600 px-2 py-1.5 text-[10px] font-black text-white">📷 كاميرا<input type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === category.id} onChange={event => { void uploadTaxonomyImage("categories", category, event.target.files?.[0]); event.target.value = ""; }} /></label><label className="cursor-pointer rounded-lg border border-orange-200 bg-white px-2 py-1.5 text-[10px] font-black text-orange-700">🖼️ معرض<input type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === category.id} onChange={event => { void uploadTaxonomyImage("categories", category, event.target.files?.[0]); event.target.value = ""; }} /></label><button className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="إزالة الفئة" onClick={() => void deleteTaxonomy("categories", category.id)}><Trash2 className="h-4 w-4" /></button></div>) : <p className="text-xs text-slate-500">لم تضف فئات بعد.</p>}</div></div>
-            <div className="space-y-3"><div className="flex gap-2"><Input value={newCompany} onChange={event => setNewCompany(event.target.value)} placeholder="اسم شركة جديدة" onKeyDown={event => event.key === "Enter" && addCompany()} /><Button onClick={addCompany} className="bg-blue-600 hover:bg-blue-700"><Plus /></Button></div><div className="space-y-2">{safeCompanies.length ? safeCompanies.map(company => <div key={company.id} className="flex flex-wrap items-center gap-2 rounded-xl border border-blue-100 bg-blue-50/60 p-2"><span className="grid h-9 w-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{company.imageUrl ? <img src={company.imageUrl} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-4 w-4 text-blue-500" />}</span><span className="min-w-0 flex-1 truncate text-xs font-black text-blue-950">{company.name}</span><label className="cursor-pointer rounded-lg bg-blue-600 px-2 py-1.5 text-[10px] font-black text-white">📷 كاميرا<input type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === company.id} onChange={event => { void uploadTaxonomyImage("companies", company, event.target.files?.[0]); event.target.value = ""; }} /></label><label className="cursor-pointer rounded-lg border border-blue-200 bg-white px-2 py-1.5 text-[10px] font-black text-blue-700">🖼️ معرض<input type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === company.id} onChange={event => { void uploadTaxonomyImage("companies", company, event.target.files?.[0]); event.target.value = ""; }} /></label><button className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title="إزالة الشركة" onClick={() => void deleteTaxonomy("companies", company.id)}><Trash2 className="h-4 w-4" /></button></div>) : <p className="text-xs text-slate-500">لم تضف شركات بعد.</p>}</div></div>
-          </CardContent></Card>
-
-          <Card className="border-0 bg-slate-950 text-white shadow-sm"><CardContent className="flex flex-col items-center gap-3 p-6 text-center"><span className="rounded-2xl bg-white/10 p-3"><QrCode className="h-7 w-7 text-amber-300" /></span><h2 className="text-xl font-black">QR ورابط كتالوج المحل</h2><p className="text-xs text-slate-300">استخدم QR للطباعة، أو انشر الرابط الظاهر أدناه في فيسبوك؛ الزبون يضغطه من هاتفه ويدخل الكتالوج فورًا.</p>{qrCodeDataUrl && <img src={qrCodeDataUrl} alt="باركود كتالوج أبو رغوة" className="h-44 w-44 rounded-2xl bg-white p-2" />}<div className="w-full rounded-xl border border-white/15 bg-white/10 p-2 text-right"><p className="mb-1 text-[11px] font-bold text-amber-200">رابط الكتالوج للنشر:</p><Input value={catalogUrl} readOnly dir="ltr" onFocus={event => event.currentTarget.select()} className="h-9 border-white/20 bg-white text-left text-xs text-slate-900" /></div><div className="flex flex-wrap justify-center gap-2"><Button size="sm" onClick={copyCatalogLink} className="bg-white text-slate-950 hover:bg-slate-100"><Copy className="ml-1 h-3.5 w-3.5" />نسخ الرابط</Button><Button size="sm" onClick={shareOnFacebook} className="bg-[#1877F2] text-white hover:bg-[#166FE5]"><span className="ml-1 grid h-4 w-4 place-items-center rounded-sm bg-white text-[10px] font-black text-[#1877F2]">f</span>نشر على Facebook</Button><Button size="sm" onClick={shareCatalog} className="bg-orange-500 text-white hover:bg-orange-600"><Share2 className="ml-1 h-3.5 w-3.5" />مشاركة</Button><Button size="sm" onClick={printQr} variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white"><Printer className="ml-1 h-3.5 w-3.5" />طباعة</Button><Button size="sm" onClick={downloadQr} variant="outline" className="border-white/40 bg-white/10 text-white hover:bg-white/20 hover:text-white">تحميل QR</Button></div></CardContent></Card>
+        <section className="grid gap-4 md:grid-cols-2">
+          <Card className="border-0 shadow-sm ring-1 ring-orange-100">
+            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="rounded-2xl bg-orange-100 p-3 text-orange-700"><FolderPlus className="h-6 w-6" /></span>
+                <div><p className="text-lg font-black text-slate-900">إدارة الفئات ({safeCategories.length} فئة)</p><p className="mt-1 text-xs text-slate-500">أسماء الفئات والصور المستخدمة في الكتالوج.</p></div>
+              </div>
+              <Button type="button" onClick={() => { setTaxonomyManagerOpen("categories"); setTaxonomySearch(""); setShowTaxonomyAddForm(false); setEditingTaxonomy(null); }} className="shrink-0 bg-orange-600 font-black hover:bg-orange-700">📂 إدارة الفئات ({safeCategories.length} فئة)</Button>
+            </CardContent>
+          </Card>
+          <Card className="border-0 shadow-sm ring-1 ring-blue-100">
+            <CardContent className="flex flex-col gap-4 p-5 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <span className="rounded-2xl bg-blue-100 p-3 text-blue-700"><Building2 className="h-6 w-6" /></span>
+                <div><p className="text-lg font-black text-slate-900">إدارة الشركات ({safeCompanies.length} شركة)</p><p className="mt-1 text-xs text-slate-500">الشركات والعلامات التجارية المرتبطة بالمنتجات.</p></div>
+              </div>
+              <Button type="button" onClick={() => { setTaxonomyManagerOpen("companies"); setTaxonomySearch(""); setShowTaxonomyAddForm(false); setEditingTaxonomy(null); }} className="shrink-0 bg-blue-600 font-black hover:bg-blue-700">🏢 إدارة الشركات ({safeCompanies.length} شركة)</Button>
+            </CardContent>
+          </Card>
         </section>
+
+        <Dialog open={taxonomyManagerOpen !== null} onOpenChange={open => { if (!open) { setTaxonomyManagerOpen(null); setEditingTaxonomy(null); setShowTaxonomyAddForm(false); } }}>
+          <DialogContent dir="rtl" className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2 text-xl font-black">
+                {taxonomyManagerOpen === "categories" ? <Package className="text-orange-600" /> : <Building2 className="text-blue-600" />}
+                {taxonomyManagerOpen === "categories" ? `إدارة الفئات (${safeCategories.length} فئة)` : `إدارة الشركات (${safeCompanies.length} شركة)`}
+              </DialogTitle>
+              <DialogDescription>ابحث وعدّل الاسم أو ارفع صورة من الكاميرا أو المعرض. التغييرات تحفظ مباشرة في الكتالوج.</DialogDescription>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="relative"><Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" /><Input value={taxonomySearch} onChange={event => setTaxonomySearch(event.target.value)} placeholder={taxonomyManagerOpen === "categories" ? "ابحث عن اسم الفئة" : "ابحث عن اسم الشركة"} className="h-10 pr-9" autoFocus /></div>
+              <Button type="button" variant="outline" onClick={() => setShowTaxonomyAddForm(current => !current)} className="w-full justify-center border-dashed font-black">+ إضافة {taxonomyManagerOpen === "categories" ? "فئة" : "شركة"} جديدة</Button>
+              {showTaxonomyAddForm && <div className={`rounded-2xl p-3 ${taxonomyManagerOpen === "categories" ? "bg-orange-50" : "bg-blue-50"}`}>
+                <div className="flex gap-2">
+                  <Input value={taxonomyManagerOpen === "categories" ? newCategory : newCompany} onChange={event => taxonomyManagerOpen === "categories" ? setNewCategory(event.target.value) : setNewCompany(event.target.value)} onKeyDown={event => { if (event.key === "Enter") void (taxonomyManagerOpen === "categories" ? addCategory() : addCompany()); }} placeholder={taxonomyManagerOpen === "categories" ? "اسم الفئة الجديدة" : "اسم الشركة الجديدة"} className="bg-white" />
+                  <Button type="button" onClick={() => void (taxonomyManagerOpen === "categories" ? addCategory() : addCompany())} className={taxonomyManagerOpen === "categories" ? "bg-orange-600 hover:bg-orange-700" : "bg-blue-600 hover:bg-blue-700"}>إضافة</Button>
+                </div>
+              </div>}
+              <div className="space-y-2">
+                {filteredTaxonomyItems.length ? filteredTaxonomyItems.map(entity => {
+                  const isCategory = taxonomyManagerOpen === "categories";
+                  const isEditing = editingTaxonomy?.kind === taxonomyManagerOpen && editingTaxonomy.id === entity.id;
+                  const cameraId = `${taxonomyManagerOpen}-camera-${entity.id}`;
+                  const galleryId = `${taxonomyManagerOpen}-gallery-${entity.id}`;
+                  return <div key={entity.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2 ${isCategory ? "border-orange-100 bg-orange-50/60" : "border-blue-100 bg-blue-50/60"}`}>
+                    <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{entity.imageUrl ? <img src={entity.imageUrl} alt="" className={`h-full w-full ${isCategory ? "object-cover" : "object-contain"}`} /> : isCategory ? <Package className="h-5 w-5 text-orange-500" /> : <Building2 className="h-5 w-5 text-blue-500" />}</span>
+                    {isEditing ? <div className="flex min-w-[180px] flex-1 gap-2"><Input value={editingTaxonomy.name} onChange={event => setEditingTaxonomy(current => current ? { ...current, name: event.target.value } : current)} onKeyDown={event => { if (event.key === "Enter") void updateTaxonomyName(taxonomyManagerOpen!, entity, editingTaxonomy?.name || ""); }} className="h-9 bg-white text-sm font-bold" autoFocus /><Button type="button" size="sm" onClick={() => void updateTaxonomyName(taxonomyManagerOpen!, entity, editingTaxonomy?.name || "")} className="bg-emerald-600 hover:bg-emerald-700">حفظ</Button><Button type="button" size="sm" variant="ghost" onClick={() => setEditingTaxonomy(null)}>إلغاء</Button></div> : <span className="min-w-0 flex-1 truncate text-sm font-black text-slate-900">{entity.name}</span>}
+                    {!isEditing && <Button type="button" size="sm" variant="outline" onClick={() => setEditingTaxonomy({ kind: taxonomyManagerOpen!, id: entity.id, name: entity.name })} className="h-8 px-2 text-xs font-bold">تعديل</Button>}
+                    <label htmlFor={cameraId} className={`cursor-pointer rounded-lg px-2 py-1.5 text-[10px] font-black text-white ${isCategory ? "bg-orange-600" : "bg-blue-600"}`}>📷 كاميرا<input id={cameraId} type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === entity.id} onChange={event => { void uploadTaxonomyImage(taxonomyManagerOpen!, entity, event.target.files?.[0]); event.target.value = ""; }} /></label>
+                    <label htmlFor={galleryId} className={`cursor-pointer rounded-lg border bg-white px-2 py-1.5 text-[10px] font-black ${isCategory ? "border-orange-200 text-orange-700" : "border-blue-200 text-blue-700"}`}>🖼️ معرض<input id={galleryId} type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === entity.id} onChange={event => { void uploadTaxonomyImage(taxonomyManagerOpen!, entity, event.target.files?.[0]); event.target.value = ""; }} /></label>
+                    <button type="button" className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title={`إزالة ${isCategory ? "الفئة" : "الشركة"}`} onClick={() => void deleteTaxonomy(taxonomyManagerOpen!, entity.id)}><Trash2 className="h-4 w-4" /></button>
+                  </div>;
+                }) : <p className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">لا توجد نتائج مطابقة للبحث.</p>}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Card className="border-0 shadow-sm">
           <CardHeader><CardTitle className="flex items-center gap-2"><Truck className="text-emerald-600" />سعر ورابط الاستلام والتوصيل</CardTitle><CardDescription>الاستلام من المحل يستخدم سعر الكتالوج المعتاد. رابط التوصيل يزيد سعر كل صنف بالنسبة التي تكتبها هنا، دون تغيير سعر المحل.</CardDescription></CardHeader>
