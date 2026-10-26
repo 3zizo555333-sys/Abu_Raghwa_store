@@ -3,6 +3,7 @@ import type { TouchEvent } from "react";
 import { ChevronLeft, ChevronRight, Gift, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
+import { getTrustedCatalogImageUrl } from "@/lib/catalog";
 
 type PromoItem = { imageUrl?: string; image_url?: string; name?: string };
 type PromoOfferData = { title?: string; description?: string; discountAmount?: number; discountPercent?: number; loyaltyPoints?: number; imageUrl?: string; image_url?: string; bannerImageUrl?: string; banner_image_url?: string; items?: PromoItem[] };
@@ -14,10 +15,10 @@ function getOfferData(offer: CloudStoreOffer): PromoOfferData {
 
 function getOfferImages(data: PromoOfferData) {
   const itemImages = (Array.isArray(data.items) ? data.items : [])
-    .map(item => item.imageUrl || item.image_url || "")
+    .map(item => getTrustedCatalogImageUrl(item.imageUrl || item.image_url || ""))
     .filter(Boolean)
     .slice(0, 3);
-  const bannerImage = data.bannerImageUrl || data.banner_image_url || data.imageUrl || data.image_url || "";
+  const bannerImage = getTrustedCatalogImageUrl(data.bannerImageUrl || data.banner_image_url || data.imageUrl || data.image_url || "");
   return { bannerImage, itemImages };
 }
 

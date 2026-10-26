@@ -89,7 +89,8 @@ describe("صلاحيات عرض البائع", () => {
     const publicPage = readFileSync(resolve(projectRoot, "client/src/pages/PublicCatalogPage.tsx"), "utf8");
     expect(operations).toContain("recipeRows.filter(row => row.catalog_visible === true && row.deleted_at == null)");
     expect(publicPage).toContain("recipe.catalog_visible === true && recipe.deleted_at == null");
-    expect(publicPage).toContain('const PUBLIC_CATALOG_CACHE_KEY = "public-catalog-display-v4"');
+    expect(publicPage).toContain('PUBLIC_CATALOG_CACHE_KEY');
+    expect(publicPage).toContain('from "@/lib/catalog"');
   });
 
   it("يحافظ على البيانات عند الإخفاء ويعيد الإظهار عند الحفظ", () => {

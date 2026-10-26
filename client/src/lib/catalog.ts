@@ -77,11 +77,6 @@ export interface CatalogCompany {
   imageStoragePath?: string;
 }
 
-export interface CatalogCompany {
-  id: string;
-  name: string;
-}
-
 export interface CatalogCartItem {
   productId: string;
   name: string;
@@ -93,6 +88,35 @@ export interface CatalogCartItem {
 
 export const CATALOG_PHONE = "01096935599";
 export const CATALOG_WHATSAPP = "201096935599";
+export const PUBLIC_CATALOG_CACHE_KEY = "public-catalog-display-v5";
+
+/**
+ * Public catalog images must come from the app itself or the store's
+ * Supabase Storage buckets. Existing taxonomy rows may contain old external
+ * URLs; ignore those instead of rendering unreliable or unapproved assets.
+ */
+export function getTrustedCatalogImageUrl(value: unknown) {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+  if (raw.startsWith("/")) return raw;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return "";
+    const path = url.pathname;
+    return path.includes("/storage/v1/object/public/catalog-images/")
+      || path.includes("/storage/v1/object/public/catalog-product-images/")
+      || path.includes("/storage/v1/object/public/product-images/")
+      || path.includes("/storage/v1/object/public/formulas/")
+      || path.includes("/storage/v1/object/sign/catalog-images/")
+      || path.includes("/storage/v1/object/sign/catalog-product-images/")
+      || path.includes("/storage/v1/object/sign/product-images/")
+      || path.includes("/storage/v1/object/sign/formulas/")
+      ? url.toString()
+      : "";
+  } catch {
+    return "";
+  }
+}
 
 export function getCatalogPrice(product: CatalogProduct) {
   return Math.max(0, Number(product.catalogPrice ?? product.wholesaleRetailPrice ?? product.retailPrice ?? 0));

@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, recipeToCatalogProduct } from "@/lib/catalog";
+import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, PUBLIC_CATALOG_CACHE_KEY, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
@@ -106,9 +106,9 @@ export default function CatalogManager() {
         catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined,
         notes: String(recipe.description || ""),
       })));
-      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name, imageUrl: row.image_url || undefined, imageStoragePath: row.image_storage_path || undefined })));
-      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, imageUrl: row.image_url || undefined, imageStoragePath: row.image_storage_path || undefined })));
-      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: "", company: "", catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: row.catalog_image_url || undefined, catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
+      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
+      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
+      setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String((row as any).category || ""), company: String((row as any).company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
       setPricingConfig(pricing);
     }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
   }, []);
@@ -285,7 +285,9 @@ export default function CatalogManager() {
     if (safeManualProducts.some(product => product.id === id)) {
       const product = safeManualProducts.find(item => item.id === id);
       if (product) {
-        await saveCatalogManualProduct({ id, name: String(patch.name ?? product.name), unit: String(patch.unit ?? product.unit), price: Number(patch.catalogPrice ?? product.catalogPrice ?? product.wholesaleRetailPrice ?? 0), description: String(patch.catalogDescription ?? product.catalogDescription ?? ""), details_url: String(patch.catalogDetailsUrl ?? product.catalogDetailsUrl ?? ""), loyalty_points: Number(patch.loyaltyPoints ?? product.loyaltyPoints ?? 0), is_visible: Boolean(patch.catalogVisible ?? product.catalogVisible), catalog_image_url: String(patch.catalogImageUrl ?? product.catalogImageUrl ?? ""), catalog_image_storage_path: patch.catalogImageStoragePath ?? product.catalogImageStoragePath ?? null, category_id: null, company_id: null });
+        const categoryName = String(patch.category ?? product.category ?? "").trim();
+        const companyName = String(patch.company ?? product.company ?? "").trim();
+        await saveCatalogManualProduct({ id, name: String(patch.name ?? product.name), unit: String(patch.unit ?? product.unit), price: Number(patch.catalogPrice ?? product.catalogPrice ?? product.wholesaleRetailPrice ?? 0), description: String(patch.catalogDescription ?? product.catalogDescription ?? ""), details_url: String(patch.catalogDetailsUrl ?? product.catalogDetailsUrl ?? ""), loyalty_points: Number(patch.loyaltyPoints ?? product.loyaltyPoints ?? 0), is_visible: Boolean(patch.catalogVisible ?? product.catalogVisible), catalog_image_url: String(patch.catalogImageUrl ?? product.catalogImageUrl ?? ""), catalog_image_storage_path: patch.catalogImageStoragePath ?? product.catalogImageStoragePath ?? null, category_id: safeCategories.find(item => item.name === categoryName)?.id ?? null, company_id: safeCompanies.find(item => item.name === companyName)?.id ?? null });
         setManualProducts(current => (Array.isArray(current) ? current : []).map(item => item.id === id ? { ...item, ...patch } : item));
       }
       return;
@@ -328,7 +330,7 @@ export default function CatalogManager() {
         loyaltyPoints: saved.catalogLoyaltyPoints,
         catalogImageUrl: saved.imageUrl || item.catalogImageUrl,
       } : item));
-      await removePersistentCloudCache("public-catalog-display-v3");
+      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       toast.success("تم حفظ إعدادات المنتج في الكتالوج");
     } catch (error) {
       setProducts(current => current.map(item => item.id === id ? original : item));
@@ -355,7 +357,7 @@ export default function CatalogManager() {
         catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
         catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
         loyaltyPoints: saved.loyalty_points });
-      await removePersistentCloudCache("public-catalog-display-v3");
+      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       toast.success("تم حفظ إعدادات التركيبة في Supabase");
     } catch (error) {
       if (Object.keys(patch).length && original) updateRecipe(id, original);
@@ -392,7 +394,9 @@ export default function CatalogManager() {
     const normalizedName = name.toLocaleLowerCase("ar-EG");
     const existingNames = [...safeProducts, ...safeManualProducts, ...safeRecipes].map(item => String(item.name ?? "").trim().toLocaleLowerCase("ar-EG"));
     if (existingNames.includes(normalizedName)) return toast.error("هذا الاسم موجود بالفعل كمنتج أو تركيبة في الكتالوج");
-    const saved = await saveCatalogManualProduct({ name, unit: manualDraft.unit.trim() || "قطعة", price, description: manualDraft.description.trim(), details_url: catalogDetailsUrl, is_visible: true, loyalty_points: Math.max(0, Math.floor(Number(manualDraft.loyaltyPoints) || 0)), category_id: null, company_id: null });
+    const categoryName = manualDraft.category.trim();
+    const companyName = manualDraft.company.trim();
+    const saved = await saveCatalogManualProduct({ name, unit: manualDraft.unit.trim() || "قطعة", price, description: manualDraft.description.trim(), details_url: catalogDetailsUrl, is_visible: true, loyalty_points: Math.max(0, Math.floor(Number(manualDraft.loyaltyPoints) || 0)), category_id: safeCategories.find(item => item.name === categoryName)?.id ?? null, company_id: safeCompanies.find(item => item.name === companyName)?.id ?? null });
     setManualProducts(current => [...(Array.isArray(current) ? current : []), { id: saved.id, catalogSource: "manual", name, unit: saved.unit, wholesaleRetailPrice: saved.price, catalogPrice: saved.price, category: manualDraft.category.trim(), company: manualDraft.company.trim(), catalogDescription: saved.description, catalogDetailsUrl: saved.details_url, catalogVisible: saved.is_visible, loyaltyPoints: saved.loyalty_points }]);
     setManualDraft({ name: "", price: "", unit: "قطعة", category: "", company: "", description: "", detailsUrl: "", loyaltyPoints: "" });
     toast.success("تمت إضافة المنتج اليدوي إلى الكتالوج");
@@ -405,7 +409,7 @@ export default function CatalogManager() {
     try {
       await deleteCatalogManualProduct(product.id);
       setManualProducts(current => (Array.isArray(current) ? current : []).filter(item => item.id !== product.id));
-      await removePersistentCloudCache("public-catalog-display-v3");
+      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       if (product.catalogImageStoragePath) await removeCatalogManualProductImage(product.catalogImageStoragePath).catch(() => undefined);
       setManualProductToDelete(null);
       toast.success("تم حذف المنتج اليدوي من Supabase والكتالوج");

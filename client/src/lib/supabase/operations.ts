@@ -11,6 +11,20 @@ async function shopId() {
   return (await getActiveShopContext()).shopId;
 }
 
+function attachCatalogTaxonomyNames(
+  products: Array<Row<"catalog_manual_products">>,
+  categories: Array<Row<"catalog_categories">>,
+  companies: Array<Row<"catalog_companies">>,
+) {
+  const categoryNames = new Map(categories.map(row => [row.id, row.name]));
+  const companyNames = new Map(companies.map(row => [row.id, row.name]));
+  return products.map(row => ({
+    ...row,
+    category: row.category_id ? categoryNames.get(row.category_id) || "" : "",
+    company: row.company_id ? companyNames.get(row.company_id) || "" : "",
+  }));
+}
+
 export async function listStaffEmployees() {
   const id = await shopId();
   return requireCloudResult(await getSupabaseClient().from("staff_employees").select("id,shop_id,store_id,name,phone,position,role,salary,join_date,hire_date,is_active,metadata,auth_email,auth_user_id,created_at,updated_at,deleted_at").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000)) as Row<"staff_employees">[];
@@ -83,7 +97,7 @@ export async function listCatalogTaxonomy(options: { publicOnly?: boolean; shopI
     const [categories, companies, products] = await Promise.all([
       client.from("catalog_categories").select("id,shop_id,name,sort_order,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("sort_order").limit(1000),
       client.from("catalog_companies").select("id,shop_id,name,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000),
-      client.from("catalog_manual_products").select("id,shop_id,name,unit,price,description,details_url,loyalty_points,is_visible,catalog_image_url,catalog_image_storage_path,deleted_at").eq("shop_id", id).eq("is_visible", true).is("deleted_at", null).order("name").limit(2000),
+      client.from("catalog_manual_products").select("id,shop_id,category_id,company_id,name,unit,price,description,details_url,loyalty_points,is_visible,catalog_image_url,catalog_image_storage_path,deleted_at").eq("shop_id", id).eq("is_visible", true).is("deleted_at", null).order("name").limit(2000),
     ]);
     return {
       categories: requireCloudResult(categories) as Row<"catalog_categories">[],
@@ -160,7 +174,14 @@ export async function listCatalogDisplayData(options: { includeProductImages?: b
     image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
     image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
   }));
-  return { registeredProducts: productsPage.items, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
+  return {
+    registeredProducts: productsPage.items,
+    manualProducts: attachCatalogTaxonomyNames(taxonomy.products as Row<"catalog_manual_products">[], taxonomy.categories as Row<"catalog_categories">[], taxonomy.companies as Row<"catalog_companies">[]),
+    categories: taxonomy.categories,
+    companies: taxonomy.companies,
+    pricing,
+    recipes: catalogRecipes,
+  };
 }
 
 const SHOP_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -171,15 +192,19 @@ async function resolvePublicCatalogShopId(requestedShopId?: string): Promise<str
     return requestedShopId;
   }
   const client = getSupabaseClient();
-  const [products, manualProducts, recipes] = await Promise.all([
+  const [products, manualProducts, recipes, categories, companies] = await Promise.all([
     client.from("products").select("shop_id").eq("catalog_visible", true).is("deleted_at", null).limit(5000),
     client.from("catalog_manual_products").select("shop_id").eq("is_visible", true).is("deleted_at", null).limit(5000),
     client.from("recipes").select("shop_id").eq("catalog_visible", true).is("deleted_at", null).limit(5000),
+    client.from("catalog_categories").select("shop_id").is("deleted_at", null).limit(5000),
+    client.from("catalog_companies").select("shop_id").is("deleted_at", null).limit(5000),
   ]);
   const rows = [
     ...requireCloudResult(products),
     ...requireCloudResult(manualProducts),
     ...requireCloudResult(recipes),
+    ...requireCloudResult(categories),
+    ...requireCloudResult(companies),
   ];
   const shopIds = Array.from(new Set(rows.map(row => row.shop_id).filter(Boolean)));
   if (shopIds.length === 1) return shopIds[0];
@@ -224,7 +249,15 @@ export async function listPublicCatalogDisplayData(options: { includeProductImag
     image_storage_path: isFormulationImageStoragePath(row.image_url) ? row.image_url : null,
     image_signed_url: row.image_url ? (signedImages.get(row.image_url) || (isFormulationImageStoragePath(row.image_url) ? null : row.image_url)) : null,
   }));
-  return { shopId: id, registeredProducts: products, manualProducts: taxonomy.products, categories: taxonomy.categories, companies: taxonomy.companies, pricing, recipes: catalogRecipes };
+  return {
+    shopId: id,
+    registeredProducts: products,
+    manualProducts: attachCatalogTaxonomyNames(taxonomy.products as Row<"catalog_manual_products">[], taxonomy.categories as Row<"catalog_categories">[], taxonomy.companies as Row<"catalog_companies">[]),
+    categories: taxonomy.categories,
+    companies: taxonomy.companies,
+    pricing,
+    recipes: catalogRecipes,
+  };
 }
 
 export async function listCatalogRewards(shopIdOverride?: string) {
