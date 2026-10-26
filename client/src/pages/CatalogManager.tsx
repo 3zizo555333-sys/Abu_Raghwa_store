@@ -11,15 +11,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
-import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, PUBLIC_CATALOG_CACHE_KEY, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct } from "@/lib/catalog";
+import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
-import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
+import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, subscribeToShopChanges, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
-import { removePersistentCloudCache } from "@/lib/persistentCloudCache";
 import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
 import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
 
@@ -94,9 +93,11 @@ export default function CatalogManager() {
   const [editingTaxonomy, setEditingTaxonomy] = useState<{ kind: CatalogTaxonomyKind; id: string; name: string } | null>(null);
 
   useEffect(() => {
-    void getActiveShopContext().then(context => setCatalogShopId(context.shopId)).catch(() => undefined);
-    void listProductCategories().then(setPickerCategories).catch(() => undefined);
-    listCatalogDisplayData().then(data => {
+    let active = true;
+    let unsubscribe: (() => Promise<unknown>) | undefined;
+    const loadCatalog = async () => {
+      const data = await listCatalogDisplayData();
+      if (!active) return;
       const taxonomy = data;
       const pricing = data.pricing as CatalogPricingConfig;
       setProducts(data.registeredProducts.map(product => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.catalogCategory || product.category, company: product.catalogCompany || "أبو رغوة", catalogVisible: product.catalogVisible, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription, catalogDetailsUrl: product.catalogDetailsUrl, loyaltyPoints: product.catalogLoyaltyPoints, catalogImageUrl: product.imageUrl, imageStoragePath: product.imageStoragePath || undefined, version: product.version })));
@@ -115,7 +116,15 @@ export default function CatalogManager() {
       setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
       setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String((row as any).category || ""), company: String((row as any).company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
       setPricingConfig(pricing);
-    }).catch(error => toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"));
+    };
+    void getActiveShopContext().then(async context => {
+      if (!active) return;
+      setCatalogShopId(context.shopId);
+      await loadCatalog();
+      unsubscribe = await subscribeToShopChanges(context.shopId, () => { void loadCatalog().catch(() => undefined); });
+    }).catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"); });
+    void listProductCategories().then(setPickerCategories).catch(() => undefined);
+    return () => { active = false; if (unsubscribe) void unsubscribe(); };
   }, []);
 
   const loadPickerProducts = async (reset = true) => {
@@ -358,7 +367,6 @@ export default function CatalogManager() {
         loyaltyPoints: saved.catalogLoyaltyPoints,
         catalogImageUrl: saved.imageUrl || item.catalogImageUrl,
       } : item));
-      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       toast.success("تم حفظ إعدادات المنتج في الكتالوج");
     } catch (error) {
       setProducts(current => current.map(item => item.id === id ? original : item));
@@ -385,7 +393,6 @@ export default function CatalogManager() {
         catalogOldPrice: saved.catalog_old_price ?? undefined, catalogDescription: saved.catalog_description,
         catalogDetailsUrl: saved.catalog_details_url, category: saved.catalog_category, company: saved.catalog_company,
         loyaltyPoints: saved.loyalty_points });
-      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       toast.success("تم حفظ إعدادات التركيبة في Supabase");
     } catch (error) {
       if (Object.keys(patch).length && original) updateRecipe(id, original);
@@ -437,7 +444,6 @@ export default function CatalogManager() {
     try {
       await deleteCatalogManualProduct(product.id);
       setManualProducts(current => (Array.isArray(current) ? current : []).filter(item => item.id !== product.id));
-      await removePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY);
       if (product.catalogImageStoragePath) await removeCatalogManualProductImage(product.catalogImageStoragePath).catch(() => undefined);
       setManualProductToDelete(null);
       toast.success("تم حذف المنتج اليدوي من Supabase والكتالوج");

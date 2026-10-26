@@ -5,6 +5,8 @@ import type { Database } from "./database.types";
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim();
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim();
 
+const noStoreFetch: typeof fetch = (input, init) => fetch(input, { ...init, cache: "no-store" });
+
 export const isSupabaseConfigured = Boolean(supabaseUrl && supabaseKey);
 
 let browserClient: SupabaseClient<Database> | undefined;
@@ -20,6 +22,7 @@ export function getSupabaseClient(): SupabaseClient<Database> {
   }
   if (!browserClient) {
     browserClient = createBrowserClient<Database>(supabaseUrl, supabaseKey, {
+      global: { fetch: noStoreFetch },
       cookieOptions: {
         name: "abu-raghwa-auth",
         path: "/",

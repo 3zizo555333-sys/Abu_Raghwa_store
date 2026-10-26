@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
-import { CATALOG_PHONE, CATALOG_WHATSAPP, PUBLIC_CATALOG_CACHE_KEY, catalogProductMatchesSearch, getCatalogDiscountPercent, getCatalogOldPrice, getCatalogPrice, getCatalogOrderLoyaltyPoints, getProductLoyaltyPoints, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct, type CatalogCartItem, type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe } from "@/lib/catalog";
+import { CATALOG_PHONE, CATALOG_WHATSAPP, catalogProductMatchesSearch, getCatalogDiscountPercent, getCatalogOldPrice, getCatalogPrice, getCatalogOrderLoyaltyPoints, getProductLoyaltyPoints, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct, type CatalogCartItem, type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe } from "@/lib/catalog";
 import { getCatalogFulfillmentMode, getFulfillmentPrice, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { trpc } from "@/lib/trpc";
 import { listPublicCatalogDisplayData, listCatalogRewards } from "@/lib/supabase/operations";
@@ -84,19 +84,13 @@ export default function PublicCatalogPage() {
   useEffect(() => {
     let active = true;
     let unsubscribe: (() => Promise<unknown>) | undefined;
-    void readPersistentCloudCache<any>(PUBLIC_CATALOG_CACHE_KEY).then(cached => {
-      if (!active || !cached) return;
-      applyCatalogSnapshot(cached);
-    });
     const requestedShopId = typeof window === "undefined" ? undefined : new URLSearchParams(window.location.search).get("shop_id") || undefined;
     listPublicCatalogDisplayData({ shopId: requestedShopId }).then(data => {
       if (!active) return;
-      void writePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY, data);
       applyCatalogSnapshot(data);
       void subscribeToShopChanges(data.shopId, () => {
         void listPublicCatalogDisplayData({ shopId: data.shopId }).then(fresh => {
           if (!active) return;
-          void writePersistentCloudCache(PUBLIC_CATALOG_CACHE_KEY, fresh);
           applyCatalogSnapshot(fresh);
         }).catch(() => undefined);
       }).then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); }).catch(() => undefined);
