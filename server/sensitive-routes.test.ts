@@ -39,7 +39,7 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(keys.length).toBeGreaterThan(40);
     expect(new Set(keys).size).toBe(keys.length);
     const registeredPaths = new Set(registryEntries.map(match => match[1]));
-    const exemptPaths = new Set(["/auth", "/security-settings", "/public-offer", "/catalog-offers", "/catalog", "/loyalty", "/customer-display", "/led-display", "/my-withdrawals", "404"]);
+    const exemptPaths = new Set(["/auth", "/security-settings", "/public-offer", "/catalog-offers", "/catalog", "/loyalty", "/community", "/customer-display", "/led-display", "/my-withdrawals", "404"]);
     const appPaths = [...appSource.matchAll(/<Route path=\{"([^\"]+)"\} component=/g)].map(match => match[1]);
     expect(appPaths.filter(path => !exemptPaths.has(path) && !registeredPaths.has(path))).toEqual([]);
     for (const match of registryEntries) {

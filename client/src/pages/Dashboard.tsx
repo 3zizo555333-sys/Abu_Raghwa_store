@@ -330,6 +330,13 @@ export default function Dashboard() {
                 <Gift className="w-4 h-4" />
                 🎯 العروض الذكية
               </Button>
+              {canViewSensitiveFinancials && <Button
+                onClick={() => navigate("/community-admin")}
+                className="bg-indigo-700 hover:bg-indigo-800 text-white flex items-center justify-center gap-2"
+              >
+                <Gift className="w-4 h-4" />
+                🎁 السحوبات والمسابقات
+              </Button>}
               <Button
                 onClick={() => navigate("/catalog-manager")}
                 className="bg-slate-900 hover:bg-slate-800 text-white flex items-center justify-center gap-2"

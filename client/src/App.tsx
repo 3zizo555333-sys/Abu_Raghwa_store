@@ -138,6 +138,8 @@ const CatalogManager = lazy(() => import("./pages/CatalogManager"));
 const PublicCatalogPage = lazy(() => import("./pages/PublicCatalogPage"));
 const CatalogOffersPage = lazy(() => import("./pages/CatalogOffersPage"));
 const LoyaltyPage = lazy(() => import("./pages/LoyaltyPage"));
+const CommunityPage = lazy(() => import("./pages/CommunityPage"));
+const CommunityAdminPage = lazy(() => import("./pages/CommunityAdminPage"));
 const Cashier = lazy(() => import("./pages/Cashier"));
 const CustomerDisplay = lazy(() => import("./pages/CustomerDisplay"));
 const LedDisplay = lazy(() => import("./pages/LedDisplay"));
@@ -204,6 +206,8 @@ function Router() {
       <Route path={"/public-offer"} component={PublicOfferPage} />
       <Route path={"/catalog-offers"} component={CatalogOffersPage} />
       <Route path={"/loyalty"} component={LoyaltyPage} />
+      <Route path={"/community"} component={CommunityPage} />
+      <Route path={"/community-admin"} component={withSupervisorRole(withPasswordProtection(CommunityAdminPage, 'screen__community_admin', 'إدارة السحوبات والمسابقات'))} />
       <Route path={"/catalog"} component={PublicCatalogPage} />
       <Route path={"/catalog-manager"} component={withManagerRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
       <Route path={"/customer-display"} component={CustomerDisplay} />

@@ -1,0 +1,11 @@
+import { useEffect, useState } from "react";
+import { Sparkles, Trophy } from "lucide-react";
+import type { LiveDrawStage } from "@/lib/supabase/communityDraws";
+export function CommunityLiveWinner({ stage }: { stage: LiveDrawStage }) {
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{const timer=window.setInterval(()=>setNow(Date.now()),180);return()=>clearInterval(timer);},[]);
+  const elapsed=Math.max(0,now-new Date(stage.updated_at).getTime());
+  const spinning=stage.status==="drawing"&&elapsed<6000;
+  const tick=Math.floor(now/90)%100;
+  return <div className="relative mt-5 overflow-hidden rounded-3xl border border-amber-200 bg-gradient-to-br from-slate-950 via-indigo-950 to-violet-950 p-5 text-center text-white shadow-xl" aria-live="polite"><div className="pointer-events-none absolute inset-0 opacity-20 community-confetti"/>{spinning?<><Sparkles className="mx-auto h-8 w-8 animate-pulse text-amber-300"/><p className="mt-2 text-sm font-bold text-amber-100">السحب المباشر جارٍ الآن…</p><div className="mx-auto mt-3 max-w-xs rounded-2xl border border-white/20 bg-white/10 px-4 py-3 font-mono text-2xl font-black tracking-widest">#{stage.event_type==="purchase"?"R":"Q"}-{String(100+tick).padStart(3,"0")}</div><p className="mt-2 text-xs text-white/70">لحظات ونعلن الفائز</p></>:stage.winner_name?<><Trophy className="mx-auto h-9 w-9 text-amber-300"/><p className="mt-2 text-sm font-bold text-amber-100">مبروك! الفائز بـ{stage.prize_title}</p><p className="mt-2 text-2xl font-black">{stage.winner_name}</p><p className="mt-1 font-mono text-sm text-white/75" dir="ltr">{stage.winner_phone_masked}</p><span className="mt-3 inline-flex rounded-full bg-amber-300 px-4 py-1.5 font-mono font-black text-slate-950">{stage.winner_code}</span></>:<p className="text-sm">السحب في انتظار الإطلاق من إدارة المتجر.</p>}<style>{`.community-confetti{background-image:radial-gradient(circle at 20% 30%,#fcd34d 0 2px,transparent 3px),radial-gradient(circle at 75% 25%,#67e8f9 0 2px,transparent 3px),radial-gradient(circle at 42% 70%,#f9a8d4 0 3px,transparent 4px),radial-gradient(circle at 88% 78%,#a7f3d0 0 2px,transparent 3px);background-size:110px 100px;animation:communityConfetti 2s linear infinite}@keyframes communityConfetti{to{background-position:0 100px}}@media(prefers-reduced-motion:reduce){.community-confetti{animation:none}}`}</style></div>;
+}
