@@ -5,11 +5,12 @@ import QRCode from "qrcode";
 import { ArrowLeft, CalendarClock, CheckCircle2, Clock3, Eye, History, Pencil, QrCode, RefreshCw, Share2, Sparkles, Trash2, X, XCircle } from "lucide-react";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 import { deleteStoreOffer, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
+import { uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
 
 interface SmartOffer {
   id: string;
@@ -18,6 +19,8 @@ interface SmartOffer {
   promoText?: string;
   bannerImageUrl?: string;
   bgColor?: string;
+  bgGradient?: string;
+  backgroundMode?: "solid" | "gradient";
   items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
   totalCostPrice: number;
@@ -47,6 +50,7 @@ export default function SmartOffersList() {
   const [selectedOffer, setSelectedOffer] = useState<SmartOffer | null>(null);
   const [selectedQr, setSelectedQr] = useState("");
   const posterRef = useRef<HTMLDivElement>(null);
+  const [uploadingOfferId, setUploadingOfferId] = useState<string | null>(null);
   const deleteOfferMutation = trpc.offers.delete.useMutation();
   const trpcUtils = trpc.useUtils();
 
@@ -59,8 +63,10 @@ export default function SmartOffersList() {
       title: row.title,
       strategyName: String(data.strategyName || row.strategy || "عرض محفوظ"),
       promoText: String(data.promoText || row.promo_text || row.banner_title || ""),
-      bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined,
+      bannerImageUrl: String(row.image_url || data.bannerImageUrl || row.banner_custom_image || "") || undefined,
       bgColor: String(data.bgColor || row.bg_color || "#ea580c"),
+      bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "") || undefined,
+      backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient",
       items: items as SmartOffer["items"],
       description: String(data.description || row.public_description || row.description || ""),
       startDate: String(data.startDate || row.start_date || ""),
@@ -102,6 +108,26 @@ export default function SmartOffersList() {
       setSelectedOffer(offer);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر إنشاء QR العرض");
+    }
+  };
+
+  const handleOfferImage = async (offer: SmartOffer, file?: File) => {
+    if (!file) return;
+    setUploadingOfferId(offer.id);
+    try {
+      const { publicUrl } = await uploadCatalogOfferImage(offer.id, file);
+      const update = (item: SmartOffer) => item.id === offer.id ? { ...item, bannerImageUrl: publicUrl } : item;
+      setSavedOffers(previous => previous.map(update));
+      setSelectedOffer(previous => previous?.id === offer.id ? { ...previous, bannerImageUrl: publicUrl } : previous);
+      toast.success("تم رفع صورة العرض وحفظها بنجاح.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر رفع صورة العرض. أعد المحاولة.");
+    } finally {
+      setUploadingOfferId(null);
+      const cameraInput = document.getElementById(`offer-camera-${offer.id}`) as HTMLInputElement | null;
+      const galleryInput = document.getElementById(`offer-gallery-${offer.id}`) as HTMLInputElement | null;
+      if (cameraInput) cameraInput.value = "";
+      if (galleryInput) galleryInput.value = "";
     }
   };
 
@@ -175,18 +201,23 @@ export default function SmartOffersList() {
 
     return (
       <Card key={offer.id} className={`overflow-hidden border-2 ${isActive ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-slate-50"}`}>
-          <CardHeader className="pb-3" style={{ backgroundColor: offer.bgColor || undefined }}>
-            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة بانر العرض" className="mb-3 h-28 w-full rounded-xl bg-white object-contain p-1" />}
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <CardTitle className="truncate text-base text-slate-900">{offer.title}</CardTitle>
-              <CardDescription className="mt-1 truncate">{offer.strategyName}</CardDescription>
-              {offer.promoText && <p className="mt-1 text-xs font-black text-white/90">{offer.promoText}</p>}
+        <CardHeader className="space-y-3 pb-3">
+          <div className="relative min-h-36 overflow-hidden rounded-2xl p-4 text-white shadow-sm" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>
+            <span className={`absolute left-3 top-3 z-10 rounded-full px-3 py-1 text-xs font-black shadow ${isActive ? "bg-emerald-700 text-white" : "bg-slate-800 text-white"}`}>{isActive ? "متاح الآن" : "منتهي"}</span>
+            <div className="max-w-full space-y-1 pt-8 [text-shadow:0_1px_3px_rgba(0,0,0,.75)]">
+              <h3 className="line-clamp-2 text-lg font-black leading-tight">{offer.title}</h3>
+              <p className="line-clamp-1 text-sm font-bold text-white">{offer.strategyName}</p>
+              {offer.promoText && <p className="line-clamp-2 text-sm font-black text-white">{offer.promoText}</p>}
             </div>
-            <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${isActive ? "bg-emerald-600 text-white" : "bg-slate-600 text-white"}`}>
-              {isActive ? "متاح الآن" : "منتهي"}
-            </span>
           </div>
+          {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt={`صورة عرض ${offer.title}`} className="h-36 w-full rounded-xl bg-white object-contain p-1" />}
+          <div className="grid grid-cols-2 gap-2">
+            <input id={`offer-camera-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" aria-label="التقاط صورة العرض بالكاميرا" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
+            <input id={`offer-gallery-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="اختيار صورة العرض من المعرض" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
+            <Button type="button" variant="outline" disabled={uploadingOfferId === offer.id} onClick={() => document.getElementById(`offer-camera-${offer.id}`)?.click()} className="min-h-10 border-orange-200 text-xs text-orange-800 hover:bg-orange-50">📷 التقاط بالكاميرا</Button>
+            <Button type="button" variant="outline" disabled={uploadingOfferId === offer.id} onClick={() => document.getElementById(`offer-gallery-${offer.id}`)?.click()} className="min-h-10 border-orange-200 text-xs text-orange-800 hover:bg-orange-50">📷 إضافة / تغيير صورة العرض</Button>
+          </div>
+          {uploadingOfferId === offer.id && <p className="text-center text-xs font-bold text-slate-600">جارٍ رفع الصورة…</p>}
         </CardHeader>
 
         <CardContent className="space-y-3">
@@ -223,7 +254,7 @@ export default function SmartOffersList() {
           )}
 
           <div className="grid grid-cols-3 gap-2">
-            <Button type="button" variant="outline" onClick={() => void openOfferCard(offer)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
+            <Button type="button" variant="outline" onClick={() => setExpandedOfferId(isExpanded ? null : offer.id)} className="border-blue-200 text-blue-700 hover:bg-blue-50">
               <Eye className="ml-1 h-4 w-4" /> {isExpanded ? "إخفاء التفاصيل" : "عرض التفاصيل"}
             </Button>
             <Button type="button" size="icon" variant="outline" aria-label="فتح QR العرض" onClick={() => void openOfferCard(offer)} className="border-violet-200 text-violet-700 hover:bg-violet-50"><QrCode className="h-4 w-4" /></Button>
@@ -288,7 +319,7 @@ export default function SmartOffersList() {
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2">{visibleOffers.map(renderOfferCard)}</div>
           )}
         </section>
-        {selectedOffer && selectedQr && <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" onClick={() => setSelectedOffer(null)}><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl" dir="rtl" onClick={event => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black">بطاقة العرض الترويجي</h2><Button type="button" variant="ghost" size="icon" onClick={() => setSelectedOffer(null)} aria-label="إغلاق"><X className="h-5 w-5" /></Button></div><div ref={posterRef} className="overflow-hidden rounded-3xl bg-gradient-to-br from-blue-700 via-indigo-600 to-violet-700 p-5 text-white"><p className="text-sm font-bold text-cyan-100">أبو رغوة للمنظفات</p><h3 className="mt-2 text-3xl font-black">{selectedOffer.title}</h3><p className="mt-2 leading-7 text-blue-50">{selectedOffer.description || "عرض حصري لفترة محدودة"}</p><div className="mt-4 rounded-2xl bg-white p-4 text-center"><img src={selectedQr} alt={`QR للعرض ${selectedOffer.title}`} className="mx-auto h-56 w-56" /><p className="mt-2 text-xs font-bold text-slate-700">امسح الكود لفتح العرض وطلبه</p></div><div className="mt-4 flex items-end justify-between"><div><p className="text-xs text-blue-100">سعر العرض</p><p className="text-3xl font-black">{selectedOffer.offerPrice} ج.م</p></div><div className="rounded-xl bg-white/15 px-3 py-2 text-left text-xs">العرض #{selectedOffer.id.slice(0, 8)}</div></div></div><div className="mt-4 grid grid-cols-2 gap-2"><Button type="button" onClick={downloadQr} className="bg-violet-700 hover:bg-violet-800"><QrCode className="ml-1 h-4 w-4" />تحميل الباركود مباشر</Button><Button type="button" variant="outline" onClick={() => void exportPoster()}><Share2 className="ml-1 h-4 w-4" />تصدير/حفظ الكارت</Button></div></div></div>}
+        {selectedOffer && selectedQr && <div className="fixed inset-0 z-[120] grid place-items-center bg-slate-950/60 p-4" role="dialog" aria-modal="true" onClick={() => setSelectedOffer(null)}><div className="max-h-[95vh] w-full max-w-lg overflow-y-auto rounded-3xl bg-white p-4 shadow-2xl" dir="rtl" onClick={event => event.stopPropagation()}><div className="mb-3 flex items-center justify-between"><h2 className="text-lg font-black">بطاقة العرض الترويجي</h2><Button type="button" variant="ghost" size="icon" onClick={() => setSelectedOffer(null)} aria-label="إغلاق"><X className="h-5 w-5" /></Button></div><div ref={posterRef} className="overflow-hidden rounded-3xl p-5 text-white" style={{ backgroundColor: selectedOffer.bgColor || "#ea580c", backgroundImage: selectedOffer.backgroundMode === "solid" ? undefined : selectedOffer.bgGradient || undefined }}><p className="text-sm font-bold text-white">أبو رغوة للمنظفات</p>{selectedOffer.bannerImageUrl && <img src={selectedOffer.bannerImageUrl} alt="صورة العرض" crossOrigin="anonymous" className="mt-3 h-32 w-full rounded-xl bg-white object-contain p-1" />}{selectedOffer.promoText && <p className="mt-3 rounded-xl bg-black/25 px-3 py-2 text-center font-black text-white">{selectedOffer.promoText}</p>}<h3 className="mt-2 text-3xl font-black">{selectedOffer.title}</h3><p className="mt-2 leading-7 text-white">{selectedOffer.description || "عرض حصري لفترة محدودة"}</p><div className="mt-4 rounded-2xl bg-white p-4 text-center"><img src={selectedQr} alt={`QR للعرض ${selectedOffer.title}`} className="mx-auto h-56 w-56" /><p className="mt-2 text-xs font-bold text-slate-700">امسح الكود لفتح العرض وطلبه</p></div><div className="mt-4 flex items-end justify-between"><div><p className="text-xs text-white">سعر العرض</p><p className="text-3xl font-black">{selectedOffer.offerPrice} ج.م</p></div><div className="rounded-xl bg-white/15 px-3 py-2 text-left text-xs">العرض #{selectedOffer.id.slice(0, 8)}</div></div></div><div className="mt-4 grid grid-cols-2 gap-2"><Button type="button" onClick={downloadQr} className="bg-violet-700 hover:bg-violet-800"><QrCode className="ml-1 h-4 w-4" />تحميل الباركود مباشر</Button><Button type="button" variant="outline" onClick={() => void exportPoster()}><Share2 className="ml-1 h-4 w-4" />تصدير/حفظ الكارت</Button></div></div></div>}
       </main>
     </div>
   );

@@ -22,6 +22,7 @@ interface SmartOffer {
   bannerImageUrl?: string;
   bgColor?: string;
   bgGradient?: string;
+  backgroundMode?: "solid" | "gradient";
   qrCodeData?: string;
   items: Array<{ name: string; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
@@ -90,7 +91,13 @@ export default function PublicOfferPage() {
       if (!active) return;
       if (!row) { setOffer(null); setLoading(false); return; }
       const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
-      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), qrCodeData: row.qr_code_data || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
+      const offerPrice = Number(data.offerPrice ?? row.offer_price ?? 0) || 0;
+      const originalTotalRetail = Number(data.originalTotalRetail ?? data.originalPrice ?? row.original_price ?? 0) || 0;
+      const savedDiscountAmount = Number(data.discountAmount ?? data.savings ?? 0) || 0;
+      const discountAmount = savedDiscountAmount > 0 ? savedDiscountAmount : Math.max(0, originalTotalRetail - offerPrice);
+      const savedDiscountPercent = Number(data.discountPercent ?? 0) || 0;
+      const discountPercent = savedDiscountPercent > 0 ? savedDiscountPercent : originalTotalRetail > 0 ? discountAmount / originalTotalRetail * 100 : 0;
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: String(data.title || row.title || "عرض أبو رغوة"), strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || data.banner_custom_image || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || data.bg_color || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient", qrCodeData: String(data.qrCodeData || data.qr_code_data || row.qr_code_data || "") || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice, originalTotalRetail, discountAmount, discountPercent, items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
     }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
     void loadOffer();
@@ -236,15 +243,15 @@ export default function PublicOfferPage() {
   const isExpired = expiryInfo.status === "expired";
 
   return (
-    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.bgGradient || undefined }}>
+    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
       
-      <div className="w-full max-w-md space-y-4">
+      <div className="relative z-10 w-full max-w-2xl space-y-4 sm:space-y-5">
         
         {/* بطاقة الكوبون القابلة للتنزيل - تصميم مظبوط 100% عربي */}
         <div
           ref={couponRef}
-          className="bg-white/95 p-6 rounded-[2.5rem] border-4 border-white/80 space-y-4 shadow-2xl relative overflow-hidden"
+          className="relative space-y-4 overflow-hidden rounded-[2rem] border border-white/80 bg-white/95 p-4 shadow-2xl backdrop-blur sm:space-y-5 sm:rounded-[2.5rem] sm:p-7"
           style={{ direction: "rtl", textAlign: "right" }}
         >
           <div className="absolute top-0 left-0 w-24 h-24 bg-orange-200 rounded-br-full opacity-30 pointer-events-none"></div>
@@ -255,8 +262,8 @@ export default function PublicOfferPage() {
               <Gift className="w-6 h-6 animate-bounce" />
               <Sparkles className="w-6 h-6 text-yellow-600" />
             </div>
-            {offerQr && <div className="mx-auto w-fit rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><img src={offerQr} alt="الباركود الرسمي للعرض" className="h-28 w-28" /><p className="mt-1 text-[9px] font-black text-slate-500">امسح لفتح العرض</p></div>}
-            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة العرض" className="mx-auto mb-3 max-h-40 w-full rounded-2xl object-contain" crossOrigin="anonymous" />}
+            {offerQr && <div className="mx-auto w-fit rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-md"><img src={offerQr} alt="رمز QR الرسمي للعرض" className="h-32 w-32 sm:h-36 sm:w-36" /><p className="mt-1 text-[10px] font-black text-slate-600">امسح رمز QR لفتح العرض الرسمي</p></div>}
+            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة العرض" className="mx-auto mb-3 max-h-48 w-full rounded-2xl object-contain sm:max-h-64" crossOrigin="anonymous" />}
             <h1 className="text-2xl font-black text-orange-700 tracking-wide">محلات أبو رغوة للمنظفات</h1>
             <p className="text-xs font-bold text-gray-700">للمنظفات والعطور • أصل الرغوة في مصر</p>
             <span className="inline-block bg-orange-100 text-orange-800 text-[11px] px-3 py-0.5 rounded-full font-extrabold mt-1 shadow-sm">
@@ -273,8 +280,8 @@ export default function PublicOfferPage() {
             </div>
             
             <h2 className="text-lg font-black text-gray-900 text-center">{offer.title}</h2>
-            {offer.promoText && <p className="rounded-xl px-3 py-2 text-center text-sm font-black text-white" style={{ backgroundColor: offer.bgColor || "#ea580c" }}>{offer.promoText}</p>}
-            <p className="text-xs text-gray-600 font-medium text-center">{offer.description}</p>
+            {offer.promoText && <p className="rounded-2xl px-4 py-3 text-center text-lg font-black leading-relaxed text-white shadow-lg sm:text-2xl" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>{offer.promoText}</p>}
+            <p className="text-center text-sm font-medium leading-7 text-gray-600 sm:text-base">{offer.description}</p>
             {isExpired && <p className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-black text-red-700">انتهت صلاحية هذا العرض ولا يمكن استخدام الكوبون الآن.</p>}
 
             <div className="space-y-2 pt-1">
@@ -289,14 +296,14 @@ export default function PublicOfferPage() {
             <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-2xl border-2 border-green-300 text-center space-y-1 shadow-inner">
               <div className="flex justify-between items-center text-xs">
                 <span className="font-bold text-gray-700">السعر الأصلي:</span>
-                <span className="line-through text-gray-400 font-bold">{offer.originalTotalRetail} ج.م</span>
+                <span className="font-bold text-gray-500 line-through">{offer.originalTotalRetail.toLocaleString("ar-EG")} ج.م</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="font-extrabold text-gray-900 text-sm">سعر العرض الحصري:</span>
-                <span className="font-black text-green-700 text-xl bg-white px-3 py-1 rounded-xl border border-green-300 shadow-sm">{offer.offerPrice} ج.م</span>
+                <span className="rounded-xl border border-green-300 bg-white px-4 py-2 text-2xl font-black text-green-700 shadow-sm sm:text-3xl">{offer.offerPrice.toLocaleString("ar-EG")} ج.م</span>
               </div>
               <p className="text-xs text-green-800 font-black pt-1">
-                ✨ وفّر {offer.discountAmount} جنيه ({offer.discountPercent}% خصم فوري)
+                ✨ وفّر {offer.discountAmount.toLocaleString("ar-EG")} جنيه ({offer.discountPercent.toLocaleString("ar-EG", { maximumFractionDigits: 1 })}% خصم فوري)
               </p>
             </div>
           </div>
@@ -381,9 +388,9 @@ export default function PublicOfferPage() {
                   className="w-full bg-orange-600 py-3 text-sm font-black text-white shadow-lg hover:bg-orange-700 disabled:bg-gray-400"
                 >
                   <ShoppingCart className="ml-2 h-5 w-5" />
-                  {isExpired ? "انتهت صلاحية العرض" : createOfferPurchaseRequest.isLoading ? "جارٍ إرسال طلبك…" : offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : offerPurchaseStatusQuery.data?.status === "approved" ? "أضف إلى السلة مرة أخرى" : "أضف إلى السلة واطلب الآن"}
+                  {isExpired ? "انتهت صلاحية العرض" : createOfferPurchaseRequest.isLoading ? "جارٍ إرسال طلبك…" : offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : offerPurchaseStatusQuery.data?.status === "approved" ? "إرسال طلب شراء جديد" : "إرسال طلب شراء العرض"}
                 </Button>
-                <p className="text-center text-[10px] text-gray-600">اضغط عند شراء العرض فعلًا؛ سيراجع المحل الطلب ويضيف {Math.max(0, Math.trunc(Number(offer.loyaltyPoints) || 0))} نقطة إلى بطاقتك بعد التأكيد.</p>
+                <p className="text-center text-[10px] leading-5 text-gray-600">هذا يرسل طلب شراء العرض إلى المحل للمراجعة، وليس إضافة إلى سلة إلكترونية. اضغط عند رغبتك الفعلية بالشراء؛ وتُضاف {Math.max(0, Math.trunc(Number(offer.loyaltyPoints) || 0))} نقطة إلى بطاقتك بعد تأكيد المحل.</p>
               </div>
             )}
             <a href={buildLoyaltyPageHref(customerRecord?.customerCode || customerCode, customerPhone || customerRecord?.phone)} className="block text-center text-[11px] font-black text-purple-700 underline hover:text-purple-900">افتح صفحة متابعة نقاطك وسجل حركاتك</a>
