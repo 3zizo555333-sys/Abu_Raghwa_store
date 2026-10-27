@@ -11,6 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 import { deleteStoreOffer, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { generateCatalogOfferBanner, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
+import { OfferProductStager } from "@/components/OfferProductStager";
 
 interface SmartOffer {
   id: string;
@@ -49,6 +50,7 @@ export default function SmartOffersList() {
   const [expandedOfferId, setExpandedOfferId] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [selectedOffer, setSelectedOffer] = useState<SmartOffer | null>(null);
+  const [stagingOffer, setStagingOffer] = useState<SmartOffer | null>(null);
   const [selectedQr, setSelectedQr] = useState("");
   const posterRef = useRef<HTMLDivElement>(null);
   const [uploadingOfferId, setUploadingOfferId] = useState<string | null>(null);
@@ -137,6 +139,19 @@ export default function SmartOffersList() {
       const galleryInput = document.getElementById(`offer-gallery-${offer.id}`) as HTMLInputElement | null;
       if (cameraInput) cameraInput.value = "";
       if (galleryInput) galleryInput.value = "";
+    }
+  };
+
+  const handleStagedProductImage = async (offer: SmartOffer, file: File) => {
+    setUploadingOfferId(offer.id);
+    try {
+      const { publicUrl } = await uploadCatalogOfferImage(offer.id, file);
+      const update = (item: SmartOffer) => item.id === offer.id ? { ...item, bannerImageUrl: publicUrl } : item;
+      setSavedOffers(previous => previous.map(update));
+      setSelectedOffer(previous => previous?.id === offer.id ? { ...previous, bannerImageUrl: publicUrl } : previous);
+      toast.success("تم حفظ صورة المنتجات الشفافة وربطها بالعرض بنجاح.");
+    } finally {
+      setUploadingOfferId(null);
     }
   };
 
@@ -237,12 +252,13 @@ export default function SmartOffersList() {
             </div>
             <svg className="pointer-events-none absolute bottom-0 left-[19%] z-30 h-5 w-[38%] -translate-x-1/2" viewBox="0 0 144 24" fill="none" aria-hidden="true"><path d="M0 23c9-10 17-9 24-2 3-12 14-15 22-5 7-15 18-17 26-5 6-9 16-9 21 0 9-12 19-9 23 0 8-7 19-3 28 12H0Z" fill="white" fillOpacity=".82"/></svg>
           </div>
-          <div className="grid grid-cols-3 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             <input id={`offer-camera-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" aria-label="التقاط صورة العرض بالكاميرا" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
             <input id={`offer-gallery-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="اختيار صورة العرض من المعرض" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
             <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-camera-${offer.id}`)?.click()} className="min-h-11 w-full whitespace-normal border-orange-200 px-1 text-[11px] leading-tight text-orange-800 hover:bg-orange-50">📷 التقاط بالكاميرا</Button>
             <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-gallery-${offer.id}`)?.click()} className="min-h-11 w-full whitespace-normal border-orange-200 px-1 text-[11px] leading-tight text-orange-800 hover:bg-orange-50">📷 إضافة / تغيير صورة العرض</Button>
             <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => void handleGenerateOfferBanner(offer)} className="min-h-11 w-full whitespace-normal border-violet-300 bg-violet-50 px-1 text-[10px] font-black leading-tight text-violet-900 hover:bg-violet-100">{generatingOfferId === offer.id ? <LoaderCircle className="ml-1 h-4 w-4 animate-spin" /> : null}🪄 توليد بانر 3D بالذكاء الاصطناعي</Button>
+            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => setStagingOffer(offer)} className="min-h-11 w-full whitespace-normal border-fuchsia-300 bg-fuchsia-50 px-1 text-[10px] font-black leading-tight text-fuchsia-900 hover:bg-fuchsia-100"><Sparkles className="ml-1 h-4 w-4 shrink-0" />✨ استوديو تفريغ وتركيب حتى 4 صور</Button>
           </div>
           {generatingOfferId === offer.id && <p className="flex items-center justify-center gap-2 text-center text-xs font-bold text-violet-700"><LoaderCircle className="h-4 w-4 animate-spin" /> جاري توليد البانر سحابياً...</p>}{uploadingOfferId === offer.id && <p className="text-center text-xs font-bold text-slate-600">جارٍ رفع الصورة...</p>}
         </CardHeader>
@@ -299,6 +315,7 @@ export default function SmartOffersList() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-amber-50 p-4 pb-16" dir="rtl">
+      {stagingOffer && <OfferProductStager key={stagingOffer.id} open offer={stagingOffer} onOpenChange={open => { if (!open) setStagingOffer(null); }} onSave={file => handleStagedProductImage(stagingOffer, file)} />}
       <main className="mx-auto max-w-5xl space-y-5">
         <header className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div>
