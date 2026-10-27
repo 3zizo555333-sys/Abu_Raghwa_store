@@ -515,6 +515,7 @@ export async function subscribeToShopChanges(shopId: string, onChange: () => voi
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "shop_change_events", filter: `shop_id=eq.${shopId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "catalog_categories", filter: `shop_id=eq.${shopId}` }, onChange)
     .on("postgres_changes", { event: "*", schema: "public", table: "catalog_companies", filter: `shop_id=eq.${shopId}` }, onChange)
+    .on("postgres_changes", { event: "*", schema: "public", table: "store_offers", filter: `store_id=eq.${shopId}` }, onChange)
     .subscribe(status => {
       if (status === "SUBSCRIBED") {
         if (connectedOnce) onChange();

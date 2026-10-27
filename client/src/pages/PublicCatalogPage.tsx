@@ -123,6 +123,7 @@ export default function PublicCatalogPage() {
           if (!active) return;
           applyCatalogSnapshot(fresh);
         }).catch(() => undefined);
+        void listActiveStoreOffers().then(freshOffers => { if (active) setPromoOffers(freshOffers); }).catch(() => undefined);
       }).then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); }).catch(() => undefined);
       return Promise.all([listCatalogRewards(data.shopId), listActiveCatalogCoupons(data.shopId)]);
     }).then(result => { if (!active || !result) return; const [rows, coupons] = result as [any[], CatalogCoupon[]]; setRewardLevels(rows.map(row => ({ points: Number(row.points_required), giftName: String(row.gift_name), confirmed: true }))); setActiveCoupons(coupons); }).catch(() => undefined);

@@ -11,6 +11,8 @@ import { buildLoyaltyPageHref } from "@/lib/loyaltyLookup";
 import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
 import { shouldDisableOfferPurchaseButton } from "@/lib/offerPurchaseUi";
 import { getPublicStoreOffer, mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import QRCode from "qrcode";
 
 interface SmartOffer {
   id: string;
@@ -19,6 +21,7 @@ interface SmartOffer {
   promoText?: string;
   bannerImageUrl?: string;
   bgColor?: string;
+  qrCodeData?: string;
   items: Array<{ name: string; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
   offerPrice: number;
@@ -57,6 +60,7 @@ export default function PublicOfferPage() {
   const [customerRecord, setCustomerRecord] = useState<CustomerLoyalty | null>(null);
   const [purchaseRequestId, setPurchaseRequestId] = useState("");
   const [now, setNow] = useState(() => Date.now());
+  const [offerQr, setOfferQr] = useState("");
   const registerOfferCustomer = trpc.catalog.registerOfferCustomer.useMutation();
   const createOfferPurchaseRequest = trpc.catalog.createOfferPurchaseRequest.useMutation();
   const rewardLevelsQuery = trpc.catalog.getPublicLoyaltyRewardLevels.useQuery(undefined, { staleTime: 30_000, retry: false });
@@ -81,15 +85,22 @@ export default function PublicOfferPage() {
   useEffect(() => {
     if (!offerId) return;
     let active = true;
-    void getPublicStoreOffer(offerId).then(row => {
+    const loadOffer = () => getPublicStoreOffer(offerId).then(row => {
       if (!active) return;
       if (!row) { setOffer(null); setLoading(false); return; }
       const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
-      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || row.bg_color || "#ea580c"), description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || row.bg_color || "#ea580c"), qrCodeData: row.qr_code_data || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
     }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
-    return () => { active = false; };
+    void loadOffer();
+    const channel = getSupabaseClient().channel(`public-offer-${offerId}`).on("postgres_changes", { event: "*", schema: "public", table: "store_offers", filter: `id=eq.${offerId}` }, () => { void loadOffer(); }).subscribe();
+    return () => { active = false; void getSupabaseClient().removeChannel(channel); };
   }, [offerId]);
+
+  useEffect(() => {
+    if (!offer) return;
+    void QRCode.toDataURL(offer.qrCodeData || window.location.href, { width: 220, margin: 2, errorCorrectionLevel: "M" }).then(setOfferQr).catch(() => setOfferQr(""));
+  }, [offer]);
 
   useEffect(() => {
     const profile = refreshedCustomerProfileQuery.data;
@@ -224,14 +235,15 @@ export default function PublicOfferPage() {
   const isExpired = expiryInfo.status === "expired";
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-yellow-100 py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right" }}>
+    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#ea580c" }}>
+      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
       
       <div className="w-full max-w-md space-y-4">
         
         {/* بطاقة الكوبون القابلة للتنزيل - تصميم مظبوط 100% عربي */}
         <div
           ref={couponRef}
-          className="bg-white p-6 rounded-[2.5rem] border-4 border-orange-400 space-y-4 shadow-2xl relative overflow-hidden"
+          className="bg-white/95 p-6 rounded-[2.5rem] border-4 border-white/80 space-y-4 shadow-2xl relative overflow-hidden"
           style={{ direction: "rtl", textAlign: "right" }}
         >
           <div className="absolute top-0 left-0 w-24 h-24 bg-orange-200 rounded-br-full opacity-30 pointer-events-none"></div>
@@ -242,6 +254,7 @@ export default function PublicOfferPage() {
               <Gift className="w-6 h-6 animate-bounce" />
               <Sparkles className="w-6 h-6 text-yellow-600" />
             </div>
+            {offerQr && <div className="mx-auto w-fit rounded-2xl border border-slate-200 bg-white p-2 shadow-sm"><img src={offerQr} alt="الباركود الرسمي للعرض" className="h-28 w-28" /><p className="mt-1 text-[9px] font-black text-slate-500">امسح لفتح العرض</p></div>}
             {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة العرض" className="mx-auto mb-3 max-h-40 w-full rounded-2xl object-contain" crossOrigin="anonymous" />}
             <h1 className="text-2xl font-black text-orange-700 tracking-wide">محلات أبو رغوة للمنظفات</h1>
             <p className="text-xs font-bold text-gray-700">للمنظفات والعطور • أصل الرغوة في مصر</p>
@@ -367,7 +380,7 @@ export default function PublicOfferPage() {
                   className="w-full bg-orange-600 py-3 text-sm font-black text-white shadow-lg hover:bg-orange-700 disabled:bg-gray-400"
                 >
                   <ShoppingCart className="ml-2 h-5 w-5" />
-                  {isExpired ? "انتهت صلاحية العرض" : createOfferPurchaseRequest.isLoading ? "جارٍ إرسال طلبك…" : offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : offerPurchaseStatusQuery.data?.status === "approved" ? "شراء العرض مرة أخرى" : "شراء العرض وإرسال الطلب للمحل"}
+                  {isExpired ? "انتهت صلاحية العرض" : createOfferPurchaseRequest.isLoading ? "جارٍ إرسال طلبك…" : offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : offerPurchaseStatusQuery.data?.status === "approved" ? "أضف إلى السلة مرة أخرى" : "أضف إلى السلة واطلب الآن"}
                 </Button>
                 <p className="text-center text-[10px] text-gray-600">اضغط عند شراء العرض فعلًا؛ سيراجع المحل الطلب ويضيف {Math.max(0, Math.trunc(Number(offer.loyaltyPoints) || 0))} نقطة إلى بطاقتك بعد التأكيد.</p>
               </div>
