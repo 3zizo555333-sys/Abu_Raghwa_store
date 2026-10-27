@@ -95,8 +95,8 @@ export async function listCatalogTaxonomy(options: { publicOnly?: boolean; shopI
   const id = options.shopId || await shopId(); const client = getSupabaseClient();
   if (options.publicOnly) {
     const [categories, companies, products] = await Promise.all([
-      client.from("catalog_categories").select("id,shop_id,name,sort_order,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("sort_order").limit(1000),
-      client.from("catalog_companies").select("id,shop_id,name,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000),
+      client.from("catalog_categories").select("id,shop_id,name,sort_order,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("sort_order", { ascending: true }).limit(1000),
+      client.from("catalog_companies").select("id,shop_id,name,sort_order,image_url,image_storage_path,deleted_at").eq("shop_id", id).is("deleted_at", null).order("sort_order", { ascending: true }).limit(1000),
       client.from("catalog_manual_products").select("id,shop_id,category_id,company_id,name,unit,price,description,details_url,loyalty_points,is_visible,catalog_image_url,catalog_image_storage_path,deleted_at").eq("shop_id", id).eq("is_visible", true).is("deleted_at", null).order("name").limit(2000),
     ]);
     return {
@@ -106,8 +106,8 @@ export async function listCatalogTaxonomy(options: { publicOnly?: boolean; shopI
     };
   }
   const [categories, companies, products] = await Promise.all([
-    client.from("catalog_categories").select("*").eq("shop_id", id).is("deleted_at", null).order("sort_order").limit(1000),
-    client.from("catalog_companies").select("*").eq("shop_id", id).is("deleted_at", null).order("name").limit(1000),
+    client.from("catalog_categories").select("*").eq("shop_id", id).is("deleted_at", null).order("sort_order", { ascending: true }).limit(1000),
+    client.from("catalog_companies").select("*").eq("shop_id", id).is("deleted_at", null).order("sort_order", { ascending: true }).limit(1000),
     client.from("catalog_manual_products").select("*").eq("shop_id", id).is("deleted_at", null).order("name").limit(2000),
   ]);
   return { categories: requireCloudResult(categories), companies: requireCloudResult(companies), products: requireCloudResult(products) };
@@ -119,6 +119,15 @@ export async function saveCatalogCategory(input: Omit<Insert<"catalog_categories
 export async function saveCatalogCompany(input: Omit<Insert<"catalog_companies">, "shop_id"> & { id?: string }) {
   assertCloudOnline(); const id = await shopId(); const client = getSupabaseClient(); const payload = { ...input, shop_id: id } as Insert<"catalog_companies">;
   return requireCloudResult(input.id ? await client.from("catalog_companies").update(payload).eq("id", input.id).eq("shop_id", id).select().single() : await client.from("catalog_companies").insert(payload).select().single()) as Row<"catalog_companies">;
+}
+export async function reorderCatalogTaxonomy(kind: "categories" | "companies", orderedIds: string[]) {
+  assertCloudOnline();
+  const id = await shopId();
+  return requireCloudResult(await getSupabaseClient().rpc("reorder_catalog_taxonomy", {
+    p_shop_id: id,
+    p_entity_type: kind,
+    p_ordered_ids: orderedIds,
+  }));
 }
 export async function deleteCatalogCategory(categoryId: string) {
   assertCloudOnline(); const id = await shopId();

@@ -1,6 +1,9 @@
 import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
+import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
+import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import QRCode from "qrcode";
 import { useLocation } from "wouter";
 import { Button } from "@/components/ui/button";
@@ -14,7 +17,7 @@ import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct } from "@/lib/catalog";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
-import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
+import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, reorderCatalogTaxonomy, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
 import { uploadCloudFormulationImage } from "@/lib/supabase/formulationImages";
 import { uploadCloudProductImage } from "@/lib/supabase/productImages";
 import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, subscribeToShopChanges, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
@@ -45,6 +48,14 @@ const STATUS_LABELS = {
   delivered: { label: "تم التسليم", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   cancelled: { label: "ملغي", className: "bg-slate-100 text-slate-700 border-slate-200" },
 };
+
+function SortableTaxonomyRow({ id, disabled, className, children }: { id: string; disabled: boolean; className: string; children: React.ReactNode }) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
+  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.55 : 1 }} className={className}>
+    <button type="button" {...attributes} {...listeners} disabled={disabled} aria-label="اسحب لإعادة الترتيب" title="اسحب لإعادة الترتيب" className="touch-none grid h-10 w-9 shrink-0 place-items-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><GripVertical className="h-5 w-5" /></button>
+    {children}
+  </div>;
+}
 
 export default function CatalogManager() {
   const [, navigate] = useLocation();
@@ -87,10 +98,16 @@ export default function CatalogManager() {
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
   const [manualDeletePending, setManualDeletePending] = useState(false);
   const [taxonomyImageUploading, setTaxonomyImageUploading] = useState<string | null>(null);
+  const [taxonomyOrderSaving, setTaxonomyOrderSaving] = useState(false);
   const [taxonomyManagerOpen, setTaxonomyManagerOpen] = useState<CatalogTaxonomyKind | null>(null);
   const [taxonomySearch, setTaxonomySearch] = useState("");
   const [showTaxonomyAddForm, setShowTaxonomyAddForm] = useState(false);
   const [editingTaxonomy, setEditingTaxonomy] = useState<{ kind: CatalogTaxonomyKind; id: string; name: string } | null>(null);
+  const taxonomySensors = useSensors(
+    useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
+    useSensor(KeyboardSensor),
+  );
 
   useEffect(() => {
     let active = true;
@@ -112,8 +129,8 @@ export default function CatalogManager() {
         catalogImageUrl: String(recipe.image_signed_url || ""), imageStoragePath: String(recipe.image_storage_path || "") || undefined,
         notes: String(recipe.description || ""),
       })));
-      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
-      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
+      setCategories(taxonomy.categories.map(row => ({ id: row.id, name: row.name, sortOrder: Number(row.sort_order || 0), imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
+      setCompanies(taxonomy.companies.map(row => ({ id: row.id, name: row.name, sortOrder: Number(row.sort_order || 0), imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
       setManualProducts(data.manualProducts.map(row => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String((row as any).category || ""), company: String((row as any).company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: row.is_visible, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
       setPricingConfig(pricing);
     };
@@ -245,6 +262,41 @@ export default function CatalogManager() {
     const query = taxonomySearch.trim().toLocaleLowerCase("ar-EG");
     return query ? source.filter(item => item.name.toLocaleLowerCase("ar-EG").includes(query)) : source;
   }, [safeCategories, safeCompanies, taxonomyManagerOpen, taxonomySearch]);
+  const persistTaxonomyOrder = async (kind: CatalogTaxonomyKind, reorderedVisible: Array<CatalogCategory | CatalogCompany>) => {
+    const original = kind === "categories" ? safeCategories : safeCompanies;
+    const visibleIds = new Set(filteredTaxonomyItems.map(item => item.id));
+    const reorderedQueue = [...reorderedVisible];
+    const next = original.map(item => visibleIds.has(item.id) ? reorderedQueue.shift()! : item);
+    if (next.every((item, index) => item.id === original[index]?.id)) return;
+    const nextWithOrder = next.map((item, sortOrder) => ({ ...item, sortOrder }));
+    if (kind === "categories") setCategories(nextWithOrder as CatalogCategory[]); else setCompanies(nextWithOrder as CatalogCompany[]);
+    setTaxonomyOrderSaving(true);
+    try {
+      await reorderCatalogTaxonomy(kind, nextWithOrder.map(item => item.id));
+      toast.success("تم حفظ الترتيب الجديد");
+    } catch (error) {
+      if (kind === "categories") setCategories(original as CatalogCategory[]); else setCompanies(original as CatalogCompany[]);
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ الترتيب");
+    } finally {
+      setTaxonomyOrderSaving(false);
+    }
+  };
+  const moveTaxonomyItem = (id: string, offset: -1 | 1) => {
+    if (!taxonomyManagerOpen || taxonomyOrderSaving) return;
+    const current = filteredTaxonomyItems;
+    const from = current.findIndex(item => item.id === id);
+    const to = from + offset;
+    if (from < 0 || to < 0 || to >= current.length) return;
+    void persistTaxonomyOrder(taxonomyManagerOpen, arrayMove(current, from, to));
+  };
+  const handleTaxonomyDragEnd = (event: DragEndEvent) => {
+    if (!taxonomyManagerOpen || taxonomyOrderSaving || !event.over || event.active.id === event.over.id) return;
+    const current = filteredTaxonomyItems;
+    const from = current.findIndex(item => item.id === String(event.active.id));
+    const to = current.findIndex(item => item.id === String(event.over?.id));
+    if (from < 0 || to < 0) return;
+    void persistTaxonomyOrder(taxonomyManagerOpen, arrayMove(current, from, to));
+  };
   const managedProducts = useMemo(() => [...safeProducts, ...safeManualProducts], [safeProducts, safeManualProducts]);
   const catalogRecipes = useMemo(() => safeRecipes.map(recipeToCatalogProduct), [safeRecipes]);
   const filteredProducts = useMemo(() => managedProducts.filter(product => `${product.name ?? ""} ${product.category ?? ""} ${product.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [managedProducts, search]);
@@ -257,7 +309,7 @@ export default function CatalogManager() {
     if (!name) return;
     if (safeCategories.some(category => category.name === name)) return toast.error("هذه الفئة موجودة بالفعل");
     const saved = await saveCatalogCategory({ name, sort_order: safeCategories.length });
-    setCategories([...safeCategories, { id: saved.id, name: saved.name, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
+    setCategories([...safeCategories, { id: saved.id, name: saved.name, sortOrder: safeCategories.length, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
     setNewCategory("");
     toast.success("تمت إضافة الفئة للكتالوج");
   };
@@ -266,8 +318,8 @@ export default function CatalogManager() {
     const name = newCompany.trim();
     if (!name) return;
     if (safeCompanies.some(company => company.name === name)) return toast.error("هذه الشركة موجودة بالفعل");
-    const saved = await saveCatalogCompany({ name });
-    setCompanies([...safeCompanies, { id: saved.id, name: saved.name, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
+    const saved = await saveCatalogCompany({ name, sort_order: safeCompanies.length });
+    setCompanies([...safeCompanies, { id: saved.id, name: saved.name, sortOrder: safeCompanies.length, imageUrl: saved.image_url || undefined, imageStoragePath: saved.image_storage_path || undefined }]);
     setNewCompany("");
     toast.success("تمت إضافة الشركة للكتالوج");
   };
@@ -279,7 +331,7 @@ export default function CatalogManager() {
     if (source.some(item => item.id !== entity.id && item.name === name)) return toast.error("هذا الاسم موجود بالفعل");
     try {
       if (kind === "categories") {
-        await saveCatalogCategory({ id: entity.id, name, sort_order: safeCategories.findIndex(item => item.id === entity.id), image_url: entity.imageUrl || undefined, image_storage_path: entity.imageStoragePath || null });
+        await saveCatalogCategory({ id: entity.id, name, image_url: entity.imageUrl || undefined, image_storage_path: entity.imageStoragePath || null });
         setCategories(current => current.map(item => item.id === entity.id ? { ...item, name } : item));
       } else {
         await saveCatalogCompany({ id: entity.id, name, image_url: entity.imageUrl || undefined, image_storage_path: entity.imageStoragePath || null });
@@ -296,8 +348,10 @@ export default function CatalogManager() {
     if (!window.confirm("سيتم إخفاء هذا العنصر من الكتالوج مع إبقاء المنتجات المرتبطة به. هل تريد المتابعة؟")) return;
     try {
       if (kind === "categories") await deleteCatalogCategory(id); else await deleteCatalogCompany(id);
-      if (kind === "categories") setCategories(current => current.filter(item => item.id !== id));
-      else setCompanies(current => current.filter(item => item.id !== id));
+      const remaining = (kind === "categories" ? safeCategories : safeCompanies).filter(item => item.id !== id).map((item, sortOrder) => ({ ...item, sortOrder }));
+      if (kind === "categories") setCategories(remaining as CatalogCategory[]); else setCompanies(remaining as CatalogCompany[]);
+      try { await reorderCatalogTaxonomy(kind, remaining.map(item => item.id)); }
+      catch { toast.error("تمت الإزالة، لكن تعذر إعادة ترقيم العناصر المتبقية."); return; }
       toast.success("تمت إزالة العنصر من التصنيفات");
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر إزالة العنصر"); }
   };
@@ -626,7 +680,7 @@ export default function CatalogManager() {
                 {taxonomyManagerOpen === "categories" ? <Package className="text-orange-600" /> : <Building2 className="text-blue-600" />}
                 {taxonomyManagerOpen === "categories" ? `إدارة الفئات (${safeCategories.length} فئة)` : `إدارة الشركات (${safeCompanies.length} شركة)`}
               </DialogTitle>
-              <DialogDescription>ابحث وعدّل الاسم أو ارفع صورة من الكاميرا أو المعرض. التغييرات تحفظ مباشرة في الكتالوج.</DialogDescription>
+              <DialogDescription>اسحب من مقبض ⠿ أو استخدم زري الرفع والخفض لترتيب العناصر. الترتيب يُحفظ فوراً؛ والأسماء لا تتغير إلا عند تعديلها يدوياً.</DialogDescription>
             </DialogHeader>
             <div className="space-y-4">
               <div className="relative"><Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" /><Input value={taxonomySearch} onChange={event => setTaxonomySearch(event.target.value)} placeholder={taxonomyManagerOpen === "categories" ? "ابحث عن اسم الفئة" : "ابحث عن اسم الشركة"} className="h-10 pr-9" autoFocus /></div>
@@ -638,20 +692,28 @@ export default function CatalogManager() {
                 </div>
               </div>}
               <div className="space-y-2">
-                {filteredTaxonomyItems.length ? filteredTaxonomyItems.map(entity => {
+                <DndContext sensors={taxonomySensors} collisionDetection={closestCenter} onDragEnd={handleTaxonomyDragEnd}>
+                  <SortableContext items={filteredTaxonomyItems.map(entity => entity.id)} strategy={verticalListSortingStrategy}>
+                {filteredTaxonomyItems.length ? filteredTaxonomyItems.map((entity, index) => {
                   const isCategory = taxonomyManagerOpen === "categories";
                   const isEditing = editingTaxonomy?.kind === taxonomyManagerOpen && editingTaxonomy.id === entity.id;
                   const cameraId = `${taxonomyManagerOpen}-camera-${entity.id}`;
                   const galleryId = `${taxonomyManagerOpen}-gallery-${entity.id}`;
-                  return <div key={entity.id} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2 ${isCategory ? "border-orange-100 bg-orange-50/60" : "border-blue-100 bg-blue-50/60"}`}>
+                  return <SortableTaxonomyRow key={entity.id} id={entity.id} disabled={taxonomyOrderSaving} className={`flex flex-wrap items-center gap-2 rounded-xl border p-2 ${isCategory ? "border-orange-100 bg-orange-50/60" : "border-blue-100 bg-blue-50/60"}`}>
                     <span className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg bg-white">{entity.imageUrl ? <img src={entity.imageUrl} alt="" className={`h-full w-full ${isCategory ? "object-cover" : "object-contain"}`} /> : isCategory ? <Package className="h-5 w-5 text-orange-500" /> : <Building2 className="h-5 w-5 text-blue-500" />}</span>
                     {isEditing ? <div className="flex min-w-[180px] flex-1 gap-2"><Input value={editingTaxonomy.name} onChange={event => setEditingTaxonomy(current => current ? { ...current, name: event.target.value } : current)} onKeyDown={event => { if (event.key === "Enter") void updateTaxonomyName(taxonomyManagerOpen!, entity, editingTaxonomy?.name || ""); }} className="h-9 bg-white text-sm font-bold" autoFocus /><Button type="button" size="sm" onClick={() => void updateTaxonomyName(taxonomyManagerOpen!, entity, editingTaxonomy?.name || "")} className="bg-emerald-600 hover:bg-emerald-700">حفظ</Button><Button type="button" size="sm" variant="ghost" onClick={() => setEditingTaxonomy(null)}>إلغاء</Button></div> : <span className="min-w-0 flex-1 truncate text-sm font-black text-slate-900">{entity.name}</span>}
                     {!isEditing && <Button type="button" size="sm" variant="outline" onClick={() => setEditingTaxonomy({ kind: taxonomyManagerOpen!, id: entity.id, name: entity.name })} className="h-8 px-2 text-xs font-bold">تعديل</Button>}
                     <label htmlFor={cameraId} className={`cursor-pointer rounded-lg px-2 py-1.5 text-[10px] font-black text-white ${isCategory ? "bg-orange-600" : "bg-blue-600"}`}>📷 كاميرا<input id={cameraId} type="file" accept="image/*" capture="environment" className="hidden" disabled={taxonomyImageUploading === entity.id} onChange={event => { void uploadTaxonomyImage(taxonomyManagerOpen!, entity, event.target.files?.[0]); event.target.value = ""; }} /></label>
                     <label htmlFor={galleryId} className={`cursor-pointer rounded-lg border bg-white px-2 py-1.5 text-[10px] font-black ${isCategory ? "border-orange-200 text-orange-700" : "border-blue-200 text-blue-700"}`}>🖼️ معرض<input id={galleryId} type="file" accept="image/*" className="hidden" disabled={taxonomyImageUploading === entity.id} onChange={event => { void uploadTaxonomyImage(taxonomyManagerOpen!, entity, event.target.files?.[0]); event.target.value = ""; }} /></label>
+                    <div className="flex items-center gap-1">
+                      <Button type="button" size="icon" variant="outline" aria-label={`رفع ${isCategory ? "الفئة" : "الشركة"} ${entity.name}`} title="رفع" disabled={taxonomyOrderSaving || index === 0} onClick={() => moveTaxonomyItem(entity.id, -1)} className="h-9 w-9"><ArrowUp className="h-4 w-4" /></Button>
+                      <Button type="button" size="icon" variant="outline" aria-label={`خفض ${isCategory ? "الفئة" : "الشركة"} ${entity.name}`} title="خفض" disabled={taxonomyOrderSaving || index === filteredTaxonomyItems.length - 1} onClick={() => moveTaxonomyItem(entity.id, 1)} className="h-9 w-9"><ArrowDown className="h-4 w-4" /></Button>
+                    </div>
                     <button type="button" className="rounded-lg p-1.5 text-red-600 hover:bg-red-50" title={`إزالة ${isCategory ? "الفئة" : "الشركة"}`} onClick={() => void deleteTaxonomy(taxonomyManagerOpen!, entity.id)}><Trash2 className="h-4 w-4" /></button>
-                  </div>;
+                  </SortableTaxonomyRow>;
                 }) : <p className="rounded-2xl border border-dashed border-slate-200 p-8 text-center text-sm text-slate-500">لا توجد نتائج مطابقة للبحث.</p>}
+                  </SortableContext>
+                </DndContext>
               </div>
             </div>
           </DialogContent>

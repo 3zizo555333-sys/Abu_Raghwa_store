@@ -68,6 +68,7 @@ export function recipeToCatalogProduct(recipe: CatalogRecipe): CatalogProduct {
 export interface CatalogCategory {
   id: string;
   name: string;
+  sortOrder?: number;
   imageUrl?: string;
   imageStoragePath?: string;
 }
@@ -75,6 +76,7 @@ export interface CatalogCategory {
 export interface CatalogCompany {
   id: string;
   name: string;
+  sortOrder?: number;
   imageUrl?: string;
   imageStoragePath?: string;
 }
