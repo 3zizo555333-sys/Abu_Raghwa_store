@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ErrorInfo, type ReactNode } from "react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -42,20 +42,62 @@ interface OfferProductStagerProps {
   onSave: (image: File) => Promise<void>;
 }
 
+type DrawableImage = ImageBitmap | HTMLImageElement;
 type LayerBounds = { left: number; top: number; width: number; height: number; centerX: number; centerY: number };
 
-function layerBounds(layer: ProductLayer, bitmap: ImageBitmap): LayerBounds {
+function drawableDimensions(image: DrawableImage) {
+  if (typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement) {
+    return { width: image.naturalWidth || image.width, height: image.naturalHeight || image.height };
+  }
+  return { width: image.width, height: image.height };
+}
+
+function closeDrawableImage(image: DrawableImage) {
+  if ("close" in image && typeof image.close === "function") {
+    image.close();
+    return;
+  }
+  if (typeof HTMLImageElement !== "undefined" && image instanceof HTMLImageElement) {
+    const source = image.src;
+    image.src = "";
+    if (source.startsWith("blob:")) URL.revokeObjectURL(source);
+  }
+}
+
+async function createDrawableImage(blob: Blob): Promise<DrawableImage> {
+  if (typeof createImageBitmap === "function") {
+    try {
+      return await createImageBitmap(blob, { imageOrientation: "from-image" });
+    } catch {
+      // Some mobile browsers cannot decode ImageBitmap; continue through an <img> fallback.
+    }
+  }
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const source = URL.createObjectURL(blob);
+    image.decoding = "async";
+    image.onload = () => resolve(image);
+    image.onerror = () => {
+      URL.revokeObjectURL(source);
+      reject(new Error("تعذر فتح إحدى الصور في هذا المتصفح."));
+    };
+    image.src = source;
+  });
+}
+
+function layerBounds(layer: ProductLayer, bitmap: DrawableImage): LayerBounds {
+  const dimensions = drawableDimensions(bitmap);
   const maxWidth = STAGE_SIZE * 0.56 * layer.scale;
   const maxHeight = STAGE_SIZE * 0.78 * layer.scale;
-  const fit = Math.min(maxWidth / bitmap.width, maxHeight / bitmap.height);
-  const width = bitmap.width * fit;
-  const height = bitmap.height * fit;
+  const fit = Math.min(maxWidth / dimensions.width, maxHeight / dimensions.height);
+  const width = dimensions.width * fit;
+  const height = dimensions.height * fit;
   const centerX = layer.x * STAGE_SIZE;
   const centerY = layer.baseline * STAGE_SIZE - height / 2;
   return { left: centerX - width / 2, top: centerY - height / 2, width, height, centerX, centerY };
 }
 
-function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: Map<string, ImageBitmap>, selectedId?: string | null) {
+function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: Map<string, DrawableImage>, selectedId?: string | null) {
   canvas.width = STAGE_SIZE;
   canvas.height = STAGE_SIZE;
   const context = canvas.getContext("2d");
@@ -134,25 +176,29 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [backgroundRemovalUnavailable, setBackgroundRemovalUnavailable] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusText, setStatusText] = useState("");
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const galleryInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
-  const bitmapsRef = useRef(new Map<string, ImageBitmap>());
+  const bitmapsRef = useRef(new Map<string, DrawableImage>());
   const dragRef = useRef<{ id: string; startX: number; startY: number; originX: number; originBaseline: number } | null>(null);
   const selectedLayer = useMemo(() => layers.find(layer => layer.id === selectedLayerId) || null, [layers, selectedLayerId]);
   const remainingSlots = Math.max(0, MAX_PRODUCTS - layers.length - queuedPhotos.length);
 
   useEffect(() => {
     if (!open) return;
-    drawStage(canvasRef.current!, layers, bitmapsRef.current, selectedLayerId);
-    drawStage(previewCanvasRef.current!, layers, bitmapsRef.current);
+    const canvas = canvasRef.current;
+    const previewCanvas = previewCanvasRef.current;
+    if (!canvas || !previewCanvas) return;
+    drawStage(canvas, layers, bitmapsRef.current, selectedLayerId);
+    drawStage(previewCanvas, layers, bitmapsRef.current);
   }, [open, layers, selectedLayerId]);
 
   useEffect(() => () => {
-    bitmapsRef.current.forEach(bitmap => bitmap.close());
+    bitmapsRef.current.forEach(closeDrawableImage);
     bitmapsRef.current.clear();
   }, []);
 
@@ -171,7 +217,7 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
       return true;
     });
     const capacity = Math.max(0, MAX_PRODUCTS - layers.length - queuedPhotos.length);
-    const accepted = valid.slice(0, capacity).map(file => ({ id: crypto.randomUUID(), file }));
+    const accepted = valid.slice(0, capacity).map(file => ({ id: typeof crypto !== "undefined" && typeof crypto.randomUUID === "function" ? crypto.randomUUID() : `photo-${Date.now()}-${Math.random().toString(36).slice(2)}`, file }));
     if (valid.length > capacity) toast.warning(`يمكن تجهيز ${MAX_PRODUCTS} منتجات كحد أقصى في كل عرض.`);
     if (accepted.length) setQueuedPhotos(current => [...current, ...accepted]);
   };
@@ -180,25 +226,45 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
     if (!queuedPhotos.length || isProcessing || isSaving) return;
     setIsProcessing(true);
     setProgress(0);
-    setStatusText("تحميل محرك التفريغ والنموذج الخفيف عند الحاجة…");
-    const additions: Array<{ layer: ProductLayer; bitmap: ImageBitmap }> = [];
+    setStatusText("جاري تجهيز محرك المعالجة وعزل الخلفيات...");
+    const additions: Array<{ layer: ProductLayer; bitmap: DrawableImage }> = [];
     const processedIds = new Set<string>();
+    let useBackgroundRemoval = !backgroundRemovalUnavailable;
+    let warnedAboutFallback = backgroundRemovalUnavailable;
     try {
       for (let index = 0; index < queuedPhotos.length; index += 1) {
         const queued = queuedPhotos[index];
-        setStatusText(`تفريغ المنتج ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
         setProgress(0);
-        const modelInput = await resizeForMatting(queued.file);
-        const transparentPng = await removeProductBackground(modelInput, info => {
-          setProgress(Math.max(0, Math.min(100, Math.round(info.progress))));
-          if (info.step === "downloading") setStatusText("تحميل نموذج U²-NetP الخفيف (مرة واحدة)…");
-        });
-        const bitmap = await createImageBitmap(transparentPng);
+        let bitmap: DrawableImage;
+        if (useBackgroundRemoval) {
+          try {
+            setStatusText(`جاري عزل المنتج ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
+            const modelInput = await resizeForMatting(queued.file);
+            const transparentPng = await removeProductBackground(modelInput, info => {
+              setProgress(Math.max(0, Math.min(100, Math.round(info.progress))));
+              if (info.step === "downloading") setStatusText("تحميل نموذج U²-NetP الخفيف (مرة واحدة)…");
+            });
+            bitmap = await createDrawableImage(transparentPng);
+          } catch {
+            useBackgroundRemoval = false;
+            setBackgroundRemovalUnavailable(true);
+            setStatusText("تعذر تشغيل محرك التفريغ؛ يجري تركيب الصور الأصلية مباشرةً.");
+            if (!warnedAboutFallback) {
+              toast.warning("تعذر تشغيل إزالة الخلفية على هذا الجهاز؛ سنكمل تركيب الصور مباشرة دون إيقاف الاستوديو.");
+              warnedAboutFallback = true;
+            }
+            bitmap = await createDrawableImage(queued.file);
+          }
+        } else {
+          setStatusText(`تركيب الصورة الأصلية ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
+          bitmap = await createDrawableImage(queued.file);
+        }
         additions.push({
           layer: { id: queued.id, name: queued.file.name, x: 0.5, baseline: 0.86, scale: 1, rotation: 0, depth: 0 },
           bitmap,
         });
         processedIds.add(queued.id);
+        setProgress(Math.round(((index + 1) / queuedPhotos.length) * 100));
       }
       bitmapsRef.current = new Map(bitmapsRef.current);
       for (const entry of additions) bitmapsRef.current.set(entry.layer.id, entry.bitmap);
@@ -206,9 +272,9 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
       setLayers(next);
       setSelectedLayerId(additions.at(-1)?.layer.id || selectedLayerId);
       setQueuedPhotos(current => current.filter(photo => !processedIds.has(photo.id)));
-      setStatusText("تم التفريغ والتجميع. اسحب كل عبوة أو غيّر حجمها عند الحاجة.");
+      setStatusText(useBackgroundRemoval ? "تم التفريغ والتجميع. اسحب كل عبوة أو غيّر حجمها عند الحاجة." : "تم تركيب الصور مباشرة. اسحب كل صورة أو غيّر حجمها عند الحاجة.");
       setProgress(100);
-      toast.success(`تم تفريغ وتجهيز ${additions.length} صورة منتج بخلفية شفافة.`);
+      toast.success(useBackgroundRemoval ? `تم تفريغ وتجهيز ${additions.length} صورة منتج بخلفية شفافة.` : `تم تركيب ${additions.length} صورة مباشرة؛ يمكنك ضبطها ومتابعة حفظ العرض.`);
     } catch (error) {
       if (additions.length) {
         bitmapsRef.current = new Map(bitmapsRef.current);
@@ -223,7 +289,8 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
   };
 
   const removeLayer = (id: string) => {
-    bitmapsRef.current.get(id)?.close();
+    const image = bitmapsRef.current.get(id);
+    if (image) closeDrawableImage(image);
     bitmapsRef.current.delete(id);
     const next = layers.filter(layer => layer.id !== id);
     setLayers(next);
@@ -255,7 +322,7 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
       return point.x >= bounds.left && point.x <= bounds.left + bounds.width && point.y >= bounds.top && point.y <= bounds.top + bounds.height;
     });
     if (!hit) return;
-    event.currentTarget.setPointerCapture(event.pointerId);
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Pointer capture is optional on older mobile browsers. */ }
     setSelectedLayerId(hit.id);
     dragRef.current = { id: hit.id, startX: event.clientX, startY: event.clientY, originX: hit.x, originBaseline: hit.baseline };
   };
@@ -323,7 +390,14 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
                 {isProcessing ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <Sparkles className="ml-2 h-4 w-4" />}
                 {isProcessing ? "جاري المعالجة والتجميع…" : "✨ معالجة وتنسيق العرض تلقائياً"}
               </Button>
-              {isProcessing && <div className="mt-3"><div className="mb-1 flex justify-between text-[11px] font-bold text-violet-800"><span>{statusText}</span><span>{progress}%</span></div><div className="h-2 overflow-hidden rounded-full bg-violet-100"><div className="h-full rounded-full bg-violet-600 transition-all" style={{ width: `${progress}%` }} /></div></div>}
+              {isProcessing && <div role="status" aria-live="polite" className="mt-3 flex items-center gap-3 rounded-xl border border-violet-200 bg-white p-3">
+                <div className="relative h-14 w-14 shrink-0">
+                  <svg viewBox="0 0 44 44" className="h-full w-full -rotate-90" aria-hidden="true"><circle cx="22" cy="22" r="18" fill="none" stroke="#ede9fe" strokeWidth="4" /><circle cx="22" cy="22" r="18" fill="none" stroke="#6d28d9" strokeWidth="4" strokeLinecap="round" strokeDasharray="113.1" strokeDashoffset={113.1 * (1 - progress / 100)} className="transition-all duration-300" /></svg>
+                  <span className="absolute inset-0 grid place-items-center text-[10px] font-black text-violet-900">{progress}%</span>
+                </div>
+                <div className="min-w-0"><p className="text-xs font-black text-violet-950">جاري تجهيز محرك المعالجة وعزل الخلفيات...</p><p className="mt-1 break-words text-[11px] text-slate-600">{statusText}</p></div>
+              </div>}
+              {backgroundRemovalUnavailable && !isProcessing && <div role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><p className="font-bold">محرك التفريغ غير متاح على هذا الجهاز. يمكنك متابعة تركيب الصور الأصلية وحفظها دون توقف.</p><Button type="button" size="sm" variant="ghost" onClick={() => setBackgroundRemovalUnavailable(false)} className="mt-1 h-8 px-2 text-amber-900">إعادة محاولة إزالة الخلفية</Button></div>}
               {!isProcessing && !!statusText && <p className="mt-2 text-center text-xs font-bold text-emerald-700">{statusText}</p>}
             </div>
 
@@ -369,4 +443,38 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
       </DialogContent>
     </Dialog>
   );
+}
+
+interface OfferProductStagerBoundaryProps {
+  children: ReactNode;
+  onClose: () => void;
+}
+
+interface OfferProductStagerBoundaryState {
+  hasError: boolean;
+}
+
+export class OfferProductStagerBoundary extends Component<OfferProductStagerBoundaryProps, OfferProductStagerBoundaryState> {
+  state: OfferProductStagerBoundaryState = { hasError: false };
+
+  static getDerivedStateFromError(): OfferProductStagerBoundaryState {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, _info: ErrorInfo) {
+    console.error("[OfferProductStager] studio error isolated from the offer manager", error);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div className="fixed inset-0 z-[200] grid place-items-center bg-slate-950/60 p-4" dir="rtl" role="alertdialog" aria-modal="true" aria-labelledby="stager-error-title">
+        <div className="w-full max-w-md rounded-2xl bg-white p-5 text-right shadow-2xl">
+          <h2 id="stager-error-title" className="text-lg font-black text-slate-900">تعذر فتح استوديو الصور</h2>
+          <p className="mt-2 text-sm leading-6 text-slate-600">تم عزل العطل عن لوحة العروض. يمكنك إغلاق هذه النافذة واستخدام رفع صورة العرض المعتاد أو إعادة فتح الاستوديو.</p>
+          <Button type="button" onClick={this.props.onClose} className="mt-4 min-h-11 w-full bg-violet-700 font-black hover:bg-violet-800">إغلاق الاستوديو</Button>
+        </div>
+      </div>
+    );
+  }
 }

@@ -11,7 +11,7 @@ import { trpc } from "@/lib/trpc";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 import { deleteStoreOffer, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { generateCatalogOfferBanner, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
-import { OfferProductStager } from "@/components/OfferProductStager";
+import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
 interface SmartOffer {
   id: string;
@@ -315,7 +315,9 @@ export default function SmartOffersList() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-white to-amber-50 p-4 pb-16" dir="rtl">
-      {stagingOffer && <OfferProductStager key={stagingOffer.id} open offer={stagingOffer} onOpenChange={open => { if (!open) setStagingOffer(null); }} onSave={file => handleStagedProductImage(stagingOffer, file)} />}
+      {stagingOffer && <OfferProductStagerBoundary key={stagingOffer.id} onClose={() => setStagingOffer(null)}>
+        <OfferProductStager open offer={stagingOffer} onOpenChange={open => { if (!open) setStagingOffer(null); }} onSave={file => handleStagedProductImage(stagingOffer, file)} />
+      </OfferProductStagerBoundary>}
       <main className="mx-auto max-w-5xl space-y-5">
         <header className="flex flex-col gap-4 rounded-3xl bg-white p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
           <div>
