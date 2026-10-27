@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Sparkles, Gift, Star, Clock, Download, MessageCircle, Share2, ShoppingCart, CheckCircle2 } from "lucide-react";
+import { Sparkles, Star, Download, MessageCircle, Share2, ShoppingCart, CheckCircle2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +12,6 @@ import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
 import { shouldDisableOfferPurchaseButton } from "@/lib/offerPurchaseUi";
 import { getPublicStoreOffer, mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import QRCode from "qrcode";
 
 interface SmartOffer {
   id: string;
@@ -24,7 +23,6 @@ interface SmartOffer {
   bgColor?: string;
   bgGradient?: string;
   backgroundMode?: "solid" | "gradient";
-  qrCodeData?: string;
   items: Array<{ name: string; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
   offerPrice: number;
@@ -36,7 +34,6 @@ interface SmartOffer {
   endDate: string;
   startAt?: number;
   endAt?: number;
-  qrCodeDataUrl?: string;
   loyaltyPoints?: number;
   isActivated?: boolean;
 }
@@ -63,7 +60,6 @@ export default function PublicOfferPage() {
   const [customerRecord, setCustomerRecord] = useState<CustomerLoyalty | null>(null);
   const [purchaseRequestId, setPurchaseRequestId] = useState("");
   const [now, setNow] = useState(() => Date.now());
-  const [offerQr, setOfferQr] = useState("");
   const registerOfferCustomer = trpc.catalog.registerOfferCustomer.useMutation();
   const createOfferPurchaseRequest = trpc.catalog.createOfferPurchaseRequest.useMutation();
   const rewardLevelsQuery = trpc.catalog.getPublicLoyaltyRewardLevels.useQuery(undefined, { staleTime: 30_000, retry: false });
@@ -102,18 +98,13 @@ export default function PublicOfferPage() {
       const discountAmount = savedDiscountAmount > 0 ? savedDiscountAmount : Math.max(0, originalTotalRetail - offerPrice);
       const savedDiscountPercent = Number(data.discountPercent ?? 0) || 0;
       const discountPercent = savedDiscountPercent > 0 ? savedDiscountPercent : originalTotalRetail > 0 ? discountAmount / originalTotalRetail * 100 : 0;
-      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: String(data.title || row.title || "عرض أبو رغوة"), strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: (legacyAiScene ? String(legacyProductImage?.imageUrl || legacyProductImage?.image_url || "") : storedBannerUrl) || undefined, bannerCustomImage: String(data.bannerCustomImage || data.banner_custom_image || row.banner_custom_image || (legacyAiScene ? storedBannerUrl : "")) || undefined, bgColor: String(data.bgColor || data.bg_color || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient", qrCodeData: String(data.qrCodeData || data.qr_code_data || row.qr_code_data || "") || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice, originalTotalRetail, discountAmount, discountPercent, items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: String(data.title || row.title || "عرض أبو رغوة"), strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: (legacyAiScene ? String(legacyProductImage?.imageUrl || legacyProductImage?.image_url || "") : storedBannerUrl) || undefined, bannerCustomImage: String(data.bannerCustomImage || data.banner_custom_image || row.banner_custom_image || (legacyAiScene ? storedBannerUrl : "")) || undefined, bgColor: String(data.bgColor || data.bg_color || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient", description: String(data.description || row.public_description || row.description || ""), offerPrice, originalTotalRetail, discountAmount, discountPercent, items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
     }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
     void loadOffer();
     const channel = getSupabaseClient().channel(`public-offer-${offerId}`).on("postgres_changes", { event: "*", schema: "public", table: "store_offers", filter: `id=eq.${offerId}` }, () => { void loadOffer(); }).subscribe();
     return () => { active = false; void getSupabaseClient().removeChannel(channel); };
   }, [offerId]);
-
-  useEffect(() => {
-    if (!offer) return;
-    void QRCode.toDataURL(offer.qrCodeData || window.location.href, { width: 220, margin: 2, errorCorrectionLevel: "M" }).then(setOfferQr).catch(() => setOfferQr(""));
-  }, [offer]);
 
   useEffect(() => {
     const profile = refreshedCustomerProfileQuery.data;
@@ -149,7 +140,7 @@ export default function PublicOfferPage() {
       setCustomerCode(profile.customerCode);
       setCustomerRecord(profile);
       setIsRegistered(true);
-      toast.success("تم تسجيل بطاقة نقاطك. عند إتمام الشراء اضغط «شراء العرض» حتى يصل طلبك للمحل وتُضاف النقاط بعد التأكيد.");
+      toast.success("تم تسجيل بطاقة نقاطك. عند إتمام الشراء اضغط «اطلب العرض الآن» حتى يصل طلبك للمحل وتُضاف النقاط بعد التأكيد.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "";
       if (message.includes("كود نقاط الولاء غير صحيح")) {
@@ -236,7 +227,7 @@ export default function PublicOfferPage() {
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-md w-full text-center space-y-4 border-2 border-orange-200">
           <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto font-black text-2xl">⚠️</div>
           <h2 className="text-xl font-black text-gray-900">عذراً، هذا العرض غير متوفر</h2>
-          <p className="text-xs text-gray-500">يرجى التأكد من مسح رمز الـ QR الصحيح الخاص بالعرض من داخل محلات أبو رغوة للمنظفات.</p>
+          <p className="text-xs text-gray-500">يرجى التأكد من رابط العرض أو التواصل مع محلات أبو رغوة للمنظفات.</p>
         </div>
       </div>
     );
@@ -246,194 +237,110 @@ export default function PublicOfferPage() {
   const activeRewardLevels = rewardLevelsQuery.data ?? [];
   const expiryInfo = getOfferExpiryInfo(offer, now);
   const isExpired = expiryInfo.status === "expired";
+  const strategyLabel = /bogo|buy.?one|get.?one|1\s*\+\s*1|واحد.*مجان|اشتر.*مجان/i.test(offer.strategyName) ? "BOGO 1+1" : offer.strategyName;
+  const purchaseButtonDisabled = shouldDisableOfferPurchaseButton({
+    isExpired,
+    isSubmitting: createOfferPurchaseRequest.isLoading,
+    requestId: purchaseRequestId,
+    isStatusFetching: offerPurchaseStatusQuery.isFetching,
+    status: offerPurchaseStatusQuery.data?.status,
+  });
+  const handleStickyPurchase = () => {
+    if (isExpired) return;
+    if (!isRegistered) {
+      document.getElementById("offer-customer-registration")?.scrollIntoView({ behavior: "smooth", block: "center" });
+      return;
+    }
+    if (!purchaseButtonDisabled) void handleOfferPurchase();
+  };
 
   return (
-    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.55),rgba(15,23,42,.18)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }}>
-      <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
-      
-      <div className="relative z-10 w-full max-w-2xl space-y-4 sm:space-y-5">
-        
-        {/* بطاقة الكوبون القابلة للتنزيل - تصميم مظبوط 100% عربي */}
-        <div
-          ref={couponRef}
-          className="relative space-y-4 overflow-hidden rounded-[2rem] border border-white/80 bg-white/95 p-4 shadow-2xl backdrop-blur sm:space-y-5 sm:rounded-[2.5rem] sm:p-7"
-          style={{ direction: "rtl", textAlign: "right" }}
-        >
-          <div className="absolute top-0 left-0 w-24 h-24 bg-orange-200 rounded-br-full opacity-30 pointer-events-none"></div>
+    <div className="relative min-h-screen overflow-x-hidden bg-slate-50 pb-28 text-slate-900" dir="rtl" style={{ textAlign: "right" }}>
+      <div className="pointer-events-none fixed inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
 
-          {/* رأس الكوبون */}
-          <div className="relative z-10 text-center space-y-1">
-            <div className="flex justify-center items-center gap-1.5 text-orange-600 mb-1">
-              <Gift className="w-6 h-6 animate-bounce" />
-              <Sparkles className="w-6 h-6 text-yellow-600" />
-            </div>
-            {offerQr && <div className="mx-auto w-fit rounded-2xl border-2 border-slate-200 bg-white p-2.5 shadow-md"><img src={offerQr} alt="رمز QR الرسمي للعرض" className="h-32 w-32 sm:h-36 sm:w-36" /><p className="mt-1 text-[10px] font-black text-slate-600">امسح رمز QR لفتح العرض الرسمي</p></div>}
-            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة العرض" className="mx-auto mb-3 max-h-48 w-full rounded-2xl object-contain sm:max-h-64" crossOrigin="anonymous" />}
-            <h1 className="text-2xl font-black text-orange-700 tracking-wide">محلات أبو رغوة للمنظفات</h1>
-            <p className="text-xs font-bold text-gray-700">للمنظفات والعطور • أصل الرغوة في مصر</p>
-            <span className="inline-block bg-orange-100 text-orange-800 text-[11px] px-3 py-0.5 rounded-full font-extrabold mt-1 shadow-sm">
-              {Number(offer.loyaltyPoints || 0) > 0 ? `⭐ اكسب ${Math.trunc(Number(offer.loyaltyPoints))} نقطة عند شراء العرض واعتماده ⭐` : "⭐ كوبون عرض حصري — لا يمنح نقاط شراء إضافية ⭐"}
-            </span>
-          </div>
+      <main className="relative z-10 mx-auto w-full max-w-5xl">
+        <div ref={couponRef} className="overflow-hidden bg-white shadow-xl sm:my-5 sm:rounded-3xl">
+          <section aria-label={`بانر العرض ${offer.title}`} className="relative isolate aspect-[2/1] max-h-[420px] min-h-[170px] w-full overflow-hidden bg-slate-900 sm:aspect-[2.2/1]">
+            <div className="absolute inset-0 z-0" style={{ backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.32),rgba(15,23,42,.05)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }} />
+            <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /></div>
+            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt={`صورة المنتج في ${offer.title}`} crossOrigin="anonymous" className="absolute bottom-2 left-3 z-20 h-[88%] max-w-[38%] object-contain drop-shadow-[0_10px_16px_rgba(0,0,0,.4)] sm:left-8" />}
+            <div className="pointer-events-none absolute bottom-0 left-0 right-0 z-30 h-8 bg-gradient-to-t from-white/35 to-transparent" aria-hidden="true" />
+            <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-8 w-44 -translate-x-1/2 sm:w-64" viewBox="0 0 256 48" fill="none" aria-hidden="true"><path d="M0 46c10-16 20-14 29-4 4-18 22-25 34-8 8-24 31-28 43-8 8-15 25-18 37-3 12-22 35-18 42 1 14-15 31-8 34 7 12-12 26-3 37 15H0Z" fill="white" fillOpacity=".9"/><circle cx="44" cy="31" r="7" fill="white" fillOpacity=".72"/><circle cx="107" cy="30" r="5" fill="white" fillOpacity=".78"/><circle cx="184" cy="29" r="7" fill="white" fillOpacity=".74"/></svg>
+          </section>
 
-          {/* محتوى العرض */}
-          <div className="border-t-2 border-b-2 border-orange-200 py-4 my-2 space-y-3 relative z-10">
-            <div className="text-center">
-              <span className="bg-gradient-to-r from-orange-600 to-red-600 text-white text-xs px-3.5 py-1 rounded-full font-black inline-block shadow">
-                🎉 {offer.strategyName}
-              </span>
-            </div>
-            
-            <h2 className="text-lg font-black text-gray-900 text-center">{offer.title}</h2>
-            {offer.promoText && <p className="rounded-2xl px-4 py-3 text-center text-lg font-black leading-relaxed text-white shadow-lg sm:text-2xl" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>{offer.promoText}</p>}
-            <p className="text-center text-sm font-medium leading-7 text-gray-600 sm:text-base">{offer.description}</p>
-            {isExpired && <p className="rounded-xl border border-red-300 bg-red-50 px-3 py-2 text-center text-xs font-black text-red-700">انتهت صلاحية هذا العرض ولا يمكن استخدام الكوبون الآن.</p>}
-
-            <div className="space-y-2 pt-1">
-              {offer.items && offer.items.map((item, idx) => (
-                <div key={idx} className="bg-orange-50/70 p-3 rounded-2xl border border-orange-200 flex justify-between items-center text-xs">
-                  <span className="font-extrabold text-gray-900">{item.name}</span>
-                  <span className="font-black text-blue-700">{item.offerPrice} ج.م <span className="line-through text-gray-400 text-[10px] mr-1">{item.retailPrice} ج.م</span></span>
-                </div>
-              ))}
+          <section className="mx-auto w-full max-w-3xl space-y-3 px-3 py-4 sm:px-6 sm:py-6">
+            <div className="flex flex-wrap items-center justify-center gap-2">
+              {offer.discountPercent > 0 && <span className="rounded-full border border-white/50 bg-emerald-600 px-3 py-1 text-xs font-black text-white shadow">وفر {offer.discountPercent.toLocaleString("ar-EG", { maximumFractionDigits: 1 })}%</span>}
+              {strategyLabel && <span className="rounded-full border border-orange-200 bg-orange-100 px-3 py-1 text-xs font-black text-orange-900 shadow-sm">{strategyLabel}</span>}
+              {Number(offer.loyaltyPoints || 0) > 0 && <span className="rounded-full border border-violet-200 bg-violet-100 px-3 py-1 text-xs font-black text-violet-900">⭐ {Math.trunc(Number(offer.loyaltyPoints))} نقطة بعد اعتماد الشراء</span>}
             </div>
 
-            <div className="bg-gradient-to-br from-green-50 to-emerald-50 p-4 rounded-2xl border-2 border-green-300 text-center space-y-1 shadow-inner">
-              <div className="flex justify-between items-center text-xs">
-                <span className="font-bold text-gray-700">السعر الأصلي:</span>
-                <span className="font-bold text-gray-500 line-through">{offer.originalTotalRetail.toLocaleString("ar-EG")} ج.م</span>
+            <header className="space-y-1 text-center">
+              <p className="text-xs font-black text-orange-700">محلات أبو رغوة للمنظفات</p>
+              <h1 className="text-2xl font-black leading-tight text-slate-950 sm:text-3xl">{offer.title}</h1>
+              {offer.promoText && <p className="text-sm font-bold leading-6 text-orange-800">{offer.promoText}</p>}
+            </header>
+
+            <div className="grid grid-cols-1 items-center gap-3 rounded-2xl border border-emerald-200 bg-gradient-to-br from-green-50 to-emerald-50 p-3 shadow-sm sm:grid-cols-[1fr_auto] sm:p-4">
+              <div className="flex items-center justify-between gap-3 sm:justify-start sm:gap-5">
+                <div><p className="text-[11px] font-bold text-slate-600">السعر قبل الخصم</p><p className="text-sm font-bold text-slate-500 line-through">{offer.originalTotalRetail.toLocaleString("ar-EG")} ج.م</p></div>
+                <div><p className="text-[11px] font-bold text-emerald-800">سعر العرض</p><p className="text-3xl font-black leading-none text-emerald-700 sm:text-4xl">{offer.offerPrice.toLocaleString("ar-EG")} <span className="text-sm">ج.م</span></p></div>
               </div>
-              <div className="flex justify-between items-center">
-                <span className="font-extrabold text-gray-900 text-sm">سعر العرض الحصري:</span>
-                <span className="rounded-xl border border-green-300 bg-white px-4 py-2 text-2xl font-black text-green-700 shadow-sm sm:text-3xl">{offer.offerPrice.toLocaleString("ar-EG")} ج.م</span>
-              </div>
-              <p className="text-xs text-green-800 font-black pt-1">
-                ✨ وفّر {offer.discountAmount.toLocaleString("ar-EG")} جنيه ({offer.discountPercent.toLocaleString("ar-EG", { maximumFractionDigits: 1 })}% خصم فوري)
-              </p>
+              <div className="rounded-xl border border-emerald-200 bg-white px-4 py-2 text-center text-sm font-black text-emerald-800">وفّر {offer.discountAmount.toLocaleString("ar-EG")} جنيه</div>
             </div>
-          </div>
 
-          {/* قسم نقاط الولاء والهدية للعميل داخل الكوبون */}
-          <div className="bg-purple-50 p-4 rounded-2xl border-2 border-purple-200 space-y-2 relative z-10">
-            <h3 className="font-black text-xs text-purple-900 flex items-center gap-1.5 justify-end">
-              <Star className="w-4 h-4 text-yellow-500 fill-yellow-500" /> رصيد نقاط الولاء وهديتك المستحقة:
-            </h3>
+            <div className="space-y-2 text-sm leading-6 text-slate-700">
+              {offer.description && <p className="line-clamp-3">{offer.description}</p>}
+              {offer.items?.length > 0 && <div className="space-y-1.5">{offer.items.slice(0, 4).map((item, idx) => <div key={`${item.name}-${idx}`} className="flex items-center justify-between gap-3 rounded-xl bg-slate-50 px-3 py-2 text-xs"><span className="font-bold text-slate-800">{item.name}</span><span className="shrink-0 font-black text-slate-800">{Number(item.offerPrice).toLocaleString("ar-EG")} ج.م <span className="mr-1 text-slate-400 line-through">{Number(item.retailPrice).toLocaleString("ar-EG")}</span></span></div>)}</div>}
+              {offer.items && offer.items.length > 4 && <p className="text-center text-[11px] font-bold text-slate-500">و{offer.items.length - 4} منتجات أخرى ضمن العرض</p>}
+              <div className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 pt-2 text-[11px] font-bold text-slate-600"><span className={`rounded-full px-3 py-1 ${isExpired ? "bg-red-100 text-red-700" : "bg-orange-50 text-orange-800"}`}>{isExpired ? "انتهت صلاحية العرض" : formatOfferTimeRemaining(expiryInfo)}</span><span>📞 الدعم: 01069035599</span></div>
+            </div>
+          </section>
+        </div>
+
+        <section id="offer-customer-registration" className="mx-auto mt-4 w-full max-w-3xl scroll-mt-24 px-3 sm:px-6">
+          <div className="rounded-2xl border border-violet-200 bg-white p-4 shadow-sm sm:p-5">
+            <div className="mb-3 flex items-center justify-between gap-2"><h2 className="flex items-center gap-2 text-sm font-black text-violet-950"><Star className="h-4 w-4 fill-yellow-400 text-yellow-500" /> بطاقة الولاء والطلب</h2>{isRegistered && <span className="rounded-full bg-violet-50 px-2 py-1 text-[10px] font-bold text-violet-800">{currentPoints.toLocaleString("ar-EG")} نقطة</span>}</div>
 
             {!isRegistered ? (
-              <form onSubmit={handleRegisterCustomer} className="space-y-2.5 pt-1">
-                <p className="text-[11px] text-gray-600 text-center font-medium">أدخل اسمك. إن كان لديك حساب فاكتب كودك ذي الأربع خانات لربط النقاط به؛ الهاتف اختياري. وإن كنت جديدًا فاترك الكود فارغًا وسيُنشئه النظام لك.</p>
-                <Input
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="اسمك الكريم (مثلاً: أحمد محمد)"
-                  required
-                  className="bg-white text-xs font-bold text-right"
-                  style={{ direction: "rtl" }}
-                />
-                <Input
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder="رقم الهاتف (اختياري)"
-                  type="tel"
-                  className="bg-white text-xs font-bold text-right"
-                  style={{ direction: "rtl" }}
-                />
-                <Input
-                  value={customerCode}
-                  onChange={(e) => setCustomerCode(e.target.value)}
-                  placeholder="كود نقاطك (4 خانات، اختياري)"
-                  className="bg-white text-xs font-bold text-left"
-                  style={{ direction: "ltr" }}
-                />
-                <Input
-                  value={referralPhone}
-                  onChange={(e) => setReferralPhone(e.target.value)}
-                  placeholder="رقم هاتف الصديق الذي دعاك (اختياري — 50 نقطة له)"
-                  type="tel"
-                  className="bg-white text-xs font-bold text-right"
-                  style={{ direction: "rtl" }}
-                />
-                <Button type="submit" disabled={isExpired || registerOfferCustomer.isLoading} className="w-full bg-purple-600 hover:bg-purple-700 text-white text-xs font-black py-2 rounded-xl shadow disabled:bg-gray-400">
-                  {isExpired ? "انتهت صلاحية العرض" : "سجّل/اربط بطاقة نقاطك للشراء"}
-                </Button>
+              <form onSubmit={handleRegisterCustomer} className="space-y-2.5">
+                <p className="text-[11px] leading-5 text-slate-600">سجّل بياناتك لإرسال طلب العرض وربط نقاط الولاء. الهاتف وكود الإحالة اختياريان.</p>
+                <Input value={customerName} onChange={event => setCustomerName(event.target.value)} placeholder="اسمك الكريم" required className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
+                <Input value={customerPhone} onChange={event => setCustomerPhone(event.target.value)} placeholder="رقم الهاتف (اختياري)" type="tel" className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
+                <Input value={customerCode} onChange={event => setCustomerCode(event.target.value)} placeholder="كود نقاطك (4 خانات، اختياري)" className="bg-white text-xs font-bold text-left" style={{ direction: "ltr" }} />
+                <Input value={referralPhone} onChange={event => setReferralPhone(event.target.value)} placeholder="هاتف الصديق الذي دعاك (اختياري)" type="tel" className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
+                <Button type="submit" disabled={isExpired || registerOfferCustomer.isLoading} className="w-full rounded-xl bg-violet-700 py-2 text-xs font-black text-white hover:bg-violet-800 disabled:bg-slate-400">{isExpired ? "انتهت صلاحية العرض" : registerOfferCustomer.isLoading ? "جارٍ التسجيل…" : "سجّل بياناتك للطلب وكسب النقاط"}</Button>
               </form>
             ) : (
-              <div className="space-y-2 text-center bg-white p-3 rounded-xl border border-purple-200">
-                <p className="text-xs font-extrabold text-gray-900">أهلاً بك يا {customerName} 🌟</p>
-                <p className="text-[11px] text-purple-700">كود نقاطك: <strong dir="ltr">{customerRecord?.customerCode || customerCode}</strong></p>
+              <div className="space-y-2 text-center">
+                <p className="text-xs font-extrabold text-slate-900">أهلاً بك يا {customerName} 🌟</p>
+                <p className="text-[11px] text-violet-700">كود نقاطك: <strong dir="ltr">{customerRecord?.customerCode || customerCode}</strong></p>
                 <LoyaltyRewardProgressCard points={currentPoints} levels={activeRewardLevels} compact isLoading={rewardLevelsQuery.isLoading && activeRewardLevels.length === 0} />
               </div>
             )}
-            {isRegistered && (
-              <div className="space-y-2 pt-1">
-                <Textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} maxLength={1000} placeholder="ملاحظات اختيارية: توصيل أو استلام من المحل" className="bg-white text-xs" />
-                {offerPurchaseStatusQuery.data?.status === "pending" && (
-                  <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-900">
-                    طلبك وصل إلى المحل وبانتظار تأكيد إتمام الشراء. ستضاف النقاط إلى كودك بعد الموافقة.
-                  </div>
-                )}
-                {offerPurchaseStatusQuery.data?.status === "approved" && (
-                  <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-[11px] font-bold text-green-800">
-                    <CheckCircle2 className="ml-1 inline h-4 w-4" /> تم تأكيد شراء العرض وإضافة {offerPurchaseStatusQuery.data.loyaltyPointsAwarded} نقطة. رصيدك يُحدّث الآن.
-                  </div>
-                )}
-                {offerPurchaseStatusQuery.data?.status === "cancelled" && (
-                  <div className="rounded-xl border border-gray-300 bg-gray-50 p-2 text-center text-[11px] font-bold text-gray-700">أُلغي الطلب السابق ولم تُضف نقاط؛ يمكنك تسجيل طلب جديد إذا رغبت.</div>
-                )}
-                <Button
-                  type="button"
-                  onClick={handleOfferPurchase}
-                  disabled={shouldDisableOfferPurchaseButton({
-                    isExpired,
-                    isSubmitting: createOfferPurchaseRequest.isLoading,
-                    requestId: purchaseRequestId,
-                    isStatusFetching: offerPurchaseStatusQuery.isFetching,
-                    status: offerPurchaseStatusQuery.data?.status,
-                  })}
-                  className="w-full bg-orange-600 py-3 text-sm font-black text-white shadow-lg hover:bg-orange-700 disabled:bg-gray-400"
-                >
-                  <ShoppingCart className="ml-2 h-5 w-5" />
-                  {isExpired ? "انتهت صلاحية العرض" : createOfferPurchaseRequest.isLoading ? "جارٍ إرسال طلبك…" : offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : offerPurchaseStatusQuery.data?.status === "approved" ? "إرسال طلب شراء جديد" : "إرسال طلب شراء العرض"}
-                </Button>
-                <p className="text-center text-[10px] leading-5 text-gray-600">هذا يرسل طلب شراء العرض إلى المحل للمراجعة، وليس إضافة إلى سلة إلكترونية. اضغط عند رغبتك الفعلية بالشراء؛ وتُضاف {Math.max(0, Math.trunc(Number(offer.loyaltyPoints) || 0))} نقطة إلى بطاقتك بعد تأكيد المحل.</p>
-              </div>
-            )}
-            <a href={buildLoyaltyPageHref(customerRecord?.customerCode || customerCode, customerPhone || customerRecord?.phone)} className="block text-center text-[11px] font-black text-purple-700 underline hover:text-purple-900">افتح صفحة متابعة نقاطك وسجل حركاتك</a>
+
+            {isRegistered && <div className="mt-3 space-y-2">
+              <Textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} maxLength={1000} placeholder="ملاحظات اختيارية: توصيل أو استلام من المحل" className="bg-white text-xs" />
+              {offerPurchaseStatusQuery.data?.status === "pending" && <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-900">وصل طلبك إلى المحل وبانتظار تأكيد إتمام الشراء. ستضاف النقاط بعد الموافقة.</div>}
+              {offerPurchaseStatusQuery.data?.status === "approved" && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-[11px] font-bold text-green-800"><CheckCircle2 className="ml-1 inline h-4 w-4" /> تم تأكيد الشراء وإضافة {offerPurchaseStatusQuery.data.loyaltyPointsAwarded} نقطة.</div>}
+              {offerPurchaseStatusQuery.data?.status === "cancelled" && <div className="rounded-xl border border-slate-300 bg-slate-50 p-2 text-center text-[11px] font-bold text-slate-700">أُلغي الطلب السابق ولم تُضف نقاط؛ يمكنك تقديم طلب جديد.</div>}
+              <p className="text-center text-[10px] leading-5 text-slate-500">طلبك يصل للمحل للمراجعة، وليس دفعاً إلكترونياً. وتُضاف النقاط بعد اعتماد إتمام الشراء.</p>
+              <a href={buildLoyaltyPageHref(customerRecord?.customerCode || customerCode, customerPhone || customerRecord?.phone)} className="block text-center text-[11px] font-black text-violet-700 underline hover:text-violet-900">متابعة نقاطك وسجل حركاتك</a>
+            </div>}
           </div>
+        </section>
 
-          {/* عداد تنازلي وعنوان التواصل */}
-          <div className="text-[11px] text-gray-600 pt-2 border-t border-orange-200 relative z-10 space-y-1 text-center">
-            <div className="flex justify-center items-center gap-3 font-bold text-orange-700 bg-orange-50 py-1.5 rounded-xl border border-orange-200">
-              <Clock className="w-3.5 h-3.5" />
-              <span>{formatOfferTimeRemaining(expiryInfo)}</span>
-            </div>
-            <p className="font-extrabold text-gray-900 pt-1">📞 للتواصل والدعم: 01069035599</p>
-            <p className="text-[9px] text-gray-400">هنسيب علامة في بيتك • أصل الرغوة في مصر</p>
-          </div>
+        <section className="mx-auto mt-4 flex w-full max-w-3xl flex-col gap-2 px-3 pb-5 sm:px-6">
+          <Button onClick={handleDownloadCouponImage} className="flex w-full items-center justify-center gap-2 rounded-xl bg-gradient-to-r from-orange-600 to-red-600 py-3 font-black text-white shadow"><Download className="h-4 w-4" /> حفظ تفاصيل العرض كصورة</Button>
+          <div className="grid grid-cols-2 gap-2"><Button onClick={() => void handleShareOffer()} className="flex items-center justify-center gap-2 rounded-xl bg-slate-900 py-3 text-xs font-black text-white hover:bg-slate-800"><Share2 className="h-4 w-4" /> مشاركة العرض</Button><Button onClick={handleShareWhatsApp} className="flex items-center justify-center gap-2 rounded-xl bg-green-600 py-3 text-xs font-black text-white hover:bg-green-700"><MessageCircle className="h-4 w-4" /> واتساب</Button></div>
+        </section>
+      </main>
+
+      <div className="fixed inset-x-0 bottom-0 z-50 border-t border-slate-200 bg-white/95 shadow-[0_-6px_24px_rgba(15,23,42,.12)] backdrop-blur-md">
+        <div className="mx-auto flex max-w-3xl items-center gap-3 px-3 pt-2" style={{ paddingBottom: "max(.5rem, env(safe-area-inset-bottom))" }}>
+          <div className="min-w-[92px] shrink-0"><p className="text-[10px] font-bold text-slate-500">إجمالي العرض</p><p className="text-lg font-black leading-tight text-emerald-700">{offer.offerPrice.toLocaleString("ar-EG")} <span className="text-xs">ج.م</span></p></div>
+          <Button type="button" onClick={handleStickyPurchase} disabled={isExpired || (isRegistered && purchaseButtonDisabled)} className="min-h-12 flex-1 rounded-xl bg-orange-600 px-3 text-sm font-black text-white shadow-md hover:bg-orange-700 disabled:bg-slate-400">{isExpired ? "انتهت صلاحية العرض" : isRegistered && offerPurchaseStatusQuery.data?.status === "pending" ? "طلبك بانتظار موافقة المحل" : <><ShoppingCart className="ml-2 inline h-5 w-5" />{isRegistered ? "اطلب العرض الآن" : "اطلب الآن"}</>}</Button>
         </div>
-
-        {/* أزرار تفاعلية تحت الكوبون (تحميل ومشاركة) */}
-        <div className="flex flex-col gap-2 pt-2">
-          <Button
-            onClick={handleDownloadCouponImage}
-            className="w-full bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-black py-4 rounded-2xl shadow-xl flex items-center justify-center gap-2 text-base"
-          >
-            <Download className="w-5 h-5" /> تحميل الكوبون كصورة PNG على هاتفك 📥
-          </Button>
-          <Button
-            onClick={() => void handleShareOffer()}
-            className="w-full bg-slate-900 hover:bg-slate-800 text-white font-black py-3 rounded-2xl shadow-md flex items-center justify-center gap-2 text-sm"
-          >
-            <Share2 className="w-4 h-4" /> مشاركة العرض
-          </Button>
-          <Button
-            onClick={handleShareWhatsApp}
-            className="w-full bg-green-600 hover:bg-green-700 text-white font-bold py-3 rounded-2xl shadow-md flex items-center justify-center gap-2 text-sm"
-          >
-            <MessageCircle className="w-4 h-4" /> مشاركة العرض عبر واتساب 📱
-          </Button>
-        </div>
-
       </div>
     </div>
   );
