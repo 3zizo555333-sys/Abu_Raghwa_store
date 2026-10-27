@@ -13,6 +13,8 @@ type PromoOfferData = {
   savingsAmount?: number;
   savings_amount?: number;
   discount_percent?: number;
+  originalPrice?: number;
+  offerPrice?: number;
   imageUrl?: string;
   image_url?: string;
   bannerImageUrl?: string;
@@ -28,8 +30,8 @@ type PromoOfferData = {
 };
 type PromoCarouselProps = { offers: CloudStoreOffer[] };
 
-function getOfferData(offer: CloudStoreOffer): PromoOfferData {
-  return (offer.offer_data && typeof offer.offer_data === "object" ? offer.offer_data : {}) as PromoOfferData;
+function getOfferData(offer?: CloudStoreOffer | null): PromoOfferData {
+  return (offer?.offer_data && typeof offer.offer_data === "object" && !Array.isArray(offer.offer_data) ? offer.offer_data : {}) as PromoOfferData;
 }
 
 function dateValue(value: string | number | null | undefined) {
@@ -38,23 +40,26 @@ function dateValue(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-export function isRenderableOffer(offer: CloudStoreOffer) {
-  const data = getOfferData(offer);
-  const title = String(offer.title || data.title || offer.banner_title || "").trim();
-  const description = String(offer.promo_text || offer.description || offer.public_description || data.promoText || data.description || "").trim();
-  const offerPrice = Number(offer.offer_price ?? 0);
+export function isOfferInSchedule(offer?: CloudStoreOffer | null) {
+  if (!offer?.id) return false;
   const now = Date.now();
   const startsAt = dateValue(offer.starts_at);
   const endsAt = dateValue(offer.ends_at);
-  return Boolean(offer.id && title && (description || offerPrice > 0) && Number.isFinite(offerPrice) && offerPrice > 0
-    && (!startsAt || startsAt <= now) && (!endsAt || endsAt > now));
+  return (!startsAt || startsAt <= now) && (!endsAt || endsAt > now);
 }
+
+const FALLBACK_OFFER_GRADIENTS = [
+  "linear-gradient(110deg, #047857 0%, #0f766e 52%, #0e7490 100%)",
+  "linear-gradient(110deg, #0369a1 0%, #0f766e 54%, #059669 100%)",
+  "linear-gradient(110deg, #0e7490 0%, #0284c7 52%, #047857 100%)",
+  "linear-gradient(110deg, #065f46 0%, #0d9488 52%, #0369a1 100%)",
+] as const;
 
 export function PromoCarousel({ offers }: PromoCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
   const touchStartX = useRef<number | null>(null);
-  const visibleOffers = useMemo(() => offers.filter(offer => offer.status === "active" && !offer.deleted_at && isRenderableOffer(offer)), [offers]);
+  const visibleOffers = useMemo(() => (Array.isArray(offers) ? offers : []).filter(offer => offer?.status === "active" && !offer?.deleted_at && isOfferInSchedule(offer)), [offers]);
 
   useEffect(() => {
     if (activeIndex >= visibleOffers.length) setActiveIndex(0);
@@ -84,26 +89,28 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
         <div dir="rtl" className="flex h-full w-full overflow-hidden transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
-            const title = String(offer.title || data.title || offer.banner_title || "");
-            const description = String(offer.promo_text || offer.description || offer.public_description || data.promoText || data.description || "").trim();
-            const originalPrice = Number(offer.original_price || 0);
-            const offerPrice = Number(offer.offer_price || 0);
-            const savings = Number(data.savings_amount ?? data.savingsAmount ?? data.discountAmount ?? Math.max(0, originalPrice - offerPrice));
-            const discount = Number(data.discount_percent ?? data.discountPercent ?? (originalPrice > 0 ? Math.round((Math.max(0, originalPrice - offerPrice) / originalPrice) * 100) : 0));
-            const bgColor = offer.bg_color || data.bg_color || data.bgColor || "#0c0907";
-            const configuredGradient = offer.bg_gradient || data.bg_gradient || data.bgGradient;
-            const backgroundMode = data.backgroundMode || (configuredGradient ? "gradient" : "solid");
-            const bgGradient = backgroundMode === "solid" ? undefined : configuredGradient;
-            const storedImageUrl = String(offer.image_url || data.image_url || data.imageUrl || data.bannerImageUrl || data.banner_image_url || "");
+            const title = String(offer?.title || data.title || offer?.banner_title || "عرض مميز").trim() || "عرض مميز";
+            const description = String(offer?.promo_text || offer?.description || offer?.public_description || data.promoText || data.description || "عرض مميز لفترة محدودة.").trim() || "عرض مميز لفترة محدودة.";
+            const originalPriceValue = Number(offer?.original_price ?? data.originalPrice ?? 0);
+            const offerPriceValue = Number(offer?.offer_price ?? data.offerPrice ?? 0);
+            const originalPrice = Number.isFinite(originalPriceValue) ? Math.max(0, originalPriceValue) : 0;
+            const offerPrice = Number.isFinite(offerPriceValue) ? Math.max(0, offerPriceValue) : 0;
+            const savingsValue = Number(data.savings_amount ?? data.savingsAmount ?? data.discountAmount ?? Math.max(0, originalPrice - offerPrice));
+            const savings = Number.isFinite(savingsValue) ? Math.max(0, savingsValue) : 0;
+            const discountValue = Number(data.discount_percent ?? data.discountPercent ?? (originalPrice > 0 ? Math.round((Math.max(0, originalPrice - offerPrice) / originalPrice) * 100) : 0));
+            const discount = Number.isFinite(discountValue) ? Math.max(0, discountValue) : 0;
+            const bgColor = offer?.bg_color || data.bg_color || data.bgColor || "#047857";
+            const configuredGradient = offer?.bg_gradient || data.bg_gradient || data.bgGradient;
+            const storedImageUrl = String(offer?.image_url || data.image_url || data.imageUrl || data.bannerImageUrl || data.banner_image_url || "");
             const legacyAiScene = storedImageUrl.includes("/ai-banner-");
-            const backgroundImageUrl = getTrustedCatalogImageUrl(offer.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || (legacyAiScene ? storedImageUrl : ""));
-            const itemProductImage = data.items?.find(item => item.imageUrl || item.image_url);
+            const backgroundImageUrl = getTrustedCatalogImageUrl(offer?.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || (legacyAiScene ? storedImageUrl : ""));
+            const itemProductImage = Array.isArray(data.items) ? data.items.find(item => item?.imageUrl || item?.image_url) : undefined;
             const productImage = getTrustedCatalogImageUrl(legacyAiScene ? (itemProductImage?.imageUrl || itemProductImage?.image_url || "") : (storedImageUrl || itemProductImage?.imageUrl || itemProductImage?.image_url || ""));
             const offerKey = offer.id.replace(/[^a-zA-Z0-9_-]/g, "");
             const foamGradientId = `offer-foam-${offerKey}`;
             const backgroundImage = backgroundImageUrl
               ? `linear-gradient(90deg, rgba(15,23,42,.28), rgba(15,23,42,.08)), url("${backgroundImageUrl}")`
-              : bgGradient;
+              : configuredGradient || FALLBACK_OFFER_GRADIENTS[index % FALLBACK_OFFER_GRADIENTS.length];
 
             return <article
               dir="rtl"
@@ -111,8 +118,8 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
               aria-hidden={index !== activeIndex}
               role="button"
               tabIndex={index === activeIndex ? 0 : -1}
-              onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)}
-              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
+              onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer?.id || "")}`)}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer?.id || "")}`); }}
               className="relative isolate box-border flex h-full min-w-full w-full flex-[0_0_100%] items-center overflow-hidden rounded-2xl px-3 py-2 text-white sm:px-5"
             >
               <div className="absolute inset-0 z-0" aria-hidden="true" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: backgroundImageUrl ? "cover" : undefined, backgroundPosition: "center" }} />
@@ -127,7 +134,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                   <h2 className="line-clamp-1 text-sm font-black leading-tight text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] sm:text-lg">{title}</h2>
                   {description && <p className="mt-0.5 line-clamp-1 text-[10px] leading-4 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)] sm:text-xs">{description}</p>}
                   <div className="mt-1 flex flex-wrap items-center gap-1 text-[9px] font-black sm:text-[10px]">
-                    {discount > 0 && <span className="rounded-full border border-white/20 bg-amber-300 px-2 py-0.5 text-amber-950 shadow-sm">وفر {discount}%</span>}
+                    {discount > 0 ? <span className="rounded-full border border-white/20 bg-amber-300 px-2 py-0.5 text-amber-950 shadow-sm">وفر {discount}%</span> : <span className="rounded-full border border-white/20 bg-amber-300 px-2 py-0.5 text-amber-950 shadow-sm">خصم خاص</span>}
                     {savings > 0 && <span className="rounded-full border border-white/20 bg-emerald-300 px-2 py-0.5 text-emerald-950 shadow-sm">وفر {savings.toLocaleString("ar-EG")} ج.م</span>}
                   </div>
                 </div>

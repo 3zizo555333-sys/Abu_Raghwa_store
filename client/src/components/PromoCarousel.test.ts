@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
-import { isRenderableOffer } from "./PromoCarousel";
+import { isOfferInSchedule } from "./PromoCarousel";
 
 const makeOffer = (patch: Partial<CloudStoreOffer> = {}) => ({
   id: "offer-1",
@@ -14,15 +14,14 @@ const makeOffer = (patch: Partial<CloudStoreOffer> = {}) => ({
   ...patch,
 } as unknown as CloudStoreOffer);
 
-describe("PromoCarousel offer filtering", () => {
-  it("accepts a complete active offer without an image", () => {
-    expect(isRenderableOffer(makeOffer())).toBe(true);
+describe("PromoCarousel offer schedule", () => {
+  it("keeps active offers even when optional display fields or price are missing", () => {
+    expect(isOfferInSchedule(makeOffer({ title: "", offer_price: 0, offer_data: {} }))).toBe(true);
   });
 
-  it("rejects empty, expired, future, and zero-price offers", () => {
-    expect(isRenderableOffer(makeOffer({ title: "", offer_data: {} }))).toBe(false);
-    expect(isRenderableOffer(makeOffer({ ends_at: "2020-01-01T00:00:00.000Z" }))).toBe(false);
-    expect(isRenderableOffer(makeOffer({ starts_at: "2099-01-01T00:00:00.000Z" }))).toBe(false);
-    expect(isRenderableOffer(makeOffer({ offer_price: 0 }))).toBe(false);
+  it("rejects records without an id and offers outside their active time window", () => {
+    expect(isOfferInSchedule(makeOffer({ id: "" }))).toBe(false);
+    expect(isOfferInSchedule(makeOffer({ ends_at: "2020-01-01T00:00:00.000Z" }))).toBe(false);
+    expect(isOfferInSchedule(makeOffer({ starts_at: "2099-01-01T00:00:00.000Z" }))).toBe(false);
   });
 });
