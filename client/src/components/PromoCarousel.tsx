@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { TouchEvent } from "react";
 import { Gift } from "lucide-react";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { getTrustedCatalogImageUrl } from "@/lib/catalog";
@@ -55,38 +54,69 @@ const FALLBACK_OFFER_GRADIENTS = [
   "linear-gradient(110deg, #065f46 0%, #0d9488 52%, #0369a1 100%)",
 ] as const;
 
+export function getActiveCarouselOffers(offers?: CloudStoreOffer[] | null) {
+  return (Array.isArray(offers) ? offers : []).filter(offer => offer?.status === "active" && !offer?.deleted_at && isOfferInSchedule(offer));
+}
+
 export function PromoCarousel({ offers }: PromoCarouselProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [isPaused, setIsPaused] = useState(false);
-  const touchStartX = useRef<number | null>(null);
-  const visibleOffers = useMemo(() => (Array.isArray(offers) ? offers : []).filter(offer => offer?.status === "active" && !offer?.deleted_at && isOfferInSchedule(offer)), [offers]);
+  const carouselRef = useRef<HTMLDivElement | null>(null);
+  const activeIndexRef = useRef(0);
+  const visibleOffers = useMemo(() => getActiveCarouselOffers(offers), [offers]);
+
+  const scrollToSlide = (index: number, behavior: ScrollBehavior = "smooth") => {
+    if (!visibleOffers.length) return;
+    const nextIndex = (index + visibleOffers.length) % visibleOffers.length;
+    const slide = carouselRef.current?.querySelector<HTMLElement>(`[data-carousel-index="${nextIndex}"]`);
+    if (!slide) return;
+    activeIndexRef.current = nextIndex;
+    setActiveIndex(nextIndex);
+    slide.scrollIntoView({ behavior, block: "nearest", inline: "center" });
+  };
+
+  const syncActiveSlide = () => {
+    const viewport = carouselRef.current;
+    if (!viewport) return;
+    const viewportCenter = viewport.getBoundingClientRect().left + viewport.clientWidth / 2;
+    const slides = Array.from(viewport.querySelectorAll<HTMLElement>("[data-carousel-index]"));
+    let nearestIndex = activeIndexRef.current;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+    for (const slide of slides) {
+      const rect = slide.getBoundingClientRect();
+      const distance = Math.abs(rect.left + rect.width / 2 - viewportCenter);
+      if (distance < nearestDistance) {
+        nearestDistance = distance;
+        nearestIndex = Number(slide.dataset.carouselIndex);
+      }
+    }
+    if (nearestIndex !== activeIndexRef.current) {
+      activeIndexRef.current = nearestIndex;
+      setActiveIndex(nearestIndex);
+    }
+  };
 
   useEffect(() => {
-    if (activeIndex >= visibleOffers.length) setActiveIndex(0);
+    if (activeIndex >= visibleOffers.length) {
+      activeIndexRef.current = 0;
+      setActiveIndex(0);
+      carouselRef.current?.querySelector<HTMLElement>('[data-carousel-index="0"]')?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+    }
   }, [activeIndex, visibleOffers.length]);
 
   useEffect(() => {
     if (visibleOffers.length < 2 || isPaused) return;
-    const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 5000);
+    const timer = window.setInterval(() => scrollToSlide((activeIndexRef.current + 1) % visibleOffers.length), 5000);
     return () => window.clearInterval(timer);
   }, [isPaused, visibleOffers.length]);
 
   if (!visibleOffers.length) return null;
-  const move = (direction: -1 | 1) => setActiveIndex(index => (index + direction + visibleOffers.length) % visibleOffers.length);
-  const onTouchStart = (event: TouchEvent) => { setIsPaused(true); touchStartX.current = event.touches[0]?.clientX ?? null; };
-  const onTouchEnd = (event: TouchEvent) => {
-    if (touchStartX.current != null) {
-      const delta = (event.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
-      if (Math.abs(delta) > 40) move(delta > 0 ? 1 : -1);
-    }
-    touchStartX.current = null;
-    setIsPaused(false);
-  };
 
-  return <section aria-label="العروض النشطة" className="w-full overflow-hidden px-3 py-2 sm:py-3 md:px-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
+  return <section aria-label="العروض النشطة" className="w-full overflow-hidden px-3 py-2 sm:py-3 md:px-4" onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)} onPointerDown={() => setIsPaused(true)} onPointerUp={() => setIsPaused(false)} onPointerCancel={() => setIsPaused(false)}>
+    <style>{`.promo-carousel-scroll::-webkit-scrollbar{display:none}.promo-carousel-scroll{scrollbar-width:none;-ms-overflow-style:none}`}</style>
     <div className="relative w-full overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
-      <div className="relative h-full w-full aspect-[2.4/1] min-h-[104px] max-h-[145px] overflow-hidden rounded-2xl sm:max-h-[240px]" style={{ touchAction: "pan-y" }}>
-        <div dir="rtl" className="flex h-full w-full overflow-hidden transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(${activeIndex * 100}%)` }}>
+      <div className="relative h-40 w-full overflow-hidden rounded-2xl sm:h-44 md:h-56">
+        <div ref={carouselRef} dir="rtl" onScroll={syncActiveSlide} className="promo-carousel-scroll flex h-full w-full snap-x snap-mandatory overflow-x-auto overflow-y-hidden scroll-smooth" style={{ touchAction: "pan-x pan-y", scrollbarWidth: "none" }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
             const title = String(offer?.title || data.title || offer?.banner_title || "عرض مميز").trim() || "عرض مميز";
@@ -115,12 +145,13 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             return <article
               dir="rtl"
               key={offer.id}
+              data-carousel-index={index}
               aria-hidden={index !== activeIndex}
               role="button"
               tabIndex={index === activeIndex ? 0 : -1}
               onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer?.id || "")}`)}
               onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer?.id || "")}`); }}
-              className="relative isolate box-border flex h-full min-w-full w-full flex-[0_0_100%] items-center overflow-hidden rounded-2xl px-3 py-2 text-white sm:px-5"
+              className="relative isolate box-border flex h-full min-w-full w-full flex-shrink-0 snap-center items-center overflow-hidden rounded-2xl px-3 py-2 text-white sm:px-5"
             >
               <div className="absolute inset-0 z-0" aria-hidden="true" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: backgroundImageUrl ? "cover" : undefined, backgroundPosition: "center" }} />
               <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
@@ -167,7 +198,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             </article>;
           })}
         </div>
-        {visibleOffers.length > 1 && <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} aria-current={index === activeIndex ? "true" : undefined} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>}
+        {visibleOffers.length > 1 && <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} aria-current={index === activeIndex ? "true" : undefined} onClick={() => scrollToSlide(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>}
       </div>
     </div>
   </section>;
