@@ -18,6 +18,7 @@ interface SmartOffer {
   strategyName: string;
   promoText?: string;
   bannerImageUrl?: string;
+  bannerCustomImage?: string;
   bgColor?: string;
   bgGradient?: string;
   backgroundMode?: "solid" | "gradient";
@@ -59,13 +60,17 @@ export default function SmartOffersList() {
   const fromCloudOffer = (row: CloudStoreOffer): SmartOffer => {
     const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
     const items = Array.isArray(data.items) ? data.items : [];
+    const storedImageUrl = String(row.image_url || data.bannerImageUrl || "");
+    const isLegacyAiScene = storedImageUrl.includes("/ai-banner-");
+    const legacyProduct = items.find((item: { imageUrl?: string; image_url?: string }) => item.imageUrl || item.image_url);
     return {
       ...(data as unknown as SmartOffer),
       id: row.id,
       title: row.title,
       strategyName: String(data.strategyName || row.strategy || "عرض محفوظ"),
       promoText: String(data.promoText || row.promo_text || row.banner_title || ""),
-      bannerImageUrl: String(row.image_url || data.bannerImageUrl || row.banner_custom_image || "") || undefined,
+      bannerImageUrl: (isLegacyAiScene ? String(legacyProduct?.imageUrl || legacyProduct?.image_url || "") : storedImageUrl) || undefined,
+      bannerCustomImage: String(row.banner_custom_image || data.bannerCustomImage || (isLegacyAiScene ? storedImageUrl : "")) || undefined,
       bgColor: String(data.bgColor || row.bg_color || "#ea580c"),
       bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "") || undefined,
       backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient",
@@ -137,10 +142,10 @@ export default function SmartOffersList() {
     setGeneratingOfferId(offer.id);
     try {
       const { publicUrl } = await generateCatalogOfferBanner(offer.id);
-      const update = (item: SmartOffer) => item.id === offer.id ? { ...item, bannerImageUrl: publicUrl } : item;
+      const update = (item: SmartOffer) => item.id === offer.id ? { ...item, bannerCustomImage: publicUrl } : item;
       setSavedOffers(previous => previous.map(update));
-      setSelectedOffer(previous => previous?.id === offer.id ? { ...previous, bannerImageUrl: publicUrl } : previous);
-      toast.success("تم توليد البانر وحفظ رابطه للعرض.");
+      setSelectedOffer(previous => previous?.id === offer.id ? { ...previous, bannerCustomImage: publicUrl } : previous);
+      toast.success("تم توليد خلفية البانر وحفظها للعرض.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر توليد البانر. أعد المحاولة.");
     } finally {
@@ -219,7 +224,7 @@ export default function SmartOffersList() {
     return (
       <Card key={offer.id} className={`overflow-hidden border-2 ${isActive ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-slate-50"}`}>
         <CardHeader className="space-y-3 pb-3">
-          <div className="relative min-h-36 overflow-hidden rounded-2xl p-4 text-white shadow-sm" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>
+          <div className="relative min-h-36 overflow-hidden rounded-2xl p-4 text-white shadow-sm" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.55),rgba(15,23,42,.18)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }}>
             <span className={`absolute left-3 top-3 z-10 rounded-full px-3 py-1 text-xs font-black shadow ${isActive ? "bg-emerald-700 text-white" : "bg-slate-800 text-white"}`}>{isActive ? "متاح الآن" : "منتهي"}</span>
             <div className="max-w-full space-y-1 pt-8 [text-shadow:0_1px_3px_rgba(0,0,0,.75)]">
               <h3 className="line-clamp-2 text-lg font-black leading-tight">{offer.title}</h3>
@@ -228,13 +233,13 @@ export default function SmartOffersList() {
             </div>
           </div>
           {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt={`صورة عرض ${offer.title}`} className="h-36 w-full rounded-xl bg-white object-contain p-1" />}
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-3 gap-2">
             <input id={`offer-camera-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" aria-label="التقاط صورة العرض بالكاميرا" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
             <input id={`offer-gallery-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" aria-label="اختيار صورة العرض من المعرض" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
-            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-camera-${offer.id}`)?.click()} className="min-h-10 border-orange-200 text-xs text-orange-800 hover:bg-orange-50">📷 التقاط بالكاميرا</Button>
-            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-gallery-${offer.id}`)?.click()} className="min-h-10 border-orange-200 text-xs text-orange-800 hover:bg-orange-50">📷 إضافة / تغيير صورة العرض</Button>
+            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-camera-${offer.id}`)?.click()} className="min-h-11 w-full whitespace-normal border-orange-200 px-1 text-[11px] leading-tight text-orange-800 hover:bg-orange-50">📷 التقاط بالكاميرا</Button>
+            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => document.getElementById(`offer-gallery-${offer.id}`)?.click()} className="min-h-11 w-full whitespace-normal border-orange-200 px-1 text-[11px] leading-tight text-orange-800 hover:bg-orange-50">📷 إضافة / تغيير صورة العرض</Button>
+            <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => void handleGenerateOfferBanner(offer)} className="min-h-11 w-full whitespace-normal border-violet-300 bg-violet-50 px-1 text-[10px] font-black leading-tight text-violet-900 hover:bg-violet-100">{generatingOfferId === offer.id ? <LoaderCircle className="ml-1 h-4 w-4 animate-spin" /> : null}🪄 توليد بانر 3D بالذكاء الاصطناعي</Button>
           </div>
-          <Button type="button" variant="outline" disabled={offerImageBusy} onClick={() => void handleGenerateOfferBanner(offer)} className="min-h-10 w-full border-violet-200 text-xs font-black text-violet-800 hover:bg-violet-50">{generatingOfferId === offer.id ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : null}🪄 توليد بانر 3D بالذكاء الاصطناعي</Button>
           {generatingOfferId === offer.id && <p className="flex items-center justify-center gap-2 text-center text-xs font-bold text-violet-700"><LoaderCircle className="h-4 w-4 animate-spin" /> جاري توليد البانر سحابياً...</p>}{uploadingOfferId === offer.id && <p className="text-center text-xs font-bold text-slate-600">جارٍ رفع الصورة...</p>}
         </CardHeader>
 

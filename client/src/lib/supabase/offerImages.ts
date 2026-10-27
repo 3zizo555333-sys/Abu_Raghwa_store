@@ -55,7 +55,7 @@ export async function generateCatalogOfferBanner(offerId: string, options: { per
   }
   if (!/^[0-9a-fA-F-]{36}$/.test(offerId)) throw new Error("معرّف العرض غير صالح. احفظ العرض أولاً ثم أعد المحاولة.");
 
-  const prompt = "commercial panoramic advertising banner background for laundry and cleaning products, floating realistic glossy soap bubbles, dynamic splashing soap foam, luxurious studio lighting, clean glossy podium, 3d hyper-realistic, photorealistic 8k, cinematic depth of field, minimalist center, no text, no typography";
+  const prompt = "Panoramic 3D commercial studio scene for a premium laundry and cleaning products store, several generic sculpted detergent and liquid-cleaner bottles arranged on a glossy podium, abundant soft white soap foam and splashes, luminous transparent iridescent soap bubbles floating through the scene, luxurious cinematic studio lighting, rich depth and layered composition, glossy highlights, photorealistic, no brand logos, no labels, no text, no typography";
   const url = new URL(`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}`);
   url.search = new URLSearchParams({ width: "1200", height: "480", model: "flux", nologo: "true", seed: String(Math.floor(Math.random() * 2_147_483_647)) }).toString();
   let source: Blob;
@@ -92,7 +92,7 @@ export async function generateCatalogOfferBanner(offerId: string, options: { per
   if (uploaded.error) throw new Error(explainUploadError(uploaded.error));
   const publicUrl = bucket.getPublicUrl(storagePath).data.publicUrl;
   if (options.persistToOffer === false) return { publicUrl, storagePath, savedToExistingOffer: false };
-  const updated = await getSupabaseClient().from("store_offers").update({ image_url: publicUrl })
+  const updated = await getSupabaseClient().from("store_offers").update({ banner_custom_image: publicUrl })
     .eq("id", offerId).eq("store_id", shopId).eq("shop_id", shopId).select("id").maybeSingle();
   if (updated.error) throw new Error(explainUploadError(updated.error));
   if (!updated.data) throw new Error("تم رفع البانر، لكن لم يُحفظ في العرض الحالي. تحقق من أن العرض تابع للمتجر ثم أعد المحاولة.");

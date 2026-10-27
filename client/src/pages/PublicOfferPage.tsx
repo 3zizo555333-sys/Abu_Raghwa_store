@@ -20,6 +20,7 @@ interface SmartOffer {
   strategyName: string;
   promoText?: string;
   bannerImageUrl?: string;
+  bannerCustomImage?: string;
   bgColor?: string;
   bgGradient?: string;
   backgroundMode?: "solid" | "gradient";
@@ -93,11 +94,15 @@ export default function PublicOfferPage() {
       const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
       const offerPrice = Number(data.offerPrice ?? row.offer_price ?? 0) || 0;
       const originalTotalRetail = Number(data.originalTotalRetail ?? data.originalPrice ?? row.original_price ?? 0) || 0;
+      const storedBannerUrl = String(data.bannerImageUrl || row.image_url || "");
+      const legacyAiScene = storedBannerUrl.includes("/ai-banner-");
+      const offerItems = Array.isArray(data.items) ? data.items as Array<{ imageUrl?: string; image_url?: string }> : [];
+      const legacyProductImage = offerItems.find(item => item.imageUrl || item.image_url);
       const savedDiscountAmount = Number(data.discountAmount ?? data.savings ?? 0) || 0;
       const discountAmount = savedDiscountAmount > 0 ? savedDiscountAmount : Math.max(0, originalTotalRetail - offerPrice);
       const savedDiscountPercent = Number(data.discountPercent ?? 0) || 0;
       const discountPercent = savedDiscountPercent > 0 ? savedDiscountPercent : originalTotalRetail > 0 ? discountAmount / originalTotalRetail * 100 : 0;
-      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: String(data.title || row.title || "عرض أبو رغوة"), strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || data.banner_custom_image || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || data.bg_color || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient", qrCodeData: String(data.qrCodeData || data.qr_code_data || row.qr_code_data || "") || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice, originalTotalRetail, discountAmount, discountPercent, items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: String(data.title || row.title || "عرض أبو رغوة"), strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: (legacyAiScene ? String(legacyProductImage?.imageUrl || legacyProductImage?.image_url || "") : storedBannerUrl) || undefined, bannerCustomImage: String(data.bannerCustomImage || data.banner_custom_image || row.banner_custom_image || (legacyAiScene ? storedBannerUrl : "")) || undefined, bgColor: String(data.bgColor || data.bg_color || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || data.bg_gradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), backgroundMode: data.backgroundMode === "solid" ? "solid" : "gradient", qrCodeData: String(data.qrCodeData || data.qr_code_data || row.qr_code_data || "") || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice, originalTotalRetail, discountAmount, discountPercent, items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
     }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
     void loadOffer();
@@ -243,7 +248,7 @@ export default function PublicOfferPage() {
   const isExpired = expiryInfo.status === "expired";
 
   return (
-    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined }}>
+    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.55),rgba(15,23,42,.18)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
       
       <div className="relative z-10 w-full max-w-2xl space-y-4 sm:space-y-5">

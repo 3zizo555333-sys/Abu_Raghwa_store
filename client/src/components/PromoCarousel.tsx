@@ -25,6 +25,7 @@ type PromoOfferData = {
   bgGradient?: string;
   bg_gradient?: string;
   backgroundMode?: "solid" | "gradient";
+  items?: Array<{ imageUrl?: string; image_url?: string }>;
 };
 type PromoCarouselProps = { offers: CloudStoreOffer[] };
 
@@ -78,10 +79,10 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
     setIsPaused(false);
   };
 
-  return <section aria-label="العروض النشطة" className="w-full px-3 py-2 sm:py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
-    <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
+  return <section aria-label="العروض النشطة" className="w-full overflow-hidden px-0 py-2 sm:py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
+    <div className="relative mx-0 w-full max-w-none overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
       <div className="relative aspect-[2.4/1] min-h-[104px] max-h-[145px] overflow-hidden rounded-2xl sm:max-h-[240px]" style={{ touchAction: "pan-y" }}>
-        <div dir="ltr" className="flex h-full w-full transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+        <div dir="ltr" className="flex h-full w-full min-w-0 overflow-hidden transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
             const title = String(offer.title || data.title || offer.banner_title || "");
@@ -94,8 +95,11 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             const configuredGradient = offer.bg_gradient || data.bg_gradient || data.bgGradient;
             const backgroundMode = data.backgroundMode || (configuredGradient ? "gradient" : "solid");
             const bgGradient = backgroundMode === "solid" ? undefined : configuredGradient;
-            const backgroundImageUrl = getTrustedCatalogImageUrl(offer.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || "");
-            const productImage = getTrustedCatalogImageUrl(offer.image_url || data.image_url || data.imageUrl || data.bannerImageUrl || data.banner_image_url || "");
+            const storedImageUrl = String(offer.image_url || data.image_url || data.imageUrl || data.bannerImageUrl || data.banner_image_url || "");
+            const legacyAiScene = storedImageUrl.includes("/ai-banner-");
+            const backgroundImageUrl = getTrustedCatalogImageUrl(offer.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || (legacyAiScene ? storedImageUrl : ""));
+            const itemProductImage = data.items?.find(item => item.imageUrl || item.image_url);
+            const productImage = getTrustedCatalogImageUrl(legacyAiScene ? (itemProductImage?.imageUrl || itemProductImage?.image_url || "") : storedImageUrl);
             const offerKey = offer.id.replace(/[^a-zA-Z0-9_-]/g, "");
             const foamGradientId = `offer-foam-${offerKey}`;
             const backgroundImage = backgroundImageUrl
@@ -110,7 +114,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
               tabIndex={index === activeIndex ? 0 : -1}
               onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)}
               onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
-              className="relative isolate flex h-full min-w-full flex-[0_0_100%] items-center overflow-hidden px-3 py-2 text-white sm:px-5"
+              className="relative isolate box-border flex h-full w-full min-w-0 max-w-full flex-[0_0_100%] items-center overflow-hidden px-3 py-2 text-white sm:px-5"
             >
               <div className="absolute inset-0 z-0" aria-hidden="true" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: backgroundImageUrl ? "cover" : undefined, backgroundPosition: "center" }} />
               <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
@@ -136,13 +140,13 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                   onClick={event => { event.stopPropagation(); window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
                   className="relative z-50 mt-1 h-7 w-8 shrink-0 self-start rounded-full bg-white text-slate-900 shadow-md hover:bg-white/90"
                 ><ChevronLeft className="h-4 w-4" /></Button>
-                <div dir="ltr" className="relative flex h-full w-[72px] shrink-0 items-end justify-center sm:w-[120px]">
-                  <div aria-hidden="true" className="absolute bottom-[9px] z-10 h-2 w-16 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
+                <div dir="ltr" className="relative flex h-full w-[104px] shrink-0 items-end justify-center sm:w-[160px]">
+                  <div aria-hidden="true" className="absolute bottom-[9px] left-1/2 z-10 h-2 w-16 -translate-x-1/2 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
                   {productImage ? <img
                     src={productImage}
                     alt=""
                     onError={event => { event.currentTarget.style.display = "none"; }}
-                    className="relative z-20 max-h-[100px] max-w-[72px] object-contain sm:max-w-[110px]"
+                    className="relative z-20 h-[116px] max-h-full w-auto max-w-full object-contain sm:h-[180px]"
                     style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 10px 15px rgba(0,0,0,0.3))" }}
                   /> : <Gift className="relative z-20 mb-2 h-9 w-9 text-white/80 drop-shadow-md" />}
                   <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-6 w-[112px] -translate-x-1/2 sm:w-[140px]" viewBox="0 0 140 30" fill="none" aria-hidden="true">
@@ -166,8 +170,8 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
           })}
         </div>
         {visibleOffers.length > 1 && <>
-          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
-          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
+          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full sm:grid bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
+          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full sm:grid bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
           <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>
         </>}
       </div>
