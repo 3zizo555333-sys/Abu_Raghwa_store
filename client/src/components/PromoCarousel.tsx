@@ -99,7 +99,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             const legacyAiScene = storedImageUrl.includes("/ai-banner-");
             const backgroundImageUrl = getTrustedCatalogImageUrl(offer.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || (legacyAiScene ? storedImageUrl : ""));
             const itemProductImage = data.items?.find(item => item.imageUrl || item.image_url);
-            const productImage = getTrustedCatalogImageUrl(legacyAiScene ? (itemProductImage?.imageUrl || itemProductImage?.image_url || "") : storedImageUrl);
+            const productImage = getTrustedCatalogImageUrl(legacyAiScene ? (itemProductImage?.imageUrl || itemProductImage?.image_url || "") : (storedImageUrl || itemProductImage?.imageUrl || itemProductImage?.image_url || ""));
             const offerKey = offer.id.replace(/[^a-zA-Z0-9_-]/g, "");
             const foamGradientId = `offer-foam-${offerKey}`;
             const backgroundImage = backgroundImageUrl
@@ -146,8 +146,8 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                     src={productImage}
                     alt=""
                     onError={event => { event.currentTarget.style.display = "none"; }}
-                    className="relative z-20 h-[116px] max-h-full w-auto max-w-full object-contain sm:h-[180px]"
-                    style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 10px 15px rgba(0,0,0,0.3))" }}
+                    className="relative z-20 h-[85%] max-h-full w-auto max-w-full shrink-0 object-contain"
+                    style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 10px 14px rgba(0,0,0,0.4))" }}
                   /> : <Gift className="relative z-20 mb-2 h-9 w-9 text-white/80 drop-shadow-md" />}
                   <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-6 w-[112px] -translate-x-1/2 sm:w-[140px]" viewBox="0 0 140 30" fill="none" aria-hidden="true">
                     <defs>
@@ -170,8 +170,8 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
           })}
         </div>
         {visibleOffers.length > 1 && <>
-          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full sm:grid bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
-          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 place-items-center rounded-full sm:grid bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
+          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full md:flex bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
+          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full md:flex bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
           <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>
         </>}
       </div>
