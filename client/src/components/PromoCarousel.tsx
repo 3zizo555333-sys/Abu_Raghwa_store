@@ -1,26 +1,35 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TouchEvent } from "react";
-import { ChevronLeft, ChevronRight, Gift, Sparkles } from "lucide-react";
+import { ChevronLeft, ChevronRight, Gift } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { getTrustedCatalogImageUrl } from "@/lib/catalog";
 
-type PromoItem = { imageUrl?: string; image_url?: string; name?: string };
-type PromoOfferData = { title?: string; description?: string; promoText?: string; discountAmount?: number; discountPercent?: number; loyaltyPoints?: number; imageUrl?: string; image_url?: string; bannerImageUrl?: string; banner_image_url?: string; bannerCustomImage?: string; banner_custom_image?: string; bgColor?: string; bg_color?: string; bgGradient?: string; bg_gradient?: string; backgroundMode?: "solid" | "gradient"; items?: PromoItem[] };
+type PromoOfferData = {
+  title?: string;
+  description?: string;
+  promoText?: string;
+  discountAmount?: number;
+  discountPercent?: number;
+  savingsAmount?: number;
+  savings_amount?: number;
+  discount_percent?: number;
+  imageUrl?: string;
+  image_url?: string;
+  bannerImageUrl?: string;
+  banner_image_url?: string;
+  bannerCustomImage?: string;
+  banner_custom_image?: string;
+  bgColor?: string;
+  bg_color?: string;
+  bgGradient?: string;
+  bg_gradient?: string;
+  backgroundMode?: "solid" | "gradient";
+};
 type PromoCarouselProps = { offers: CloudStoreOffer[] };
 
 function getOfferData(offer: CloudStoreOffer): PromoOfferData {
   return (offer.offer_data && typeof offer.offer_data === "object" ? offer.offer_data : {}) as PromoOfferData;
-}
-
-function getOfferImages(data: PromoOfferData) {
-  const itemImages = (Array.isArray(data.items) ? data.items : [])
-    .map(item => getTrustedCatalogImageUrl(item.imageUrl || item.image_url || ""))
-    .filter(Boolean)
-    .slice(0, 3);
-  const bannerImage = getTrustedCatalogImageUrl(data.bannerImageUrl || data.banner_image_url || data.imageUrl || data.image_url || "");
-  const customBanner = getTrustedCatalogImageUrl(data.bannerCustomImage || data.banner_custom_image || "");
-  return { bannerImage, customBanner, itemImages };
 }
 
 function dateValue(value: string | number | null | undefined) {
@@ -31,8 +40,8 @@ function dateValue(value: string | number | null | undefined) {
 
 export function isRenderableOffer(offer: CloudStoreOffer) {
   const data = getOfferData(offer);
-  const title = String(offer.banner_title || data.title || offer.title || "").trim();
-  const description = String(offer.public_description || data.description || "").trim();
+  const title = String(offer.title || data.title || offer.banner_title || "").trim();
+  const description = String(offer.promo_text || offer.description || offer.public_description || data.promoText || data.description || "").trim();
   const offerPrice = Number(offer.offer_price ?? 0);
   const now = Date.now();
   const startsAt = dateValue(offer.starts_at);
@@ -50,6 +59,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   useEffect(() => {
     if (activeIndex >= visibleOffers.length) setActiveIndex(0);
   }, [activeIndex, visibleOffers.length]);
+
   useEffect(() => {
     if (visibleOffers.length < 2 || isPaused) return;
     const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 2000);
@@ -68,38 +78,98 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
     setIsPaused(false);
   };
 
-  return <section aria-label="العروض النشطة" className="w-full px-3 py-3 sm:px-5 sm:py-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
-    <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl shadow-[0_12px_36px_rgba(15,23,42,.18)]">
-      <div className="relative overflow-hidden rounded-2xl" style={{ touchAction: "pan-y" }}>
-        <div dir="ltr" className="flex w-full transition-transform duration-500 ease-out" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+  return <section aria-label="العروض النشطة" className="w-full px-3 py-2 sm:py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
+    <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
+      <div className="relative aspect-[2.4/1] min-h-[104px] max-h-[145px] overflow-hidden rounded-2xl sm:max-h-[240px]" style={{ touchAction: "pan-y" }}>
+        <div dir="ltr" className="flex h-full w-full transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
-            const { customBanner, itemImages } = getOfferImages(data);
-            const bannerImage = getTrustedCatalogImageUrl(offer.image_url || data.bannerImageUrl || data.banner_image_url || data.imageUrl || data.image_url || "");
-            const savings = Number(data.discountAmount || 0);
-            const discount = Number(data.discountPercent || 0);
-            const points = Number(data.loyaltyPoints || 0);
-            const title = offer.banner_title || data.title || offer.title;
-            const promoText = offer.promo_text || data.promoText || title;
-            const bgColor = offer.bg_color || data.bg_color || "#0c0907";
+            const title = String(offer.title || data.title || offer.banner_title || "");
+            const description = String(offer.promo_text || offer.description || offer.public_description || data.promoText || data.description || "").trim();
+            const originalPrice = Number(offer.original_price || 0);
+            const offerPrice = Number(offer.offer_price || 0);
+            const savings = Number(data.savings_amount ?? data.savingsAmount ?? data.discountAmount ?? Math.max(0, originalPrice - offerPrice));
+            const discount = Number(data.discount_percent ?? data.discountPercent ?? (originalPrice > 0 ? Math.round((Math.max(0, originalPrice - offerPrice) / originalPrice) * 100) : 0));
+            const bgColor = offer.bg_color || data.bg_color || data.bgColor || "#0c0907";
             const configuredGradient = offer.bg_gradient || data.bg_gradient || data.bgGradient;
             const backgroundMode = data.backgroundMode || (configuredGradient ? "gradient" : "solid");
-            const bgGradient = configuredGradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)";
-            const fullBanner = getTrustedCatalogImageUrl(offer.banner_custom_image || "") || customBanner;
-            const backgroundImage = fullBanner
-              ? `linear-gradient(90deg, rgba(15,23,42,.82), rgba(15,23,42,.18)), url(${fullBanner})`
-              : backgroundMode === "gradient" ? bgGradient : undefined;
-            const description = offer.public_description || data.description || "وفّر أكثر مع عروضنا المختارة لفترة محدودة.";
-            return <article dir="rtl" key={offer.id} aria-hidden={index !== activeIndex} role="button" tabIndex={index === activeIndex ? 0 : -1} onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }} className="relative min-w-full flex-[0_0_100%] overflow-hidden px-4 py-4 pb-9 text-white sm:px-8 sm:py-6" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: fullBanner ? "cover" : undefined, backgroundPosition: fullBanner ? "center" : undefined }}>
-              <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /></div>
-              <div className="relative z-10 grid min-h-[245px] grid-cols-1 items-center gap-3 sm:min-h-[225px] sm:grid-cols-[minmax(0,1fr)_35%] sm:gap-6">
-                <div className="min-w-0 flex-1 sm:max-w-none"><span className="inline-flex items-center gap-1 rounded-full bg-black/25 px-2.5 py-1 text-[10px] font-black text-white/90"><Sparkles className="h-3 w-3" /> عروض أبو رغوة الحالية</span><h2 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-white sm:text-3xl">{promoText}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-white/90 sm:text-sm">{description}</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-black sm:mt-3 sm:gap-2 sm:text-xs">{savings > 0 && <span className="rounded-lg bg-white/20 px-2 py-1.5">وفّر {savings.toLocaleString("ar-EG")} ج.م</span>}{discount > 0 && <span className="rounded-lg bg-white px-2 py-1.5 text-slate-900">وفر {discount}%</span>}{points > 0 && <span className="rounded-lg bg-purple-300 px-2 py-1.5 text-purple-950"><Gift className="ml-1 inline h-3 w-3" />+{points}</span>}<Button type="button" size="sm" onClick={event => { event.stopPropagation(); window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }} className="h-8 rounded-lg bg-white px-3 text-xs font-black text-slate-900 hover:bg-white/90">اطلب دلوقتي</Button></div></div>
-                {!fullBanner && <div className="relative flex min-h-24 w-full items-center justify-center sm:min-h-40">{bannerImage ? <img src={bannerImage} alt="" onError={event => { event.currentTarget.style.display = "none"; }} className="h-28 max-h-40 max-w-full object-contain sm:h-40 drop-shadow-[0_12px_10px_rgba(0,0,0,.35)]" /> : itemImages.length ? <div className="flex items-end justify-center gap-0.5 sm:gap-2">{itemImages.map((image, imageIndex) => <img key={`${offer.id}-${imageIndex}`} src={image} alt="" onError={event => { event.currentTarget.style.display = "none"; }} className="h-24 w-16 object-contain drop-shadow-[0_10px_8px_rgba(0,0,0,.35)] sm:h-36 sm:w-24" />)}</div> : <Gift className="h-16 w-16 text-white/70" />}</div>}
+            const bgGradient = backgroundMode === "solid" ? undefined : configuredGradient;
+            const backgroundImageUrl = getTrustedCatalogImageUrl(offer.banner_custom_image || data.bannerCustomImage || data.banner_custom_image || "");
+            const productImage = getTrustedCatalogImageUrl(offer.image_url || data.image_url || data.imageUrl || data.bannerImageUrl || data.banner_image_url || "");
+            const offerKey = offer.id.replace(/[^a-zA-Z0-9_-]/g, "");
+            const foamGradientId = `offer-foam-${offerKey}`;
+            const backgroundImage = backgroundImageUrl
+              ? `linear-gradient(90deg, rgba(15,23,42,.28), rgba(15,23,42,.08)), url("${backgroundImageUrl}")`
+              : bgGradient;
+
+            return <article
+              dir="rtl"
+              key={offer.id}
+              aria-hidden={index !== activeIndex}
+              role="button"
+              tabIndex={index === activeIndex ? 0 : -1}
+              onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)}
+              onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
+              className="relative isolate flex h-full min-w-full flex-[0_0_100%] items-center overflow-hidden px-3 py-2 text-white sm:px-5"
+            >
+              <div className="absolute inset-0 z-0" aria-hidden="true" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: backgroundImageUrl ? "cover" : undefined, backgroundPosition: "center" }} />
+              <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
+                <span className="foam-bubble foam-bubble-a" />
+                <span className="foam-bubble foam-bubble-b" />
+                <span className="foam-bubble foam-bubble-c" />
+                <span className="foam-bubble foam-bubble-d" />
+              </div>
+              <div dir="rtl" className="relative z-20 flex h-full min-h-0 w-full items-center gap-2 sm:gap-4">
+                <div className="relative z-50 flex min-w-0 flex-1 flex-col items-start justify-center text-right">
+                  <h2 className="line-clamp-1 text-sm font-black leading-tight text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.7)] sm:text-lg">{title}</h2>
+                  {description && <p className="mt-0.5 line-clamp-1 text-[10px] leading-4 text-white drop-shadow-[0_1px_3px_rgba(0,0,0,0.75)] sm:text-xs">{description}</p>}
+                  <div className="mt-1 flex flex-wrap items-center gap-1 text-[9px] font-black sm:text-[10px]">
+                    {discount > 0 && <span className="rounded-full border border-white/20 bg-amber-300 px-2 py-0.5 text-amber-950 shadow-sm">وفر {discount}%</span>}
+                    {savings > 0 && <span className="rounded-full border border-white/20 bg-emerald-300 px-2 py-0.5 text-emerald-950 shadow-sm">وفر {savings.toLocaleString("ar-EG")} ج.م</span>}
+                  </div>
+                </div>
+                <Button
+                  type="button"
+                  size="icon"
+                  aria-label={title}
+                  title={title}
+                  onClick={event => { event.stopPropagation(); window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
+                  className="relative z-50 mt-1 h-7 w-8 shrink-0 self-start rounded-full bg-white text-slate-900 shadow-md hover:bg-white/90"
+                ><ChevronLeft className="h-4 w-4" /></Button>
+                <div dir="ltr" className="relative flex h-full w-[72px] shrink-0 items-end justify-center sm:w-[120px]">
+                  <div aria-hidden="true" className="absolute bottom-[9px] z-10 h-2 w-16 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
+                  {productImage ? <img
+                    src={productImage}
+                    alt=""
+                    onError={event => { event.currentTarget.style.display = "none"; }}
+                    className="relative z-20 max-h-[100px] max-w-[72px] object-contain sm:max-w-[110px]"
+                    style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 10px 15px rgba(0,0,0,0.3))" }}
+                  /> : <Gift className="relative z-20 mb-2 h-9 w-9 text-white/80 drop-shadow-md" />}
+                  <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-6 w-[112px] -translate-x-1/2 sm:w-[140px]" viewBox="0 0 140 30" fill="none" aria-hidden="true">
+                    <defs>
+                      <linearGradient id={foamGradientId} x1="70" y1="0" x2="70" y2="30" gradientUnits="userSpaceOnUse">
+                        <stop stopColor="white" stopOpacity=".94" />
+                        <stop offset="1" stopColor="#dffbff" stopOpacity=".82" />
+                      </linearGradient>
+                    </defs>
+                    <path d="M0 28c5-7 10-7 15-2 2-10 12-13 19-5 4-13 17-16 25-5 4-8 14-10 20-2 7-12 20-10 24 0 8-8 20-4 21 5 8-7 16-1 16 9H0Z" fill={`url(#${foamGradientId})`} stroke="white" strokeOpacity=".82" strokeWidth="1.2" />
+                    <circle cx="24" cy="20" r="5" fill="white" fillOpacity=".72" />
+                    <circle cx="50" cy="18" r="4" fill="white" fillOpacity=".7" />
+                    <circle cx="93" cy="19" r="5" fill="white" fillOpacity=".68" />
+                    <circle cx="119" cy="21" r="3.5" fill="white" fillOpacity=".78" />
+                  </svg>
+                  <span className="foam-bubble absolute left-1 top-[22%] z-40 h-5 w-5" style={{ width: 22, height: 22 }} />
+                  <span className="foam-bubble absolute right-1 top-[44%] z-40 h-6 w-6" style={{ width: 27, height: 27, animationDelay: "-2.5s" }} />
+                </div>
               </div>
             </article>;
           })}
         </div>
-        {visibleOffers.length > 1 && <><button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-2 top-1/2 z-20 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button><button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-2 top-1/2 z-20 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button><div className="absolute bottom-2 left-0 right-0 z-20 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} onClick={() => setActiveIndex(index)} className={`h-1.5 rounded-full transition-all ${index === activeIndex ? "w-6 bg-white" : "w-1.5 bg-white/50"}`} />)}</div></>}
+        {visibleOffers.length > 1 && <>
+          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
+          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 grid h-7 w-7 -translate-y-1/2 place-items-center rounded-full bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
+          <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>
+        </>}
       </div>
     </div>
   </section>;

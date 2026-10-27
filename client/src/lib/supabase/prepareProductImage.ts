@@ -5,6 +5,8 @@ const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 type PrepareCloudProductImageOptions = {
   /** Enable JPEG only for upload flows whose storage contract accepts it. */
   allowJpegFallback?: boolean;
+  /** Force JPEG output for upload flows that require a .jpg object. */
+  jpegOnly?: boolean;
 };
 
 export async function prepareCloudProductImage(
@@ -24,11 +26,13 @@ export async function prepareCloudProductImage(
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const quality = Math.max(0.3, 0.84 - attempt * 0.05);
       let blob: Blob | null = null;
-      try {
-        const webp = await renderImage(bitmap, width, height, quality, "image/webp");
-        if (webp.type === "image/webp") blob = webp;
-      } catch {
-        // Fall through to the optional JPEG path below.
+      if (!options.jpegOnly) {
+        try {
+          const webp = await renderImage(bitmap, width, height, quality, "image/webp");
+          if (webp.type === "image/webp") blob = webp;
+        } catch {
+          // Fall through to the optional JPEG path below.
+        }
       }
 
       if (!blob) {

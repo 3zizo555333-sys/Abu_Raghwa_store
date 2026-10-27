@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { useLocation } from "wouter";
-import { ArrowLeft, Share2, Printer, RotateCw, CheckCircle2, Plus, Trash2, Sparkles, Gift, Award, Calendar, History, Download, Facebook, Users, Star, MessageCircle, FileSpreadsheet, Check, TrendingUp, TrendingDown, Award as AwardIcon, ShoppingCart, XCircle } from "lucide-react";
+import { ArrowLeft, Share2, Printer, RotateCw, CheckCircle2, Plus, Trash2, Sparkles, Gift, Award, Calendar, History, Download, Facebook, Users, Star, MessageCircle, FileSpreadsheet, Check, TrendingUp, TrendingDown, Award as AwardIcon, ShoppingCart, XCircle, LoaderCircle } from "lucide-react";
 import { toast } from "sonner";
 import QRCode from "qrcode";
 import { getPieceCost, getPieceSalePrice } from "@/lib/profit";
@@ -21,7 +21,7 @@ import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { listStoreOfferOrders, saveStoreOffer, updateStoreOfferOrderStatus, type CloudOfferOrder } from "@/lib/supabase/storeOffers";
 import { createLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, updateLoyaltyMilestone, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow } from "@/lib/supabase/loyaltyExperience";
 import { OfferVideoScriptButton } from "@/components/OfferVideoScript";
-import { removeCatalogOfferImage, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
+import { generateCatalogOfferBanner, removeCatalogOfferImage, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
 
 interface Product {
   id: string;
@@ -215,6 +215,7 @@ export default function SmartOffers() {
   const savedOffersList = (publishedOffersQuery.data as SmartOffer[] | null | undefined) ?? legacySavedOffersList;
   const [now, setNow] = useState(() => Date.now());
   const [bannerImageUploading, setBannerImageUploading] = useState(false);
+  const [bannerImageGenerating, setBannerImageGenerating] = useState(false);
   const [showResultsReport, setShowResultsReport] = useState(false);
 
   const [customersList, setCustomersList] = useState<CustomerLoyalty[]>([]);
@@ -767,6 +768,20 @@ export default function SmartOffers() {
       toast.error(error instanceof Error ? error.message : "تعذر رفع صورة العرض.");
     } finally {
       setBannerImageUploading(false);
+    }
+  };
+  const handleGenerateOfferBanner = async () => {
+    if (!currentOffer) return;
+    setBannerImageGenerating(true);
+    try {
+      const persisted = currentOffer.isActivated || savedOffersList.some(offer => offer.id === currentOffer.id);
+      const generated = await generateCatalogOfferBanner(currentOffer.id, { persistToOffer: persisted });
+      setCurrentOffer(previous => previous ? { ...previous, bannerImageUrl: generated.publicUrl, bannerImageStoragePath: generated.storagePath } : previous);
+      toast.success(generated.savedToExistingOffer ? "تم توليد البانر وحفظ رابطه للعرض." : "تم توليد البانر؛ سيُحفظ مع العرض عند تأكيده.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر توليد البانر. أعد المحاولة.");
+    } finally {
+      setBannerImageGenerating(false);
     }
   };
   const clearBannerImage = async () => {
@@ -1522,7 +1537,7 @@ export default function SmartOffers() {
                       </div>
                       <div className="mt-3 overflow-hidden rounded-2xl p-4 text-white shadow-inner" style={{ backgroundColor: currentOffer.bgColor || "#0c0907", backgroundImage: currentOffer.backgroundMode === "solid" ? undefined : currentOffer.bgGradient || undefined }}><div className="flex items-center gap-3">{currentOffer.bannerImageUrl ? <img src={currentOffer.bannerImageUrl} alt="معاينة البانر" className="h-20 w-20 rounded-xl bg-white object-contain p-1" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-white/20 text-2xl">🎁</div>}<div><p className="text-xs font-bold opacity-80">معاينة حية للبانر</p><p className="text-lg font-black">{currentOffer.promoText || "أقوى عروض التوفير"}</p><p className="text-sm font-bold">{currentOffer.title}</p></div></div></div>
                     </div>
-                    <div className="rounded-xl border-2 border-orange-300 bg-orange-50 p-3 md:col-span-2"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div><label className="block text-sm font-black text-orange-950">رفع صورة بانر إعلانية مخصصة أو صورة المنتج</label><p className="text-[11px] font-semibold text-orange-800">تظهر في الجانب الأيسر من البانر وتُحفظ في Supabase Storage.</p></div>{bannerImageUploading && <span className="text-xs font-black text-orange-700">جارٍ الرفع...</span>}</div><div className="flex flex-wrap items-center gap-2"><label className={`inline-flex cursor-pointer items-center rounded-lg bg-orange-600 px-3 py-2 text-xs font-black text-white hover:bg-orange-700 ${bannerImageUploading ? "pointer-events-none opacity-60" : ""}`}>📷 التقاط بالكاميرا<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={bannerImageUploading} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label><label className={`inline-flex cursor-pointer items-center rounded-lg border border-orange-300 bg-white px-3 py-2 text-xs font-black text-orange-800 hover:bg-orange-100 ${bannerImageUploading ? "pointer-events-none opacity-60" : ""}`}>🖼️ اختيار من المعرض<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={bannerImageUploading} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label>{currentOffer.bannerImageUrl && <Button type="button" size="sm" variant="outline" onClick={() => void clearBannerImage()}>حذف الصورة واستخدام صور المنتجات</Button>}</div>{currentOffer.bannerImageUrl && <img src={currentOffer.bannerImageUrl} alt="معاينة صورة بانر العرض" className="mt-3 h-24 w-full rounded-xl border border-orange-200 bg-white object-contain p-1" />}</div>
+                    <div className="rounded-xl border-2 border-orange-300 bg-orange-50 p-3 md:col-span-2"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div><label className="block text-sm font-black text-orange-950">رفع صورة بانر إعلانية مخصصة أو صورة المنتج</label><p className="text-[11px] font-semibold text-orange-800">تظهر في الجانب الأيسر من البانر وتُحفظ في Supabase Storage.</p></div></div><div className="flex flex-wrap items-center gap-2"><Button type="button" variant="outline" disabled={bannerImageUploading || bannerImageGenerating} onClick={() => void handleGenerateOfferBanner()} className="min-h-10 border-violet-300 text-xs font-black text-violet-800 hover:bg-violet-50">{bannerImageGenerating ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : null}🪄 توليد بانر 3D بالذكاء الاصطناعي</Button><label className={`inline-flex cursor-pointer items-center rounded-lg bg-orange-600 px-3 py-2 text-xs font-black text-white hover:bg-orange-700 ${bannerImageUploading || bannerImageGenerating ? "pointer-events-none opacity-60" : ""}`}>📷 التقاط بالكاميرا<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={bannerImageUploading || bannerImageGenerating} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label><label className={`inline-flex cursor-pointer items-center rounded-lg border border-orange-300 bg-white px-3 py-2 text-xs font-black text-orange-800 hover:bg-orange-100 ${bannerImageUploading || bannerImageGenerating ? "pointer-events-none opacity-60" : ""}`}>🖼️ اختيار من المعرض<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={bannerImageUploading || bannerImageGenerating} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label>{currentOffer.bannerImageUrl && <Button type="button" size="sm" variant="outline" disabled={bannerImageUploading || bannerImageGenerating} onClick={() => void clearBannerImage()}>حذف الصورة واستخدام صور المنتجات</Button>}</div>{bannerImageGenerating && <p className="mt-2 flex items-center justify-center gap-2 text-xs font-bold text-violet-800"><LoaderCircle className="h-4 w-4 animate-spin" /> جاري توليد البانر سحابياً...</p>}{bannerImageUploading && <p className="mt-2 text-center text-xs font-bold text-orange-700">جارٍ رفع الصورة...</p>}{currentOffer.bannerImageUrl && <img src={currentOffer.bannerImageUrl} alt="معاينة صورة بانر العرض" className="mt-3 h-24 w-full rounded-xl border border-orange-200 bg-white object-contain p-1" />}</div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>
                     <p className="text-[11px] text-indigo-700 md:col-span-2">يمكن تعديل كل قيمة يدوياً ثم الضغط على «حفظ التعديلات السحابية» أو «تأكيد وتفعيل العرض».</p>
