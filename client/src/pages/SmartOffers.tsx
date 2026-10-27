@@ -52,6 +52,8 @@ interface SmartOffer {
   id: string;
   title: string;
   bannerTitle?: string;
+  promoText?: string;
+  bgColor?: string;
   strategyName: string;
   items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe"; imageUrl?: string }>;
   originalTotalRetail: number;
@@ -71,6 +73,7 @@ interface SmartOffer {
   loyaltyPoints?: number;
   bannerImageUrl?: string;
   bannerImageStoragePath?: string;
+  bannerCustomImage?: string;
 }
 
 interface OfferStrategy {
@@ -565,7 +568,9 @@ export default function SmartOffers() {
         type: selectedCategory,
         ...previewWindow,
         scanCount: 0,
-        isActivated: false
+        isActivated: false,
+        promoText: "أقوى عروض التوفير",
+        bgColor: "#ea580c"
       });
     }
 
@@ -597,7 +602,9 @@ export default function SmartOffers() {
       type: selectedCategory,
       ...offerWindow,
       scanCount: 0,
-      isActivated: false
+      isActivated: false,
+      promoText: "أقوى عروض التوفير",
+      bgColor: "#ea580c"
     };
 
     setCurrentOffer(tempOffer);
@@ -642,6 +649,8 @@ export default function SmartOffers() {
       ...offerWindow,
       scanCount: 0,
       isActivated: false,
+      promoText: "أقوى عروض التوفير",
+      bgColor: "#ea580c",
     };
     setCurrentOffer(offer);
     setEditablePrice(result.offerPrice.toString());
@@ -668,7 +677,7 @@ export default function SmartOffers() {
     const finalOffer: SmartOffer = { ...activatedOffer, qrCodeDataUrl: qrDataUrl };
     // المسار القديم محفوظ عمداً للتوافق، والجدول السحابي الجديد هو النسخة الإضافية الدائمة.
     try {
-      const savedCloudOffer = await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, description: finalOffer.description, strategy: finalOffer.strategyName, originalPrice: finalOffer.originalTotalRetail, offerPrice: finalOffer.offerPrice, startDate: finalOffer.startDate, pointsReward: finalOffer.loyaltyPoints, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
+      const savedCloudOffer = await saveStoreOffer({ id: finalOffer.id, title: finalOffer.title, bannerTitle: finalOffer.bannerTitle, promoText: finalOffer.promoText, imageUrl: finalOffer.bannerImageUrl || null, bgColor: finalOffer.bgColor, bannerCustomImage: finalOffer.bannerCustomImage || null, description: finalOffer.description, strategy: finalOffer.strategyName, originalPrice: finalOffer.originalTotalRetail, offerPrice: finalOffer.offerPrice, startDate: finalOffer.startDate, pointsReward: finalOffer.loyaltyPoints, offerData: finalOffer as unknown as Record<string, unknown>, startAt: finalOffer.startAt, endAt: finalOffer.endAt, status: "active" });
       if (!savedCloudOffer?.id || savedCloudOffer.store_id !== savedCloudOffer.shop_id) throw new Error("لم يؤكد الخادم هوية المتجر أو معرف العرض المحفوظ.");
       try {
         await saveOfferMutation.mutateAsync({ id: finalOffer.id, offerData: JSON.stringify(finalOffer) });
@@ -712,7 +721,7 @@ export default function SmartOffers() {
       setCurrentOffer(updated);
     }
   };
-  const updateCurrentOfferField = (field: "title" | "bannerTitle" | "description" | "startDate" | "endDate", value: string) => {
+  const updateCurrentOfferField = (field: "title" | "bannerTitle" | "promoText" | "bgColor" | "description" | "startDate" | "endDate", value: string) => {
     setCurrentOffer(previous => {
       if (!previous) return previous;
       const parsedDate = field === "startDate" || field === "endDate" ? parseLegacyOfferDate(value) : null;
@@ -1479,6 +1488,14 @@ export default function SmartOffers() {
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان العرض</label><Input value={currentOffer.title} onChange={event => updateCurrentOfferField("title", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">عنوان البانر المخصص</label><div className="flex gap-2"><Input value={currentOffer.bannerTitle || ""} onChange={event => updateCurrentOfferField("bannerTitle", event.target.value)} placeholder="مثال: دلوقتي هتلاقي عروض التوفير" /><Button type="button" size="sm" disabled={generateOfferBannerTitle.isLoading} onClick={() => void handleGenerateBannerTitle()} className="shrink-0 bg-indigo-600 text-white hover:bg-indigo-700">✨ توليد بالذكاء الاصطناعي</Button></div></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">وصف العرض</label><Input value={currentOffer.description} onChange={event => updateCurrentOfferField("description", event.target.value)} /></div>
+                    <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 md:col-span-2">
+                      <p className="mb-2 text-sm font-black text-emerald-950">الهوية البصرية والدعائية</p>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <div><label className="mb-1 block text-xs font-bold text-slate-700">الجملة التسويقية للبانر</label><Input value={currentOffer.promoText || ""} onChange={event => updateCurrentOfferField("promoText", event.target.value)} placeholder="أقوى عروض التوفير / اشتري قطعتين والتالتة هدية" /></div>
+                        <div><label className="mb-1 block text-xs font-bold text-slate-700">لون خلفية البانر</label><div className="flex items-center gap-2"><input type="color" value={/^#[0-9a-f]{6}$/i.test(currentOffer.bgColor || "") ? currentOffer.bgColor : "#ea580c"} onChange={event => updateCurrentOfferField("bgColor", event.target.value)} className="h-10 w-14 cursor-pointer rounded-lg border bg-white p-1" /><Input value={currentOffer.bgColor || "#ea580c"} onChange={event => updateCurrentOfferField("bgColor", event.target.value)} className="font-mono" /></div><div className="mt-2 flex flex-wrap gap-1.5">{["#059669", "#0f172a", "#d97706", "#1e3a8a", "#dc2626", "#ea580c"].map(color => <button type="button" key={color} aria-label={`اختيار اللون ${color}`} onClick={() => updateCurrentOfferField("bgColor", color)} className="h-6 w-6 rounded-full border-2 border-white shadow ring-1 ring-slate-300" style={{ backgroundColor: color }} />)}</div></div>
+                      </div>
+                      <div className="mt-3 overflow-hidden rounded-2xl p-4 text-white shadow-inner" style={{ backgroundColor: currentOffer.bgColor || "#ea580c" }}><div className="flex items-center gap-3">{currentOffer.bannerImageUrl ? <img src={currentOffer.bannerImageUrl} alt="معاينة البانر" className="h-20 w-20 rounded-xl bg-white object-contain p-1" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-white/20 text-2xl">🎁</div>}<div><p className="text-xs font-bold opacity-80">معاينة حية للبانر</p><p className="text-lg font-black">{currentOffer.promoText || "أقوى عروض التوفير"}</p><p className="text-sm font-bold">{currentOffer.title}</p></div></div></div>
+                    </div>
                     <div className="rounded-xl border-2 border-orange-300 bg-orange-50 p-3 md:col-span-2"><div className="mb-2 flex flex-wrap items-center justify-between gap-2"><div><label className="block text-sm font-black text-orange-950">رفع صورة بانر إعلانية مخصصة أو صورة المنتج</label><p className="text-[11px] font-semibold text-orange-800">تظهر في الجانب الأيسر من البانر وتُحفظ في Supabase Storage.</p></div>{bannerImageUploading && <span className="text-xs font-black text-orange-700">جارٍ الرفع...</span>}</div><div className="flex flex-wrap items-center gap-2"><label className={`inline-flex cursor-pointer items-center rounded-lg bg-orange-600 px-3 py-2 text-xs font-black text-white hover:bg-orange-700 ${bannerImageUploading ? "pointer-events-none opacity-60" : ""}`}>📷 التقاط بالكاميرا<input type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" disabled={bannerImageUploading} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label><label className={`inline-flex cursor-pointer items-center rounded-lg border border-orange-300 bg-white px-3 py-2 text-xs font-black text-orange-800 hover:bg-orange-100 ${bannerImageUploading ? "pointer-events-none opacity-60" : ""}`}>🖼️ اختيار من المعرض<input type="file" accept="image/jpeg,image/png,image/webp" className="hidden" disabled={bannerImageUploading} onChange={event => { void handleBannerImageUpload(event.target.files?.[0]); event.target.value = ""; }} /></label>{currentOffer.bannerImageUrl && <Button type="button" size="sm" variant="outline" onClick={() => void clearBannerImage()}>حذف الصورة واستخدام صور المنتجات</Button>}</div>{currentOffer.bannerImageUrl && <img src={currentOffer.bannerImageUrl} alt="معاينة صورة بانر العرض" className="mt-3 h-24 w-full rounded-xl border border-orange-200 bg-white object-contain p-1" />}</div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ البداية الظاهر</label><Input value={currentOffer.startDate} onChange={event => updateCurrentOfferField("startDate", event.target.value)} /></div>
                     <div><label className="mb-1 block text-xs font-bold text-slate-700">تاريخ الانتهاء الظاهر</label><Input value={currentOffer.endDate} onChange={event => updateCurrentOfferField("endDate", event.target.value)} /></div>

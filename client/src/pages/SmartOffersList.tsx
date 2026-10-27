@@ -15,6 +15,9 @@ interface SmartOffer {
   id: string;
   title: string;
   strategyName: string;
+  promoText?: string;
+  bannerImageUrl?: string;
+  bgColor?: string;
   items: Array<{ name: string; costPrice: number; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
   totalCostPrice: number;
@@ -55,6 +58,9 @@ export default function SmartOffersList() {
       id: row.id,
       title: row.title,
       strategyName: String(data.strategyName || row.strategy || "عرض محفوظ"),
+      promoText: String(data.promoText || row.promo_text || row.banner_title || ""),
+      bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined,
+      bgColor: String(data.bgColor || row.bg_color || "#ea580c"),
       items: items as SmartOffer["items"],
       description: String(data.description || row.public_description || row.description || ""),
       startDate: String(data.startDate || row.start_date || ""),
@@ -169,11 +175,13 @@ export default function SmartOffersList() {
 
     return (
       <Card key={offer.id} className={`overflow-hidden border-2 ${isActive ? "border-emerald-200 bg-emerald-50/40" : "border-slate-200 bg-slate-50"}`}>
-        <CardHeader className="pb-3">
+          <CardHeader className="pb-3" style={{ backgroundColor: offer.bgColor || undefined }}>
+            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt="صورة بانر العرض" className="mb-3 h-28 w-full rounded-xl bg-white object-contain p-1" />}
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <CardTitle className="truncate text-base text-slate-900">{offer.title}</CardTitle>
               <CardDescription className="mt-1 truncate">{offer.strategyName}</CardDescription>
+              {offer.promoText && <p className="mt-1 text-xs font-black text-white/90">{offer.promoText}</p>}
             </div>
             <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${isActive ? "bg-emerald-600 text-white" : "bg-slate-600 text-white"}`}>
               {isActive ? "متاح الآن" : "منتهي"}

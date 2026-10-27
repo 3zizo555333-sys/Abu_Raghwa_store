@@ -11,6 +11,10 @@ type OfferRecord = {
   id: string;
   title: string;
   bannerTitle?: string;
+  promoText?: string;
+  imageUrl?: string | null;
+  bgColor?: string;
+  bannerCustomImage?: string | null;
   description?: string;
   strategy?: string;
   originalPrice?: number;
@@ -43,6 +47,10 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<CloudStoreOffe
     shop_id: shopId,
     title,
     banner_title: offer.bannerTitle || "",
+    promo_text: offer.promoText || "",
+    image_url: offer.imageUrl || null,
+    bg_color: offer.bgColor || "#ea580c",
+    banner_custom_image: offer.bannerCustomImage || null,
     description: offer.description || "",
     strategy: offer.strategy || String((offer.offerData.strategyName as string | undefined) || ""),
     original_price: Number.isFinite(originalPrice) ? originalPrice : 0,
