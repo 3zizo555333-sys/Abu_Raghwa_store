@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Gift } from "lucide-react";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { getTrustedCatalogImageUrl } from "@/lib/catalog";
@@ -65,15 +65,19 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   const activeIndexRef = useRef(0);
   const visibleOffers = useMemo(() => getActiveCarouselOffers(offers), [offers]);
 
-  const scrollToSlide = (index: number, behavior: ScrollBehavior = "smooth") => {
+  const scrollToSlide = useCallback((index: number, behavior: ScrollBehavior = "smooth") => {
     if (!visibleOffers.length) return;
     const nextIndex = (index + visibleOffers.length) % visibleOffers.length;
-    const slide = carouselRef.current?.querySelector<HTMLElement>(`[data-carousel-index="${nextIndex}"]`);
-    if (!slide) return;
+    const viewport = carouselRef.current;
+    const slide = viewport?.querySelector<HTMLElement>(`[data-carousel-index="${nextIndex}"]`);
+    if (!viewport || !slide) return;
     activeIndexRef.current = nextIndex;
     setActiveIndex(nextIndex);
-    slide.scrollIntoView({ behavior, block: "nearest", inline: "center" });
-  };
+    const viewportRect = viewport.getBoundingClientRect();
+    const slideRect = slide.getBoundingClientRect();
+    const centerDelta = slideRect.left + slideRect.width / 2 - (viewportRect.left + viewport.clientWidth / 2);
+    if (Math.abs(centerDelta) > 0.5) viewport.scrollTo({ left: viewport.scrollLeft + centerDelta, top: viewport.scrollTop, behavior });
+  }, [visibleOffers.length]);
 
   const syncActiveSlide = () => {
     const viewport = carouselRef.current;
@@ -97,18 +101,17 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   };
 
   useEffect(() => {
-    if (activeIndex >= visibleOffers.length) {
+    if (visibleOffers.length > 0 && activeIndex >= visibleOffers.length) {
       activeIndexRef.current = 0;
-      setActiveIndex(0);
-      carouselRef.current?.querySelector<HTMLElement>('[data-carousel-index="0"]')?.scrollIntoView({ behavior: "auto", block: "nearest", inline: "center" });
+      scrollToSlide(0, "auto");
     }
-  }, [activeIndex, visibleOffers.length]);
+  }, [activeIndex, scrollToSlide, visibleOffers.length]);
 
   useEffect(() => {
     if (visibleOffers.length < 2 || isPaused) return;
     const timer = window.setInterval(() => scrollToSlide((activeIndexRef.current + 1) % visibleOffers.length), 5000);
     return () => window.clearInterval(timer);
-  }, [isPaused, visibleOffers.length]);
+  }, [isPaused, scrollToSlide, visibleOffers.length]);
 
   if (!visibleOffers.length) return null;
 
