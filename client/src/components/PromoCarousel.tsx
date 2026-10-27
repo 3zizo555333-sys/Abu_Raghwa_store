@@ -169,16 +169,16 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                     {savings > 0 && <span className="rounded-full border border-white/20 bg-emerald-300 px-2 py-0.5 text-emerald-950 shadow-sm">وفر {savings.toLocaleString("ar-EG")} ج.م</span>}
                   </div>
                 </div>
-                <div dir="ltr" className="relative flex h-full w-[104px] shrink-0 items-end justify-center sm:w-[160px]">
-                  <div aria-hidden="true" className="absolute bottom-[9px] left-1/2 z-10 h-2 w-16 -translate-x-1/2 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
+                <div dir="ltr" className="relative flex h-full w-[38%] shrink-0 items-end justify-center p-1">
+                  <div aria-hidden="true" className="absolute bottom-[9px] left-1/2 z-10 h-2 w-[70%] -translate-x-1/2 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
                   {productImage ? <img
                     src={productImage}
                     alt=""
                     onError={event => { event.currentTarget.style.display = "none"; }}
-                    className="relative z-20 h-[85%] max-h-full w-auto max-w-full shrink-0 object-contain"
-                    style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 10px 14px rgba(0,0,0,0.4))" }}
+                    className="relative z-20 h-full max-h-full w-full max-w-full shrink-0 object-contain p-1"
+                    style={{ filter: "contrast(1.06) saturate(1.1) drop-shadow(0 12px 16px rgba(0,0,0,0.45))" }}
                   /> : <Gift className="relative z-20 mb-2 h-9 w-9 text-white/80 drop-shadow-md" />}
-                  <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-6 w-[112px] -translate-x-1/2 sm:w-[140px]" viewBox="0 0 140 30" fill="none" aria-hidden="true">
+                  <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-6 w-full -translate-x-1/2" viewBox="0 0 140 30" fill="none" aria-hidden="true">
                     <defs>
                       <linearGradient id={foamGradientId} x1="70" y1="0" x2="70" y2="30" gradientUnits="userSpaceOnUse">
                         <stop stopColor="white" stopOpacity=".94" />

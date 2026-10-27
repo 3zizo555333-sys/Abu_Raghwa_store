@@ -228,14 +228,14 @@ export default function SmartOffersList() {
         <CardHeader className="space-y-3 pb-3">
           <div className="relative h-40 overflow-hidden rounded-2xl p-3 text-white shadow-sm" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.44),rgba(15,23,42,.16)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }}>
             <span className={`absolute right-3 top-3 z-20 rounded-full px-3 py-1 text-xs font-black shadow ${isActive ? "bg-emerald-700 text-white" : "bg-slate-800 text-white"}`}>{isActive ? "متاح الآن" : "منتهي"}</span>
-            {offer.bannerImageUrl && <img src={offer.bannerImageUrl} alt={`صورة المنتج في ${offer.title}`} className="absolute bottom-1 left-2 z-20 h-[82%] max-w-[36%] object-contain drop-shadow-[0_10px_14px_rgba(0,0,0,.4)]" />}
-            <div className="relative z-10 mr-auto w-[62%] space-y-1 pt-8 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.8)]">
+            {offer.bannerImageUrl && <div className="absolute bottom-0 left-0 z-20 flex h-full w-[38%] items-end justify-center p-1"><img src={offer.bannerImageUrl} alt={`صورة المنتج في ${offer.title}`} className="h-full w-full object-contain" style={{ filter: "drop-shadow(0 12px 16px rgba(0,0,0,0.45))" }} /></div>}
+            <div className="relative z-30 mr-auto w-[58%] space-y-1 pt-8 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.8)]">
               <h3 className="line-clamp-2 text-lg font-black leading-tight">{offer.title}</h3>
               <p className="line-clamp-1 text-xs font-bold text-white">{offer.strategyName}</p>
               {offer.promoText && <p className="line-clamp-2 text-xs font-black text-white">{offer.promoText}</p>}
               <div className="flex flex-wrap items-center gap-1 pt-1 text-[10px] font-black">{offer.discountPercent > 0 && <span className="rounded-full border border-white/25 bg-amber-300 px-2 py-0.5 text-amber-950">وفر {offer.discountPercent}%</span>}<span className="rounded-full border border-white/25 bg-white/90 px-2 py-0.5 text-slate-900">{offer.offerPrice} ج.م</span></div>
             </div>
-            <svg className="pointer-events-none absolute bottom-0 left-1/2 z-30 h-5 w-36 -translate-x-1/2" viewBox="0 0 144 24" fill="none" aria-hidden="true"><path d="M0 23c9-10 17-9 24-2 3-12 14-15 22-5 7-15 18-17 26-5 6-9 16-9 21 0 9-12 19-9 23 0 8-7 19-3 28 12H0Z" fill="white" fillOpacity=".82"/></svg>
+            <svg className="pointer-events-none absolute bottom-0 left-[19%] z-30 h-5 w-[38%] -translate-x-1/2" viewBox="0 0 144 24" fill="none" aria-hidden="true"><path d="M0 23c9-10 17-9 24-2 3-12 14-15 22-5 7-15 18-17 26-5 6-9 16-9 21 0 9-12 19-9 23 0 8-7 19-3 28 12H0Z" fill="white" fillOpacity=".82"/></svg>
           </div>
           <div className="grid grid-cols-3 gap-2">
             <input id={`offer-camera-${offer.id}`} type="file" accept="image/jpeg,image/png,image/webp" capture="environment" className="hidden" aria-label="التقاط صورة العرض بالكاميرا" onChange={event => void handleOfferImage(offer, event.currentTarget.files?.[0])} />
