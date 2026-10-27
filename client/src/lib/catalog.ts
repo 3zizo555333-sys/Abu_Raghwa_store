@@ -5,6 +5,8 @@ export interface CatalogProduct {
   code?: string;
   name: string;
   unit?: string;
+  categoryId?: string | null;
+  companyId?: string | null;
   retailPrice?: number;
   wholesaleRetailPrice?: number;
   category?: string;

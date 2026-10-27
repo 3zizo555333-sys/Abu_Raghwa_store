@@ -31,6 +31,7 @@ export type CloudProduct = {
   costPerUnit?: number;
   costPerPiece?: number;
   categoryId?: string | null;
+  companyId?: string | null;
   category: string;
   quantity: number;
   minQuantity: number;
@@ -159,6 +160,7 @@ export function mapProductRow(row: Partial<ProductRow> & Record<string, unknown>
     costPerUnit: row.cost_per_unit == null ? undefined : numberOr(row.cost_per_unit),
     costPerPiece: row.cost_per_piece == null ? undefined : numberOr(row.cost_per_piece),
     categoryId: typeof row.category_id === "string" ? row.category_id : null,
+    companyId: typeof (row as Record<string, unknown>).company_id === "string" ? String((row as Record<string, unknown>).company_id) : null,
     category: String(row.category_name ?? "بدون فئة"), quantity: numberOr(row.quantity), minQuantity: numberOr(row.min_quantity),
     imageId: typeof row.image_id === "string" ? row.image_id : null,
     imageStoragePath: typeof row.catalog_image_path === "string" ? row.catalog_image_path : null,

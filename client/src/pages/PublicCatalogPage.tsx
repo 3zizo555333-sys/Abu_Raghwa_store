@@ -84,7 +84,6 @@ export default function PublicCatalogPage() {
   const [promoOffers, setPromoOffers] = useState<CloudStoreOffer[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("الكل");
   const [companyFilter, setCompanyFilter] = useState("الكل");
-  const [productTypeFilter, setProductTypeFilter] = useState("الكل");
   const [selectedSection, setSelectedSection] = useState<{ type: "category" | "company"; name: string } | null>(null);
   const [browseOrigin, setBrowseOrigin] = useState<"category" | "company" | null>(null);
   const [showAllCategories, setShowAllCategories] = useState(false);
@@ -105,8 +104,8 @@ export default function PublicCatalogPage() {
   const [couponResult, setCouponResult] = useState<CatalogCouponValidation | null>(null);
   const [activeCoupons, setActiveCoupons] = useState<CatalogCoupon[]>([]);
   const applyCatalogSnapshot = (data: any) => {
-    setProducts((data.registeredProducts || []).filter((product: any) => product.catalogVisible === true && product.deleted_at == null).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, company: product.company, catalogVisible: true, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription || "", catalogDetailsUrl: product.catalogDetailsUrl || "", loyaltyPoints: product.loyaltyPoints, catalogImageUrl: getTrustedCatalogImageUrl(product.imageUrl) })));
-    setManualProducts((data.manualProducts || []).filter((row: any) => row.is_visible === true && row.deleted_at == null).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String(row.category || ""), company: String(row.company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: true, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
+    setProducts((data.registeredProducts || []).filter((product: any) => product.catalogVisible === true && product.deleted_at == null).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, categoryId: product.categoryId ?? product.category_id ?? null, companyId: product.companyId ?? product.company_id ?? null, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, company: product.company, catalogVisible: true, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription || "", catalogDetailsUrl: product.catalogDetailsUrl || "", loyaltyPoints: product.loyaltyPoints, catalogImageUrl: getTrustedCatalogImageUrl(product.imageUrl) })));
+    setManualProducts((data.manualProducts || []).filter((row: any) => row.is_visible === true && row.deleted_at == null).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, categoryId: row.category_id ?? null, companyId: row.company_id ?? null, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String(row.category || ""), company: String(row.company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: true, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
     setRecipes((data.recipes || []).filter((recipe: any) => recipe.catalog_visible === true && recipe.deleted_at == null).map((recipe: any) => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: getTrustedCatalogImageUrl(recipe.image_signed_url), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
     setCategories((data.categories || []).map((row: any) => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
     setCompanies((data.companies || []).map((row: any) => ({ id: row.id, name: row.name, imageUrl: getTrustedCatalogImageUrl(row.image_url), imageStoragePath: row.image_storage_path || undefined })));
@@ -169,24 +168,27 @@ export default function PublicCatalogPage() {
   }), [companyNames, catalogProducts, companies]);
   const linkedCompanyCards = useMemo(() => categoryFilter === "الكل" ? [] : companyCards.filter(card => catalogProducts.some(product => product.category === categoryFilter && product.company === card.name)).map(card => ({ ...card, count: catalogProducts.filter(product => product.category === categoryFilter && product.company === card.name).length })), [categoryFilter, companyCards, catalogProducts]);
   const linkedCategoryCards = useMemo(() => companyFilter === "الكل" ? [] : categoryCards.filter(card => catalogProducts.some(product => product.company === companyFilter && product.category === card.name)).map(card => ({ ...card, count: catalogProducts.filter(product => product.company === companyFilter && product.category === card.name).length })), [companyFilter, categoryCards, catalogProducts]);
+  const selectedCategoryId = selectedSection?.type === "category" ? categories.find(category => category.name === selectedSection.name)?.id : undefined;
+  const selectedCompanyId = selectedSection?.type === "company" ? companies.find(company => company.name === selectedSection.name)?.id : undefined;
+  const productBelongsToCategory = (product: CatalogProduct, category: CatalogCategory) => product.categoryId ? product.categoryId === category.id : product.category === category.name;
+  const productBelongsToCompany = (product: CatalogProduct, company: CatalogCompany) => product.companyId ? product.companyId === company.id : product.company === company.name;
   const dedicatedScopeProducts = selectedSection?.type === "category"
-    ? catalogProducts.filter(product => product.category === selectedSection.name)
+    ? catalogProducts.filter(product => selectedCategoryId ? (product.categoryId ? product.categoryId === selectedCategoryId : product.category === selectedSection.name) : product.category === selectedSection.name)
     : selectedSection?.type === "company"
-      ? catalogProducts.filter(product => product.company === selectedSection.name)
+      ? catalogProducts.filter(product => selectedCompanyId ? (product.companyId ? product.companyId === selectedCompanyId : product.company === selectedSection.name) : product.company === selectedSection.name)
       : [];
   const dedicatedNavigationProducts = selectedSection?.type === "category" && companyFilter !== "الكل"
-    ? dedicatedScopeProducts.filter(product => product.company === companyFilter)
+    ? dedicatedScopeProducts.filter(product => { const company = companies.find(row => row.name === companyFilter); return company ? productBelongsToCompany(product, company) : product.company === companyFilter; })
     : selectedSection?.type === "company" && categoryFilter !== "الكل"
-      ? dedicatedScopeProducts.filter(product => product.category === categoryFilter)
+      ? dedicatedScopeProducts.filter(product => { const category = categories.find(row => row.name === categoryFilter); return category ? productBelongsToCategory(product, category) : product.category === categoryFilter; })
       : dedicatedScopeProducts;
-  const dedicatedTypeNames = Array.from(new Set(dedicatedNavigationProducts.map(product => String(product.unit || "").trim()).filter(Boolean)));
   const dedicatedCompanyCards = selectedSection?.type === "category"
-    ? companyCards.filter(card => dedicatedScopeProducts.some(product => product.company === card.name))
+    ? companyCards.filter(card => dedicatedScopeProducts.some(product => { const company = companies.find(row => row.name === card.name); return company ? productBelongsToCompany(product, company) : product.company === card.name; }))
     : [];
   const dedicatedCategoryCards = selectedSection?.type === "company"
-    ? categoryCards.filter(card => dedicatedScopeProducts.some(product => product.category === card.name))
+    ? categoryCards.filter(card => dedicatedScopeProducts.some(product => { const category = categories.find(row => row.name === card.name); return category ? productBelongsToCategory(product, category) : product.category === card.name; }))
     : [];
-  const dedicatedProducts = dedicatedNavigationProducts.filter(product => productTypeFilter === "الكل" || product.unit === productTypeFilter);
+  const dedicatedProducts = dedicatedNavigationProducts;
   const homeProducts = showFavorites ? catalogProducts.filter(product => favoriteIds.has(product.id)) : catalogProducts;
   const cartCount = cart.reduce((sum, item) => sum + item.quantity, 0);
   const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
@@ -208,7 +210,6 @@ export default function PublicCatalogPage() {
     setShowFavorites(false);
     setCategoryFilter(category);
     setCompanyFilter("الكل");
-    setProductTypeFilter("الكل");
     setSelectedSection({ type: "category", name: category });
     setBrowseOrigin("category");
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -218,7 +219,6 @@ export default function PublicCatalogPage() {
     setShowFavorites(false);
     setCompanyFilter(company);
     setCategoryFilter("الكل");
-    setProductTypeFilter("الكل");
     setSelectedSection({ type: "company", name: company });
     setBrowseOrigin("company");
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -229,7 +229,6 @@ export default function PublicCatalogPage() {
     setActiveNav("home");
     setCategoryFilter("الكل");
     setCompanyFilter("الكل");
-    setProductTypeFilter("الكل");
     setSelectedSection(null);
     setBrowseOrigin(null);
   };
@@ -320,15 +319,13 @@ export default function PublicCatalogPage() {
       setShowFavorites(false);
       setCategoryFilter(name);
       setCompanyFilter(categoryFirst ? "الكل" : activeCompany);
-      setProductTypeFilter("الكل");
-      if (!categoryFirst) setSelectedSection({ type: "company", name: activeCompany });
+        if (!categoryFirst) setSelectedSection({ type: "company", name: activeCompany });
       window.scrollTo({ top: 0, behavior: "instant" });
     };
     const setDedicatedCompany = (name: string) => {
       setShowFavorites(false);
       setCompanyFilter(name);
-      setProductTypeFilter("الكل");
-      setSelectedSection({ type: "category", name: activeCategory });
+        setSelectedSection({ type: "category", name: activeCategory });
       window.scrollTo({ top: 0, behavior: "instant" });
     };
     return <main className="min-h-screen bg-[#f7f9ff] pb-24 text-slate-900" dir="rtl">
@@ -336,12 +333,11 @@ export default function PublicCatalogPage() {
         <div className="mx-auto max-w-7xl px-3 py-3 sm:px-4">
           <div className="flex items-center gap-3"><button type="button" aria-label="العودة للرئيسية" onClick={clearCatalogBrowse} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-800 hover:bg-orange-100 hover:text-orange-700"><ArrowRight className="h-5 w-5" /></button><div className="min-w-0 flex-1"><p className="text-[11px] font-black text-orange-600">تصفح الكتالوج</p><h1 className="truncate text-lg font-black text-slate-950">{title}</h1></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-black text-orange-700">{dedicatedProducts.length} منتج</span></div>
           {categoryFirst ? <>
-            <div className="mt-3 flex gap-4 overflow-x-auto border-t border-slate-100 pt-3">{categoryNames.map(category => <button type="button" key={category} onClick={() => browseCategory(category)} className={`shrink-0 border-b-2 pb-2 text-sm font-black ${activeCategory === category ? "border-orange-500 text-orange-700" : "border-transparent text-slate-500"}`}>{category}</button>)}</div>
-            <div className="mt-2 flex gap-2 overflow-x-auto pb-1"><button type="button" onClick={() => setProductTypeFilter("الكل")} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${productTypeFilter === "الكل" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}>الكل</button>{dedicatedTypeNames.map(type => <button type="button" key={type} onClick={() => setProductTypeFilter(type)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${productTypeFilter === type ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}>{type}</button>)}</div>
-            <div className="mt-2 flex gap-3 overflow-x-auto pb-1">{dedicatedCompanyCards.map(card => <button type="button" key={card.name} onClick={() => setDedicatedCompany(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === card.name ? "text-orange-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCompany === card.name ? "ring-4 ring-orange-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>
+            <div className="mt-3 flex gap-3 overflow-x-auto border-t border-slate-100 pt-3">{categoryCards.map(card => <button type="button" key={card.name} onClick={() => browseCategory(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCategory === card.name ? "text-orange-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCategory === card.name ? "ring-4 ring-orange-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Package className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>
+            {dedicatedCompanyCards.length > 0 && <div className="mt-2 flex gap-3 overflow-x-auto border-t border-slate-100 pt-2"><button type="button" onClick={() => { setCompanyFilter("الكل"); setSelectedSection({ type: "category", name: activeCategory }); window.scrollTo({ top: 0, behavior: "instant" }); }} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === "الكل" ? "text-slate-950" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center rounded-full bg-slate-950 text-xs text-white ${activeCompany === "الكل" ? "ring-4 ring-orange-300" : ""}`}>الكل</span><span>كل الشركات</span></button>{dedicatedCompanyCards.map(card => <button type="button" key={card.name} onClick={() => setDedicatedCompany(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === card.name ? "text-orange-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCompany === card.name ? "ring-4 ring-orange-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>}
           </> : <>
-            <div className="mt-3 flex gap-4 overflow-x-auto border-t border-slate-100 pt-3">{dedicatedCategoryCards.map(card => <button type="button" key={card.name} onClick={() => setDedicatedCategory(card.name)} className={`shrink-0 border-b-2 pb-2 text-sm font-black ${activeCategory === card.name ? "border-cyan-600 text-cyan-700" : "border-transparent text-slate-500"}`}>{card.name}</button>)}</div>
-            <div className="mt-2 flex gap-2 overflow-x-auto pb-1"><button type="button" onClick={() => setProductTypeFilter("الكل")} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${productTypeFilter === "الكل" ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}>الكل</button>{dedicatedTypeNames.map(type => <button type="button" key={type} onClick={() => setProductTypeFilter(type)} className={`shrink-0 rounded-full px-4 py-2 text-xs font-black ${productTypeFilter === type ? "bg-slate-950 text-white" : "bg-slate-100 text-slate-600"}`}>{type}</button>)}</div>
+            <div className="mt-3 flex gap-3 overflow-x-auto border-t border-slate-100 pt-3">{companyCards.map(card => <button type="button" key={card.name} onClick={() => browseCompany(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === card.name ? "text-cyan-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCompany === card.name ? "ring-4 ring-cyan-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>
+            {dedicatedCategoryCards.length > 0 && <div className="mt-2 flex gap-3 overflow-x-auto border-t border-slate-100 pt-2"><button type="button" onClick={() => { setCategoryFilter("الكل"); setSelectedSection({ type: "company", name: activeCompany }); window.scrollTo({ top: 0, behavior: "instant" }); }} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCategory === "الكل" ? "text-slate-950" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center rounded-full bg-slate-950 text-xs text-white ${activeCategory === "الكل" ? "ring-4 ring-cyan-300" : ""}`}>الكل</span><span>كل الفئات</span></button>{dedicatedCategoryCards.map(card => <button type="button" key={card.name} onClick={() => setDedicatedCategory(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCategory === card.name ? "text-cyan-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCategory === card.name ? "ring-4 ring-cyan-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Package className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>}
           </>}
         </div>
       </header>
