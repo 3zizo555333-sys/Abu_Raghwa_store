@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { TouchEvent } from "react";
-import { ChevronLeft, ChevronRight, Gift } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Gift } from "lucide-react";
 import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { getTrustedCatalogImageUrl } from "@/lib/catalog";
 
@@ -63,7 +62,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
 
   useEffect(() => {
     if (visibleOffers.length < 2 || isPaused) return;
-    const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 2000);
+    const timer = window.setInterval(() => setActiveIndex(index => (index + 1) % visibleOffers.length), 5000);
     return () => window.clearInterval(timer);
   }, [isPaused, visibleOffers.length]);
 
@@ -73,16 +72,16 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   const onTouchEnd = (event: TouchEvent) => {
     if (touchStartX.current != null) {
       const delta = (event.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
-      if (Math.abs(delta) > 40) move(delta > 0 ? -1 : 1);
+      if (Math.abs(delta) > 40) move(delta > 0 ? 1 : -1);
     }
     touchStartX.current = null;
     setIsPaused(false);
   };
 
-  return <section aria-label="العروض النشطة" className="w-full overflow-hidden px-0 py-2 sm:py-3" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
-    <div className="relative mx-0 w-full max-w-none overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
-      <div className="relative aspect-[2.4/1] min-h-[104px] max-h-[145px] overflow-hidden rounded-2xl sm:max-h-[240px]" style={{ touchAction: "pan-y" }}>
-        <div dir="ltr" className="flex h-full w-full min-w-0 overflow-hidden transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
+  return <section aria-label="العروض النشطة" className="w-full overflow-hidden px-3 py-2 sm:py-3 md:px-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
+    <div className="relative w-full overflow-hidden rounded-2xl shadow-[0_8px_24px_rgba(15,23,42,.14)]">
+      <div className="relative h-full w-full aspect-[2.4/1] min-h-[104px] max-h-[145px] overflow-hidden rounded-2xl sm:max-h-[240px]" style={{ touchAction: "pan-y" }}>
+        <div dir="rtl" className="flex h-full w-full overflow-hidden transition-transform duration-500 ease-out motion-reduce:transition-none" style={{ transform: `translateX(${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
             const title = String(offer.title || data.title || offer.banner_title || "");
@@ -114,7 +113,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
               tabIndex={index === activeIndex ? 0 : -1}
               onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)}
               onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
-              className="relative isolate box-border flex h-full w-full min-w-0 max-w-full flex-[0_0_100%] items-center overflow-hidden px-3 py-2 text-white sm:px-5"
+              className="relative isolate box-border flex h-full min-w-full w-full flex-[0_0_100%] items-center overflow-hidden rounded-2xl px-3 py-2 text-white sm:px-5"
             >
               <div className="absolute inset-0 z-0" aria-hidden="true" style={{ backgroundColor: bgColor, backgroundImage, backgroundSize: backgroundImageUrl ? "cover" : undefined, backgroundPosition: "center" }} />
               <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden" aria-hidden="true">
@@ -132,14 +131,6 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                     {savings > 0 && <span className="rounded-full border border-white/20 bg-emerald-300 px-2 py-0.5 text-emerald-950 shadow-sm">وفر {savings.toLocaleString("ar-EG")} ج.م</span>}
                   </div>
                 </div>
-                <Button
-                  type="button"
-                  size="icon"
-                  aria-label={title}
-                  title={title}
-                  onClick={event => { event.stopPropagation(); window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }}
-                  className="relative z-50 mt-1 h-7 w-8 shrink-0 self-start rounded-full bg-white text-slate-900 shadow-md hover:bg-white/90"
-                ><ChevronLeft className="h-4 w-4" /></Button>
                 <div dir="ltr" className="relative flex h-full w-[104px] shrink-0 items-end justify-center sm:w-[160px]">
                   <div aria-hidden="true" className="absolute bottom-[9px] left-1/2 z-10 h-2 w-16 -translate-x-1/2 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
                   {productImage ? <img
@@ -169,11 +160,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             </article>;
           })}
         </div>
-        {visibleOffers.length > 1 && <>
-          <button type="button" aria-label="العرض السابق" onClick={() => move(-1)} className="absolute right-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full md:flex bg-black/25 text-white hover:bg-black/40"><ChevronRight className="h-4 w-4" /></button>
-          <button type="button" aria-label="العرض التالي" onClick={() => move(1)} className="absolute left-1 top-1/2 z-50 hidden h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full md:flex bg-black/25 text-white hover:bg-black/40"><ChevronLeft className="h-4 w-4" /></button>
-          <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>
-        </>}
+        {visibleOffers.length > 1 && <div className="absolute bottom-1 left-0 right-0 z-50 flex justify-center gap-1.5">{visibleOffers.map((item, index) => <button type="button" key={item.id} aria-label={`العرض ${index + 1}`} aria-current={index === activeIndex ? "true" : undefined} onClick={() => setActiveIndex(index)} className={`h-1 rounded-full transition-all motion-reduce:transition-none ${index === activeIndex ? "w-5 bg-white" : "w-1 bg-white/50"}`} />)}</div>}
       </div>
     </div>
   </section>;
