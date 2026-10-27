@@ -51,8 +51,9 @@ const STATUS_LABELS = {
 
 function SortableTaxonomyRow({ id, disabled, className, children }: { id: string; disabled: boolean; className: string; children: React.ReactNode }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id, disabled });
-  return <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.55 : 1 }} className={className}>
-    <button type="button" {...attributes} {...listeners} disabled={disabled} aria-label="اسحب لإعادة الترتيب" title="اسحب لإعادة الترتيب" className="touch-none grid h-10 w-9 shrink-0 place-items-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-50"><GripVertical className="h-5 w-5" /></button>
+  const dragTransform = CSS.Transform.toString(transform);
+  return <div ref={setNodeRef} style={{ transform: isDragging ? `${dragTransform || "translate3d(0, 0, 0)"} scale(1.03)` : dragTransform, transition, opacity: isDragging ? 0.94 : 1, zIndex: isDragging ? 30 : undefined, boxShadow: isDragging ? "0 14px 28px rgba(15,23,42,.18)" : undefined }} className={`${className} transition-shadow duration-200`}>
+    <button type="button" {...attributes} {...listeners} disabled={disabled} aria-label="اسحب لإعادة الترتيب" title="اسحب لإعادة الترتيب" className="touch-none grid h-10 w-9 shrink-0 cursor-grab select-none place-items-center rounded-lg bg-white text-slate-500 ring-1 ring-slate-200 hover:text-slate-900 active:cursor-grabbing disabled:cursor-not-allowed disabled:opacity-50"><GripVertical className="h-5 w-5" /></button>
     {children}
   </div>;
 }
@@ -105,7 +106,7 @@ export default function CatalogManager() {
   const [editingTaxonomy, setEditingTaxonomy] = useState<{ kind: CatalogTaxonomyKind; id: string; name: string } | null>(null);
   const taxonomySensors = useSensors(
     useSensor(MouseSensor, { activationConstraint: { distance: 6 } }),
-    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 5 } }),
     useSensor(KeyboardSensor),
   );
 
@@ -262,11 +263,10 @@ export default function CatalogManager() {
     const query = taxonomySearch.trim().toLocaleLowerCase("ar-EG");
     return query ? source.filter(item => item.name.toLocaleLowerCase("ar-EG").includes(query)) : source;
   }, [safeCategories, safeCompanies, taxonomyManagerOpen, taxonomySearch]);
-  const persistTaxonomyOrder = async (kind: CatalogTaxonomyKind, reorderedVisible: Array<CatalogCategory | CatalogCompany>) => {
+  const persistTaxonomyOrder = async (kind: CatalogTaxonomyKind, reordered: Array<CatalogCategory | CatalogCompany>) => {
     const original = kind === "categories" ? safeCategories : safeCompanies;
-    const visibleIds = new Set(filteredTaxonomyItems.map(item => item.id));
-    const reorderedQueue = [...reorderedVisible];
-    const next = original.map(item => visibleIds.has(item.id) ? reorderedQueue.shift()! : item);
+    if (reordered.length !== original.length) return;
+    const next = reordered;
     if (next.every((item, index) => item.id === original[index]?.id)) return;
     const nextWithOrder = next.map((item, sortOrder) => ({ ...item, sortOrder }));
     if (kind === "categories") setCategories(nextWithOrder as CatalogCategory[]); else setCompanies(nextWithOrder as CatalogCompany[]);
@@ -283,7 +283,7 @@ export default function CatalogManager() {
   };
   const moveTaxonomyItem = (id: string, offset: -1 | 1) => {
     if (!taxonomyManagerOpen || taxonomyOrderSaving) return;
-    const current = filteredTaxonomyItems;
+    const current = taxonomyManagerOpen === "categories" ? safeCategories : safeCompanies;
     const from = current.findIndex(item => item.id === id);
     const to = from + offset;
     if (from < 0 || to < 0 || to >= current.length) return;
@@ -291,7 +291,7 @@ export default function CatalogManager() {
   };
   const handleTaxonomyDragEnd = (event: DragEndEvent) => {
     if (!taxonomyManagerOpen || taxonomyOrderSaving || !event.over || event.active.id === event.over.id) return;
-    const current = filteredTaxonomyItems;
+    const current = taxonomyManagerOpen === "categories" ? safeCategories : safeCompanies;
     const from = current.findIndex(item => item.id === String(event.active.id));
     const to = current.findIndex(item => item.id === String(event.over?.id));
     if (from < 0 || to < 0) return;
@@ -692,7 +692,7 @@ export default function CatalogManager() {
                 </div>
               </div>}
               <div className="space-y-2">
-                <DndContext sensors={taxonomySensors} collisionDetection={closestCenter} onDragEnd={handleTaxonomyDragEnd}>
+                <DndContext sensors={taxonomySensors} collisionDetection={closestCenter} autoScroll onDragEnd={handleTaxonomyDragEnd}>
                   <SortableContext items={filteredTaxonomyItems.map(entity => entity.id)} strategy={verticalListSortingStrategy}>
                 {filteredTaxonomyItems.length ? filteredTaxonomyItems.map((entity, index) => {
                   const isCategory = taxonomyManagerOpen === "categories";

@@ -1,6 +1,6 @@
 import { browserState } from "@/lib/browserState";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowRight, Building2, Check, ChevronLeft, CircleHelp, ClipboardList, Clock3, Heart, Home, Minus, Package, Percent, Phone, Plus, ShoppingBag, Sparkles, Star, Ticket, Trash2, Truck, UserRound, X } from "lucide-react";
+import { ArrowRight, Building2, Check, ChevronLeft, CircleHelp, ClipboardList, Clock3, Heart, Home, Minus, Package, Percent, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Ticket, Trash2, Truck, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -84,6 +84,8 @@ export default function PublicCatalogPage() {
   const [promoOffers, setPromoOffers] = useState<CloudStoreOffer[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("الكل");
   const [companyFilter, setCompanyFilter] = useState("الكل");
+  const [categoryRailSearch, setCategoryRailSearch] = useState("");
+  const [companyRailSearch, setCompanyRailSearch] = useState("");
   const [selectedSection, setSelectedSection] = useState<{ type: "category" | "company"; name: string } | null>(null);
   const [browseOrigin, setBrowseOrigin] = useState<"category" | "company" | null>(null);
   const [showAllCategories, setShowAllCategories] = useState(false);
@@ -166,14 +168,18 @@ export default function PublicCatalogPage() {
   }, [products, manualProducts, recipes]);
   const categoryNames = useMemo(() => Array.from(new Set([...(Array.isArray(categories) ? categories : []).map(category => String(category?.name ?? "")).filter(Boolean), ...catalogProducts.map(product => String(product.category ?? "")).filter(Boolean)])), [categories, catalogProducts]);
   const companyNames = useMemo(() => Array.from(new Set([...(Array.isArray(companies) ? companies : []).map(company => String(company?.name ?? "")).filter(Boolean), ...catalogProducts.map(product => String(product.company ?? "")).filter(Boolean)])), [companies, catalogProducts]);
+  const categoryRailQuery = categoryRailSearch.trim().toLocaleLowerCase("ar-EG");
+  const companyRailQuery = companyRailSearch.trim().toLocaleLowerCase("ar-EG");
   const categoryCards = useMemo(() => categoryNames.map(name => {
     const items = catalogProducts.filter(product => product.category === name);
     return { name, count: items.length, image: categories.find(category => category.name === name)?.imageUrl || items.find(item => item.catalogImageUrl)?.catalogImageUrl };
-  }), [categoryNames, catalogProducts, categories]);
+  }).filter(card => !categoryRailQuery || card.name.toLocaleLowerCase("ar-EG").includes(categoryRailQuery)), [categoryNames, catalogProducts, categories, categoryRailQuery]);
   const companyCards = useMemo(() => companyNames.map(name => {
     const items = catalogProducts.filter(product => product.company === name);
     return { name, count: items.length, image: companies.find(company => company.name === name)?.imageUrl || items.find(item => item.catalogImageUrl)?.catalogImageUrl };
-  }), [companyNames, catalogProducts, companies]);
+  }).filter(card => !companyRailQuery || card.name.toLocaleLowerCase("ar-EG").includes(companyRailQuery)), [companyNames, catalogProducts, companies, companyRailQuery]);
+  const homeCategoryCards = useMemo(() => categoryRailQuery ? categoryCards : categoryCards.slice(0, 6), [categoryCards, categoryRailQuery]);
+  const homeCompanyCards = useMemo(() => companyRailQuery ? companyCards : companyCards.slice(0, 6), [companyCards, companyRailQuery]);
   const linkedCompanyCards = useMemo(() => categoryFilter === "الكل" ? [] : companyCards.filter(card => catalogProducts.some(product => product.category === categoryFilter && product.company === card.name)).map(card => ({ ...card, count: catalogProducts.filter(product => product.category === categoryFilter && product.company === card.name).length })), [categoryFilter, companyCards, catalogProducts]);
   const linkedCategoryCards = useMemo(() => companyFilter === "الكل" ? [] : categoryCards.filter(card => catalogProducts.some(product => product.company === companyFilter && product.category === card.name)).map(card => ({ ...card, count: catalogProducts.filter(product => product.company === companyFilter && product.category === card.name).length })), [companyFilter, categoryCards, catalogProducts]);
   const selectedCategoryId = selectedSection?.type === "category" ? categories.find(category => category.name === selectedSection.name)?.id : undefined;
@@ -233,6 +239,8 @@ export default function PublicCatalogPage() {
 
   const browseCategory = (category: string) => {
     setShowFavorites(false);
+    setCategoryRailSearch("");
+    setCompanyRailSearch("");
     setCategoryFilter(category);
     setCompanyFilter("الكل");
     setSelectedSection({ type: "category", name: category });
@@ -242,6 +250,8 @@ export default function PublicCatalogPage() {
 
   const browseCompany = (company: string) => {
     setShowFavorites(false);
+    setCategoryRailSearch("");
+    setCompanyRailSearch("");
     setCompanyFilter(company);
     setCategoryFilter("الكل");
     setSelectedSection({ type: "company", name: company });
@@ -251,6 +261,8 @@ export default function PublicCatalogPage() {
 
   const clearCatalogBrowse = () => {
     setShowFavorites(false);
+    setCategoryRailSearch("");
+    setCompanyRailSearch("");
     setActiveNav("home");
     setCategoryFilter("الكل");
     setCompanyFilter("الكل");
@@ -422,9 +434,33 @@ export default function PublicCatalogPage() {
         </div>
       </nav>
 
-      <section className="mx-auto max-w-7xl px-4 py-8"><div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-slate-900">تسوّق حسب الفئات</h2><p className="mt-1 text-sm text-slate-500">مرر يميناً ويساراً واختر الفئة لتشاهد منتجاتها.</p></div><div dir="ltr" className="flex items-center gap-2"><button type="button" aria-label="عرض جميع الأقسام" onClick={() => setShowAllCategories(true)} className="grid h-10 w-10 place-items-center rounded-full bg-orange-50 text-orange-700 shadow-sm ring-1 ring-orange-100 transition hover:bg-orange-100"><ChevronLeft className="h-5 w-5" /></button><Package className="h-7 w-7 text-blue-600" /></div></div><div id="catalog-categories" className="mt-5 flex snap-x gap-4 overflow-x-auto pb-3">{categoryCards.slice(0, 6).map(card => <button key={card.name} onClick={() => browseCategory(card.name)} className="group w-44 shrink-0 snap-start overflow-hidden rounded-3xl bg-white text-right shadow-sm ring-1 ring-blue-100 transition hover:-translate-y-1 hover:shadow-xl"><div className="relative aspect-square overflow-hidden bg-gradient-to-br from-blue-600 to-cyan-400">{card.image ? <img src={card.image} alt={card.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-110" /> : <div className="grid h-full place-items-center"><Package className="h-14 w-14 text-white/70" /></div>}<span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-black text-blue-800">{card.count} عنصر</span></div><div className="p-3"><p className="truncate font-black text-slate-900">{card.name}</p><p className="mt-1 flex items-center text-xs font-bold text-blue-600">استعرض القسم <ChevronLeft className="mr-1 h-3.5 w-3.5" /></p></div></button>)}</div>{!categoryCards.length && <div className="mt-5 rounded-3xl border border-dashed border-blue-200 bg-white p-8 text-center text-sm text-slate-500">لا توجد فئات متاحة حالياً.</div>}</section>
+      <section className="mx-auto max-w-7xl px-4 py-8">
+        <div className="flex items-center justify-between">
+          <div><h2 className="text-xl font-black text-slate-900">تسوّق حسب الفئات</h2><p className="mt-1 text-sm text-slate-500">مرر يميناً ويساراً واختر الفئة لتشاهد منتجاتها.</p></div>
+          <div dir="ltr" className="flex items-center gap-2"><button type="button" aria-label="عرض جميع الأقسام" onClick={() => { setCategoryRailSearch(""); setShowAllCategories(true); }} className="grid h-10 w-10 place-items-center rounded-full bg-orange-50 text-orange-700 shadow-sm ring-1 ring-orange-100 transition hover:bg-orange-100"><ChevronLeft className="h-5 w-5" /></button><Package className="h-7 w-7 text-blue-600" /></div>
+        </div>
+        <div className="relative mt-4 max-w-md">
+          <Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" />
+          <Input aria-label="ابحث عن فئة" value={categoryRailSearch} onChange={event => setCategoryRailSearch(event.target.value)} placeholder="ابحث عن فئة..." className="h-11 rounded-xl bg-white pr-10 shadow-sm" />
+        </div>
+        <div id="catalog-categories" className="mt-5 flex snap-x gap-4 overflow-x-auto pb-3">{homeCategoryCards.map(card => <button key={card.name} onClick={() => browseCategory(card.name)} className="group w-44 shrink-0 snap-start overflow-hidden rounded-3xl bg-white text-right shadow-sm ring-1 ring-blue-100 transition hover:-translate-y-1 hover:shadow-xl"><div className="relative aspect-square overflow-hidden bg-gradient-to-br from-blue-600 to-cyan-400">{card.image ? <img src={card.image} alt={card.name} className="h-full w-full object-cover transition duration-300 group-hover:scale-110" /> : <div className="grid h-full place-items-center"><Package className="h-14 w-14 text-white/70" /></div>}<span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-black text-blue-800">{card.count} عنصر</span></div><div className="p-3"><p className="truncate font-black text-slate-900">{card.name}</p><p className="mt-1 flex items-center text-xs font-bold text-blue-600">استعرض القسم <ChevronLeft className="mr-1 h-3.5 w-3.5" /></p></div></button>)}</div>
+        {!categoryCards.length && <div className="mt-5 rounded-3xl border border-dashed border-blue-200 bg-white p-8 text-center text-sm text-slate-500">{categoryRailQuery ? "لا توجد فئات تطابق بحثك." : "لا توجد فئات متاحة حالياً."}</div>}
+      </section>
 
-      <section id="catalog-companies" className="bg-white/70 px-4 py-8"><div className="mx-auto max-w-7xl"><div className="flex items-center justify-between"><div><h2 className="text-xl font-black text-slate-900">تسوّق حسب الشركة</h2><p className="mt-1 text-sm text-slate-500">مرر بين الشركات واعرض كل محتوياتها.</p></div><div dir="ltr" className="flex items-center gap-2"><button type="button" aria-label="عرض جميع العلامات التجارية" onClick={() => setShowAllCompanies(true)} className="grid h-10 w-10 place-items-center rounded-full bg-cyan-50 text-cyan-700 shadow-sm ring-1 ring-cyan-100 transition hover:bg-cyan-100"><ChevronLeft className="h-5 w-5" /></button><Building2 className="h-7 w-7 text-cyan-600" /></div></div><div className="mt-5 flex snap-x gap-4 overflow-x-auto pb-3">{companyCards.slice(0, 6).map(card => <button key={card.name} onClick={() => browseCompany(card.name)} className="group w-44 shrink-0 snap-start overflow-hidden rounded-3xl bg-white text-right shadow-sm ring-1 ring-cyan-100 transition hover:-translate-y-1 hover:shadow-xl"><div className="relative aspect-square overflow-hidden bg-gradient-to-br from-cyan-500 to-blue-700">{card.image ? <img src={card.image} alt={card.name} className="h-full w-full object-contain p-4 transition duration-300 group-hover:scale-110" /> : <div className="grid h-full place-items-center"><Building2 className="h-14 w-14 text-white/75" /></div>}<span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-black text-cyan-800">{card.count} عنصر</span></div><div className="p-3"><p className="truncate font-black text-slate-900">{card.name}</p><p className="mt-1 flex items-center text-xs font-bold text-cyan-700">استعرض الشركة <ChevronLeft className="mr-1 h-3.5 w-3.5" /></p></div></button>)}</div>{!companyCards.length && <div className="mt-5 rounded-3xl border border-dashed border-cyan-200 bg-white p-8 text-center text-sm text-slate-500">لا توجد شركات متاحة حالياً.</div>}</div></section>
+      <section id="catalog-companies" className="bg-white/70 px-4 py-8">
+        <div className="mx-auto max-w-7xl">
+          <div className="flex items-center justify-between">
+            <div><h2 className="text-xl font-black text-slate-900">تسوّق حسب الشركة</h2><p className="mt-1 text-sm text-slate-500">مرر بين الشركات واعرض كل محتوياتها.</p></div>
+            <div dir="ltr" className="flex items-center gap-2"><button type="button" aria-label="عرض جميع العلامات التجارية" onClick={() => { setCompanyRailSearch(""); setShowAllCompanies(true); }} className="grid h-10 w-10 place-items-center rounded-full bg-cyan-50 text-cyan-700 shadow-sm ring-1 ring-cyan-100 transition hover:bg-cyan-100"><ChevronLeft className="h-5 w-5" /></button><Building2 className="h-7 w-7 text-cyan-600" /></div>
+          </div>
+          <div className="relative mt-4 max-w-md">
+            <Search className="absolute right-3 top-3 h-4 w-4 text-slate-400" />
+            <Input aria-label="ابحث عن شركة أو ماركة" value={companyRailSearch} onChange={event => setCompanyRailSearch(event.target.value)} placeholder="ابحث عن شركة أو ماركة..." className="h-11 rounded-xl bg-white pr-10 shadow-sm" />
+          </div>
+          <div className="mt-5 flex snap-x gap-4 overflow-x-auto pb-3">{homeCompanyCards.map(card => <button key={card.name} onClick={() => browseCompany(card.name)} className="group w-44 shrink-0 snap-start overflow-hidden rounded-3xl bg-white text-right shadow-sm ring-1 ring-cyan-100 transition hover:-translate-y-1 hover:shadow-xl"><div className="relative aspect-square overflow-hidden bg-gradient-to-br from-cyan-500 to-blue-700">{card.image ? <img src={card.image} alt={card.name} className="h-full w-full object-contain p-4 transition duration-300 group-hover:scale-110" /> : <div className="grid h-full place-items-center"><Building2 className="h-14 w-14 text-white/75" /></div>}<span className="absolute left-2 top-2 rounded-full bg-white/90 px-2 py-1 text-[10px] font-black text-cyan-800">{card.count} عنصر</span></div><div className="p-3"><p className="truncate font-black text-slate-900">{card.name}</p><p className="mt-1 flex items-center text-xs font-bold text-cyan-700">استعرض الشركة <ChevronLeft className="mr-1 h-3.5 w-3.5" /></p></div></button>)}</div>
+          {!companyCards.length && <div className="mt-5 rounded-3xl border border-dashed border-cyan-200 bg-white p-8 text-center text-sm text-slate-500">{companyRailQuery ? "لا توجد شركات تطابق بحثك." : "لا توجد شركات متاحة حالياً."}</div>}
+        </div>
+      </section>
 
       <section id="catalog-coupons" dir="rtl" className="mx-auto max-w-7xl px-4 py-7">
         <div className="flex items-center justify-between gap-3"><div><h2 className="flex items-center gap-2 text-xl font-black text-violet-950"><Ticket className="h-6 w-6 text-violet-600" />كوبونات المشتريات</h2><p className="mt-1 text-sm text-slate-500">انسخ الرمز أو ضعه في عربة التسوق لتطبيقه على طلبك.</p></div><span className="rounded-full bg-violet-100 px-3 py-1 text-xs font-black text-violet-800">{activeCoupons.length} كوبون</span></div>
