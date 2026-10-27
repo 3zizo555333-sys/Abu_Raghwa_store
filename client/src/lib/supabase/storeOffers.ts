@@ -14,6 +14,7 @@ type OfferRecord = {
   promoText?: string;
   imageUrl?: string | null;
   bgColor?: string;
+  bgGradient?: string;
   bannerCustomImage?: string | null;
   description?: string;
   strategy?: string;
@@ -50,6 +51,7 @@ export async function saveStoreOffer(offer: OfferRecord): Promise<CloudStoreOffe
     promo_text: offer.promoText || "",
     image_url: offer.imageUrl || null,
     bg_color: offer.bgColor || "#ea580c",
+    bg_gradient: offer.bgGradient || null,
     banner_custom_image: offer.bannerCustomImage || null,
     description: offer.description || "",
     strategy: offer.strategy || String((offer.offerData.strategyName as string | undefined) || ""),

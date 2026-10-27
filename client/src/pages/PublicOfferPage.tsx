@@ -21,6 +21,7 @@ interface SmartOffer {
   promoText?: string;
   bannerImageUrl?: string;
   bgColor?: string;
+  bgGradient?: string;
   qrCodeData?: string;
   items: Array<{ name: string; retailPrice: number; offerPrice: number; type: "product" | "recipe" }>;
   originalTotalRetail: number;
@@ -89,7 +90,7 @@ export default function PublicOfferPage() {
       if (!active) return;
       if (!row) { setOffer(null); setLoading(false); return; }
       const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
-      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || row.bg_color || "#ea580c"), qrCodeData: row.qr_code_data || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
+      setOffer({ ...(data as unknown as SmartOffer), id: row.id, title: row.title, strategyName: String(data.strategyName || row.strategy || "عرض أبو رغوة"), promoText: String(data.promoText || row.promo_text || row.banner_title || ""), bannerImageUrl: String(data.bannerImageUrl || row.image_url || row.banner_custom_image || "") || undefined, bgColor: String(data.bgColor || row.bg_color || "#0c0907"), bgGradient: String(data.bgGradient || row.bg_gradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)"), qrCodeData: row.qr_code_data || undefined, description: String(data.description || row.public_description || row.description || ""), offerPrice: Number(data.offerPrice ?? row.offer_price ?? 0), originalTotalRetail: Number(data.originalTotalRetail ?? row.original_price ?? 0), discountAmount: Number(data.discountAmount || 0), discountPercent: Number(data.discountPercent || 0), items: Array.isArray(data.items) ? data.items as SmartOffer["items"] : [], startAt: row.starts_at ? Date.parse(row.starts_at) : Number(data.startAt || 0) || undefined, endAt: row.ends_at ? Date.parse(row.ends_at) : Number(data.endAt || 0) || undefined, startDate: String(data.startDate || row.start_date || ""), endDate: String(data.endDate || row.expires_at || ""), isActivated: row.is_active, loyaltyPoints: Number(data.loyaltyPoints ?? row.points_reward ?? 0), type: "cloud" });
       setLoading(false);
     }).catch(() => { if (active) { setOffer(null); setLoading(false); } });
     void loadOffer();
@@ -235,7 +236,7 @@ export default function PublicOfferPage() {
   const isExpired = expiryInfo.status === "expired";
 
   return (
-    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#ea580c" }}>
+    <div className="relative min-h-screen overflow-hidden py-8 px-4 flex flex-col items-center justify-center" dir="rtl" style={{ textAlign: "right", backgroundColor: offer.bgColor || "#0c0907", backgroundImage: offer.bgGradient || undefined }}>
       <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /><span className="foam-bubble foam-bubble-e" /></div>
       
       <div className="w-full max-w-md space-y-4">

@@ -6,7 +6,7 @@ import type { CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { getTrustedCatalogImageUrl } from "@/lib/catalog";
 
 type PromoItem = { imageUrl?: string; image_url?: string; name?: string };
-type PromoOfferData = { title?: string; description?: string; promoText?: string; discountAmount?: number; discountPercent?: number; loyaltyPoints?: number; imageUrl?: string; image_url?: string; bannerImageUrl?: string; banner_image_url?: string; bannerCustomImage?: string; banner_custom_image?: string; bgColor?: string; bg_color?: string; items?: PromoItem[] };
+type PromoOfferData = { title?: string; description?: string; promoText?: string; discountAmount?: number; discountPercent?: number; loyaltyPoints?: number; imageUrl?: string; image_url?: string; bannerImageUrl?: string; banner_image_url?: string; bannerCustomImage?: string; banner_custom_image?: string; bgColor?: string; bg_color?: string; bgGradient?: string; bg_gradient?: string; items?: PromoItem[] };
 type PromoCarouselProps = { offers: CloudStoreOffer[] };
 
 function getOfferData(offer: CloudStoreOffer): PromoOfferData {
@@ -69,8 +69,8 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
   };
 
   return <section aria-label="العروض النشطة" className="w-full px-3 py-3 sm:px-5 sm:py-4" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd} onMouseEnter={() => setIsPaused(true)} onMouseLeave={() => setIsPaused(false)}>
-    <div className="relative mx-auto max-w-7xl overflow-hidden rounded-3xl border-2 border-amber-500 bg-[#0c0907] p-1 shadow-[0_12px_36px_rgba(245,158,11,.24)]">
-      <div className="relative overflow-hidden rounded-[1.35rem] bg-[radial-gradient(circle_at_top_left,#2b1404_0%,#0c0907_60%,#000_100%)]" style={{ touchAction: "pan-y" }}>
+    <div className="relative mx-auto max-w-7xl overflow-hidden rounded-2xl shadow-[0_12px_36px_rgba(15,23,42,.18)]">
+      <div className="relative overflow-hidden rounded-2xl" style={{ touchAction: "pan-y" }}>
         <div dir="ltr" className="flex w-full transition-transform duration-500 ease-out" style={{ transform: `translateX(-${activeIndex * 100}%)` }}>
           {visibleOffers.map((offer, index) => {
             const data = getOfferData(offer);
@@ -81,10 +81,11 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
             const points = Number(data.loyaltyPoints || 0);
             const title = offer.banner_title || data.title || offer.title;
             const promoText = offer.promo_text || data.promoText || title;
-            const bgColor = offer.bg_color || data.bg_color || "#ea580c";
+            const bgColor = offer.bg_color || data.bg_color || "#0c0907";
+            const bgGradient = offer.bg_gradient || data.bg_gradient || data.bgGradient || "linear-gradient(135deg, #0c0907 0%, #3b1d0b 52%, #f59e0b 100%)";
             const fullBanner = getTrustedCatalogImageUrl(offer.banner_custom_image || "") || customBanner;
             const description = offer.public_description || data.description || "وفّر أكثر مع عروضنا المختارة لفترة محدودة.";
-            return <article dir="rtl" key={offer.id} aria-hidden={index !== activeIndex} role="button" tabIndex={index === activeIndex ? 0 : -1} onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }} className="relative min-w-full flex-[0_0_100%] h-[176px] overflow-hidden px-4 py-4 text-white sm:h-[190px] sm:px-8 sm:py-5" style={{ backgroundColor: bgColor, backgroundImage: fullBanner ? `linear-gradient(90deg, rgba(15,23,42,.78), rgba(15,23,42,.12)), url(${fullBanner})` : undefined, backgroundSize: fullBanner ? "cover" : undefined, backgroundPosition: fullBanner ? "center" : undefined }}>
+            return <article dir="rtl" key={offer.id} aria-hidden={index !== activeIndex} role="button" tabIndex={index === activeIndex ? 0 : -1} onClick={() => window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`)} onKeyDown={event => { if (event.key === "Enter" || event.key === " ") window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }} className="relative min-w-full flex-[0_0_100%] aspect-[16/6] min-h-[138px] max-h-[250px] overflow-hidden px-4 py-3 text-white sm:px-8 sm:py-4" style={{ backgroundColor: bgColor, backgroundImage: fullBanner ? `linear-gradient(90deg, rgba(15,23,42,.8), rgba(15,23,42,.12)), url(${fullBanner})` : bgGradient, backgroundSize: fullBanner ? "cover" : undefined, backgroundPosition: fullBanner ? "center" : undefined }}>
               <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true"><span className="foam-bubble foam-bubble-a" /><span className="foam-bubble foam-bubble-b" /><span className="foam-bubble foam-bubble-c" /><span className="foam-bubble foam-bubble-d" /></div>
               <div className="relative z-10 flex h-full items-center gap-2 sm:gap-6">
                 <div className="min-w-0 flex-1 sm:max-w-[58%]"><span className="inline-flex items-center gap-1 rounded-full bg-black/25 px-2.5 py-1 text-[10px] font-black text-white/90"><Sparkles className="h-3 w-3" /> عروض أبو رغوة الحالية</span><h2 className="mt-2 line-clamp-2 text-xl font-black leading-tight text-white sm:text-3xl">{promoText}</h2><p className="mt-1 line-clamp-2 text-xs leading-5 text-white/90 sm:text-sm">{description}</p><div className="mt-2 flex flex-wrap items-center gap-1.5 text-[10px] font-black sm:mt-3 sm:gap-2 sm:text-xs">{savings > 0 && <span className="rounded-lg bg-white/20 px-2 py-1.5">وفّر {savings.toLocaleString("ar-EG")} ج.م</span>}{discount > 0 && <span className="rounded-lg bg-white px-2 py-1.5 text-slate-900">وفر {discount}%</span>}{points > 0 && <span className="rounded-lg bg-purple-300 px-2 py-1.5 text-purple-950"><Gift className="ml-1 inline h-3 w-3" />+{points}</span>}<Button type="button" size="sm" onClick={event => { event.stopPropagation(); window.location.assign(`/public-offer?id=${encodeURIComponent(offer.id)}`); }} className="h-8 rounded-lg bg-white px-3 text-xs font-black text-slate-900 hover:bg-white/90">اطلب دلوقتي</Button></div></div>
