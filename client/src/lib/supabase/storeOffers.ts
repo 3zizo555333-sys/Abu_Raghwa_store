@@ -7,6 +7,19 @@ import { createOfferId } from "@/lib/offerIds";
 export type CloudOfferOrder = Database["public"]["Tables"]["offer_orders"]["Row"];
 export type CloudStoreOffer = Database["public"]["Tables"]["store_offers"]["Row"];
 
+export function getPublishedOfferImage(row: Pick<CloudStoreOffer, "image_url" | "banner_custom_image"> & { offer_data?: unknown }): string {
+  const data = row.offer_data && typeof row.offer_data === "object" && !Array.isArray(row.offer_data) ? row.offer_data as Record<string, unknown> : {};
+  const candidates = [data.compositeImageUrl, data.processedImageUrl, row.image_url, data.bannerImageUrl];
+  const selected = candidates.find(value => {
+    const url = String(value || "").trim();
+    return url && !url.includes("/ai-banner-");
+  });
+  if (selected) return String(selected);
+  const items = Array.isArray(data.items) ? data.items : [];
+  const raw = items.find(item => item && typeof item === "object" && ((item as Record<string, unknown>).imageUrl || (item as Record<string, unknown>).image_url)) as Record<string, unknown> | undefined;
+  return String(raw?.imageUrl || raw?.image_url || "").trim();
+}
+
 type OfferRecord = {
   id: string;
   title: string;

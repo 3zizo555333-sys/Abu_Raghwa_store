@@ -9,6 +9,8 @@ import { LoaderCircle, Minus, Plus, Sparkles, Trash2, Upload, X } from "lucide-r
 
 const STAGE_SIZE = 900;
 const MAX_PRODUCTS = 4;
+const MAX_SCALE_PERCENT = 400;
+const MIN_SCALE_PERCENT = 45;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
@@ -97,6 +99,14 @@ function layerBounds(layer: ProductLayer, bitmap: DrawableImage): LayerBounds {
   return { left: centerX - width / 2, top: centerY - height / 2, width, height, centerX, centerY };
 }
 
+function shadowForScale(scale: number) {
+  const normalized = Math.max(0.45, Math.min(MAX_SCALE_PERCENT / 100, scale));
+  const blur = Math.round(Math.min(34, 10 + normalized * 7));
+  const offsetY = Math.round(Math.min(30, 8 + normalized * 8));
+  const opacity = Math.min(0.42, 0.22 + normalized * 0.05).toFixed(2);
+  return `drop-shadow(0 ${offsetY}px ${blur}px rgba(0,0,0,${opacity}))`;
+}
+
 function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: Map<string, DrawableImage>, selectedId?: string | null) {
   canvas.width = STAGE_SIZE;
   canvas.height = STAGE_SIZE;
@@ -111,7 +121,7 @@ function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: M
     context.save();
     context.translate(bounds.centerX, bounds.centerY);
     context.rotate((layer.rotation * Math.PI) / 180);
-    context.filter = "drop-shadow(0 22px 22px rgba(0,0,0,0.35))";
+    context.filter = shadowForScale(layer.scale);
     context.drawImage(bitmap, -bounds.width / 2, -bounds.height / 2, bounds.width, bounds.height);
     context.restore();
     if (selectedId === layer.id) {
@@ -405,9 +415,9 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
               <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-black text-slate-900">ضبط التجميع يدوياً</h3><Button type="button" size="sm" variant="outline" disabled={isSaving || isProcessing} onClick={resetAutoLayout} className="text-xs">إعادة الترتيب التلقائي</Button></div>
               <div className="mt-3 flex flex-wrap gap-2">{layers.map((layer, index) => <button key={layer.id} type="button" onClick={() => setSelectedLayerId(layer.id)} className={`max-w-full truncate rounded-full border px-3 py-1.5 text-xs font-black ${selectedLayerId === layer.id ? "border-violet-500 bg-violet-100 text-violet-950" : "border-slate-200 bg-white text-slate-700"}`}>{index === 0 ? "الأساسي · " : ""}{layer.name}</button>)}</div>
               {selectedLayer && <div className="mt-3 rounded-xl bg-slate-50 p-3">
-                <div className="flex items-center justify-between gap-2"><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
-                <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min="0.45" max="1.45" step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Number(event.target.value) } : layer))} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /></div>
-                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة داخل الكادر لتحريكها، واستخدم المنزلق لتكبيرها أو تصغيرها.</p>
+                <div className="flex items-center justify-between gap-2"><div><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><p className="text-[11px] text-slate-500">يمكن التكبير حتى 400%</p></div><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
+                <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min={MIN_SCALE_PERCENT / 100} max={MAX_SCALE_PERCENT / 100} step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, Number(event.target.value))) } : layer))} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /><Input aria-label="حجم المنتج بالنسبة المئوية" type="number" min={MIN_SCALE_PERCENT} max={MAX_SCALE_PERCENT} step="5" value={Math.round(selectedLayer.scale * 100)} disabled={isSaving || isProcessing} onChange={event => { const value = Number(event.target.value); if (!Number.isFinite(value)) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, value / 100)) } : layer)); }} className="h-8 w-20 text-center text-xs font-black" /></div>
+                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة داخل الكادر لتحريكها، واستخدم المنزلق أو اكتب النسبة المئوية لتكبيرها أو تصغيرها. تستخدم المعاينة والتصدير التحويل نفسه.</p>
               </div>}
             </div>}
           </section>

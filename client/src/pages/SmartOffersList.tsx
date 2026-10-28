@@ -9,7 +9,7 @@ import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
-import { deleteStoreOffer, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
+import { deleteStoreOffer, getPublishedOfferImage, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
 import { generateCatalogOfferBanner, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
 import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
@@ -66,7 +66,7 @@ export default function SmartOffersList() {
     const isLegacyAiScene = storedImageUrl.includes("/ai-banner-");
     const legacyProduct = items.find((item: { imageUrl?: string; image_url?: string }) => item.imageUrl || item.image_url);
     const itemProductUrl = String(legacyProduct?.imageUrl || legacyProduct?.image_url || "");
-    const productImageUrl = isLegacyAiScene ? itemProductUrl : storedImageUrl || itemProductUrl;
+    const productImageUrl = getPublishedOfferImage(row) || (isLegacyAiScene ? itemProductUrl : storedImageUrl || itemProductUrl);
     return {
       ...(data as unknown as SmartOffer),
       id: row.id,
