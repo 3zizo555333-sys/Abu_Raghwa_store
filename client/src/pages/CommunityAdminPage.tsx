@@ -121,7 +121,6 @@ export default function CommunityAdminPage() {
     }));
   };
 
-  // معالجة رفع الصور من الجهاز أو الكاميرا
   const handleImageFile = (file: File, target: "prize" | "banner") => {
     if (!file.type.startsWith("image/")) {
       toast.error("يرجى اختيار ملف صورة صالح");
@@ -141,7 +140,6 @@ export default function CommunityAdminPage() {
     reader.readAsDataURL(file);
   };
 
-  // توليد بانر تلقائي واحترافي باستخدام الـ Canvas
   const generateAutoBanner = () => {
     if (!raffle.prize_name && !raffle.title) {
       toast.error("يرجى إدخال عنوان السحب أو اسم الجائزة أولاً لتوليد البانر");
@@ -156,7 +154,6 @@ export default function CommunityAdminPage() {
     canvas.width = 900;
     canvas.height = 450;
 
-    // خلفية متدرجة فخمة
     const gradient = ctx.createLinearGradient(0, 0, 900, 450);
     gradient.addColorStop(0, "#0f172a");
     gradient.addColorStop(0.5, "#1e1b4b");
@@ -164,7 +161,6 @@ export default function CommunityAdminPage() {
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, 900, 450);
 
-    // أشكال تزيينية
     ctx.fillStyle = "rgba(255, 255, 255, 0.05)";
     ctx.beginPath();
     ctx.arc(800, 50, 180, 0, Math.PI * 2);
@@ -173,29 +169,24 @@ export default function CommunityAdminPage() {
     ctx.arc(100, 400, 220, 0, Math.PI * 2);
     ctx.fill();
 
-    // شريط علوي
     ctx.fillStyle = "#f59e0b";
     ctx.font = "bold 24px sans-serif";
     ctx.textAlign = "right";
     ctx.fillText("🎁 سحب متجر أبو راغوة الحصري", 850, 60);
 
-    // عنوان السحب
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 44px sans-serif";
     ctx.fillText(raffle.title || "سحب المشتريات الكبير", 850, 130);
 
-    // الجائزة
     ctx.fillStyle = "#38bdf8";
     ctx.font = "bold 32px sans-serif";
     ctx.fillText(`الجائزة: ${raffle.prize_name || "جائزة قيمة"}`, 850, 190);
 
-    // شروط الدخول البصرية
     ctx.fillStyle = "#cbd5e1";
     ctx.font = "24px sans-serif";
     ctx.fillText(`• الدخول تلقائي لكل فاتورة بقيمة ${raffle.min_purchase_amount} ج.م أو أكثر`, 850, 250);
     ctx.fillText(`• فرصة سحب إضافية لكل ${raffle.rules_config.ticketPerAmount} ج.م مشتريات`, 850, 290);
 
-    // إذا كانت هناك صورة جائزة يتم رسمها داخل البانر
     if (raffle.prize_image_url) {
       const img = new Image();
       img.crossOrigin = "anonymous";
@@ -259,7 +250,6 @@ export default function CommunityAdminPage() {
 
   return (
     <main dir="rtl" className="min-h-screen bg-slate-900 text-slate-100 pb-16">
-      {/* رأس الصفحة */}
       <header className="bg-gradient-to-l from-slate-950 via-indigo-950 to-blue-950 border-b border-indigo-900/50 px-4 py-5 shadow-lg">
         <div className="max-w-6xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -285,7 +275,6 @@ export default function CommunityAdminPage() {
           </div>
         )}
 
-        {/* قسم إنشاء سحب المشتريات المطور */}
         <section className="bg-slate-800/90 rounded-2xl border border-indigo-500/30 p-5 md:p-6 shadow-xl backdrop-blur-sm">
           <div className="flex items-center justify-between border-b border-slate-700 pb-4 mb-6">
             <div className="flex items-center gap-2">
@@ -342,9 +331,7 @@ export default function CommunityAdminPage() {
               />
             </div>
 
-            {/* أدوات رفع الصور الذكية */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-4 rounded-xl bg-slate-900/60 border border-slate-700">
-              {/* قسم صورة الجائزة */}
               <div>
                 <label className="block text-xs font-semibold text-amber-400 mb-2 flex items-center gap-1.5">
                   <ImageIcon className="h-4 w-4" /> صورة الجائزة
@@ -354,4 +341,159 @@ export default function CommunityAdminPage() {
                   accept="image/*"
                   ref={prizeInputRef}
                   className="hidden"
-                  onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files
+                  onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0], "prize")}
+                />
+                <div className="flex gap-2 mb-3">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => prizeInputRef.current?.click()}
+                    className="flex-1 border-slate-700 text-slate-200 hover:bg-slate-800"
+                  >
+                    <Upload className="h-4 w-4 ml-1.5 text-blue-400" /> اختيار من المعرض
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      if (prizeInputRef.current) {
+                        prizeInputRef.current.capture = "environment";
+                        prizeInputRef.current.click();
+                      }
+                    }}
+                    className="border-slate-700 text-slate-200 hover:bg-slate-800"
+                  >
+                    <Camera className="h-4 w-4 text-emerald-400" />
+                  </Button>
+                </div>
+
+                {raffle.prize_image_url ? (
+                  <div className="relative rounded-lg overflow-hidden border border-slate-700 h-36 bg-slate-950 flex items-center justify-center">
+                    <img src={raffle.prize_image_url} alt="الجائزة" className="max-h-full object-contain" />
+                    <button
+                      type="button"
+                      onClick={() => updateRaffle("prize_image_url", "")}
+                      className="absolute top-2 left-2 p-1 bg-red-600/80 rounded-full hover:bg-red-600 text-white"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="h-36 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 text-xs">
+                    لم يتم اختيار صورة للجائزة
+                  </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <label className="text-xs font-semibold text-sky-400 flex items-center gap-1.5">
+                    <Sparkles className="h-4 w-4" /> بانر السحب الترويجي
+                  </label>
+                  <Button
+                    type="button"
+                    size="sm"
+                    onClick={generateAutoBanner}
+                    className="bg-indigo-600 hover:bg-indigo-500 text-white text-xs h-7 px-2.5"
+                  >
+                    <Sparkles className="h-3 w-3 ml-1 text-amber-300" /> إنشاء بانر تلقائي
+                  </Button>
+                </div>
+
+                <input
+                  type="file"
+                  accept="image/*"
+                  ref={bannerInputRef}
+                  className="hidden"
+                  onChange={(e) => e.target.files?.[0] && handleImageFile(e.target.files[0], "banner")}
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={() => bannerInputRef.current?.click()}
+                  className="w-full mb-3 border-slate-700 text-slate-200 hover:bg-slate-800"
+                >
+                  <Upload className="h-4 w-4 ml-1.5 text-sky-400" /> رفع بانر مخصص من الجهاز
+                </Button>
+
+                {raffle.banner_image_url ? (
+                  <div className="relative rounded-lg overflow-hidden border border-slate-700 h-36 bg-slate-950 flex items-center justify-center">
+                    <img src={raffle.banner_image_url} alt="بانر السحب" className="w-full h-full object-cover" />
+                    <button
+                      type="button"
+                      onClick={() => updateRaffle("banner_image_url", "")}
+                      className="absolute top-2 left-2 p-1 bg-red-600/80 rounded-full hover:bg-red-600 text-white"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="h-36 border border-dashed border-slate-700 rounded-lg flex flex-col items-center justify-center text-slate-500 text-xs">
+                    اضغط "إنشاء بانر تلقائي" لتصميمه فوراً
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="p-4 rounded-xl bg-slate-900/90 border border-indigo-950 space-y-4">
+              <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2">
+                <CheckCircle className="h-4 w-4" /> شروط التأهل التلقائي للسحب (حاسبة التذاكر)
+              </h3>
+              
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">الحد الأدنى للفاتورة (ج.م) *</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={raffle.rules_config.minAmount}
+                    onChange={(e) => updateRuleConfig("minAmount", Number(e.target.value))}
+                    className="bg-slate-950 border-slate-700 text-white"
+                    required
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">أي فاتورة بهذا المبلغ تدخل السحب فوراً</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">تذكرة إضافية لكل مبلغ (ج.م)</label>
+                  <Input
+                    type="number"
+                    min="1"
+                    value={raffle.rules_config.ticketPerAmount}
+                    onChange={(e) => updateRuleConfig("ticketPerAmount", Number(e.target.value))}
+                    className="bg-slate-950 border-slate-700 text-white"
+                  />
+                  <span className="text-[10px] text-slate-400 mt-0.5 block">كل ما زادت مشتريات العميل زادت فرصه</span>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-slate-300 mb-1">موعد نهاية السحب *</label>
+                  <Input
+                    type="datetime-local"
+                    value={toLocalInput(raffle.ends_at)}
+                    onChange={(e) => updateRaffle("ends_at", toIso(e.target.value))}
+                    className="bg-slate-950 border-slate-700 text-white"
+                    required
+                  />
+                </div>
+              </div>
+            </div>
+
+            <Button
+              type="submit"
+              disabled={busy === "save_raffle"}
+              className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold py-2.5 text-base shadow-lg"
+            >
+              <Save className="h-5 w-5 ml-2" />
+              {busy === "save_raffle" ? "جاري الحفظ والتفعيل..." : (editingRaffle ? "حفظ التعديلات" : "حفظ وإطلاق السحب رسمياً")}
+            </Button>
+          </form>
+        </section>
+
+        <section className="space-y-4">
+          <h2 className="text-lg font-bold text-slate-200 flex items-center gap-2">
+            <Users className="h-5 w-5 text-indigo-400" /> قائمة سحوبات المتجر الحالية
+          </
