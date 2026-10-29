@@ -2,8 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { 
   ArrowRight, Brain, Gift, Play, RefreshCw, Save, Ticket, Users, 
-  Upload, Sparkles, Image as ImageIcon, Trash2, ZoomIn, 
-  Move, Target, Calendar, ShieldCheck, Share2, Check 
+  Upload, Sparkles, Image as ImageIcon, Trash2, Check 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -116,12 +115,15 @@ export default function CommunityAdminPage() {
   const [editingTrivia, setEditingTrivia] = useState<{ id: string } | null>(null);
   const [trivia, setTrivia] = useState(blankTrivia());
 
+  // زووم وتحريك الصورة (100% إلى 400%)
   const [imgZoom, setImgZoom] = useState(100);
   const [imgPosX, setImgPosX] = useState(0);
   const [imgPosY, setImgPosY] = useState(0);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const adminData = data as any;
 
   const refresh = useCallback(async () => {
     try {
@@ -140,9 +142,9 @@ export default function CommunityAdminPage() {
   }, [refresh, refreshKey]);
 
   useEffect(() => {
-    if (!data?.shopId) return;
-    return subscribeManagedCommunityChanges(data.shopId, () => void refresh());
-  }, [data?.shopId, refresh]);
+    if (!adminData?.shopId) return;
+    return subscribeManagedCommunityChanges(adminData.shopId, () => void refresh());
+  }, [adminData?.shopId, refresh]);
 
   const updateRaffle = (key: string, value: any) => {
     setRaffle((current) => ({ ...current, [key]: value }));
@@ -187,7 +189,7 @@ export default function CommunityAdminPage() {
       setImgZoom(100);
       setImgPosX(0);
       setImgPosY(0);
-      toast.success("تم اختيار الصورة، اضبط الموضع واضغط توليد البانر");
+      toast.success("تم رفع الصورة، اضبط الموضع واضغط توليد البانر");
     };
     reader.readAsDataURL(file);
   };
@@ -217,9 +219,9 @@ export default function CommunityAdminPage() {
     ctx.fillStyle = bgGradient;
     ctx.fillRect(0, 0, 960, 480);
 
-    ctx.strokeStyle = "rgba(245, 158, 11, 0.2)";
+    ctx.strokeStyle = "rgba(245, 158, 11, 0.25)";
     ctx.lineWidth = 2;
-    ctx.strokeRect(20, 20, 920, 440);
+    ctx.strokeRect(15, 15, 930, 450);
 
     const boxX = 50;
     const boxY = 60;
@@ -227,14 +229,12 @@ export default function CommunityAdminPage() {
     const boxH = 360;
 
     ctx.fillStyle = "#ffffff";
-    ctx.beginPath();
-    ctx.roundRect(boxX, boxY, boxW, boxH, 20);
-    ctx.fill();
+    ctx.fillRect(boxX, boxY, boxW, boxH);
 
     ctx.textAlign = "right";
     ctx.fillStyle = "#f59e0b";
     ctx.font = "bold 22px sans-serif";
-    ctx.fillText(activeTab === "raffles" ? "🎁 سحب متجر رجوة للمنظفات" : "🧠 مسابقة وتحدي متجر رجوة", 910, 85);
+    ctx.fillText(activeTab === "raffles" ? "🎁 سحب متجر رجوة للمنظفات" : "🧠 مسابقات وتحديات متجر رجوة", 910, 85);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 38px sans-serif";
@@ -248,15 +248,15 @@ export default function CommunityAdminPage() {
       ctx.fillStyle = "#cbd5e1";
       ctx.font = "22px sans-serif";
       ctx.fillText(`• الحد الأدنى للفاتورة: ${raffle.min_purchase_amount} ج.م`, 910, 265);
-      ctx.fillText(`• فرصة سحب إضافية لكل: ${raffle.rules_config.ticketPerAmount} ج.م مشتريات`, 910, 310);
+      ctx.fillText(`• فرصة سحب إضافية لكل: ${raffle.rules_config.ticketPerAmount} ج.م`, 910, 310);
 
       ctx.fillStyle = "#34d399";
       ctx.font = "bold 24px sans-serif";
-      ctx.fillText(`🎯 يبدأ السحب فور اكتمال: ${raffle.rules_config.minParticipants} مشتركين`, 910, 375);
+      ctx.fillText(`🎯 السحب يبدأ فور اكتمال: ${raffle.rules_config.minParticipants} مشتركين`, 910, 375);
     } else {
       ctx.fillStyle = "#cbd5e1";
       ctx.font = "22px sans-serif";
-      ctx.fillText(`• أجب عن السؤال لتدخل السحب على الجائزة فوراً`, 910, 265);
+      ctx.fillText(`• أجب عن السؤال لتدخل السحب على الجائزة`, 910, 265);
       ctx.fillText(`• شرط الدخول: متابعة صفحتنا ومشاركة المسابقة`, 910, 310);
 
       ctx.fillStyle = "#34d399";
@@ -269,7 +269,7 @@ export default function CommunityAdminPage() {
       img.onload = () => {
         ctx.save();
         ctx.beginPath();
-        ctx.roundRect(boxX, boxY, boxW, boxH, 20);
+        ctx.rect(boxX, boxY, boxW, boxH);
         ctx.clip();
 
         const scale = imgZoom / 100;
@@ -283,9 +283,7 @@ export default function CommunityAdminPage() {
 
         ctx.strokeStyle = "#f59e0b";
         ctx.lineWidth = 4;
-        ctx.beginPath();
-        ctx.roundRect(boxX, boxY, boxW, boxH, 20);
-        ctx.stroke();
+        ctx.strokeRect(boxX, boxY, boxW, boxH);
 
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
         if (activeTab === "raffles") updateRaffle("banner_image_url", dataUrl);
@@ -323,7 +321,7 @@ export default function CommunityAdminPage() {
 
     setBusy("save_raffle");
     try {
-      await savePurchaseRaffle(payload as any);
+      await (savePurchaseRaffle as any)(payload);
       toast.success(editingRaffle ? "تم تعديل السحب بنجاح" : "تم إطلاق سحب المشتريات بنجاح!");
       setEditingRaffle(null);
       setRaffle(blankRaffle());
@@ -360,8 +358,8 @@ export default function CommunityAdminPage() {
 
     setBusy("save_trivia");
     try {
-      await saveTriviaContest(payload as any);
-      toast.success(editingTrivia ? "تم تعديل المسابقة بنجاح" : "تم نشر المسابقة وتفعيل شروط المشاركة بنجاح!");
+      await (saveTriviaContest as any)(payload);
+      toast.success(editingTrivia ? "تم تعديل المسابقة بنجاح" : "تم نشر المسابقة بنجاح!");
       setEditingTrivia(null);
       setTrivia(blankTrivia());
       setRefreshKey((k) => k + 1);
@@ -392,6 +390,7 @@ export default function CommunityAdminPage() {
           </Button>
         </div>
 
+        {/* أزرار التبديل بين السحوبات والمسابقات */}
         <div className="max-w-4xl mx-auto flex gap-2 mt-4">
           <button
             type="button"
@@ -415,10 +414,11 @@ export default function CommunityAdminPage() {
       <div className="max-w-4xl mx-auto p-4 space-y-6 mt-2">
         {error && <div className="p-3 bg-red-950/80 border border-red-700 text-red-200 rounded-xl text-sm">{error}</div>}
 
+        {/* محرر الصور المشترك والزووم 400% */}
         <section className="bg-slate-800/90 rounded-2xl border border-indigo-500/30 p-4 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
             <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-              <ImageIcon className="h-4 w-4" /> صورة الجائزة وضبط الزووم (100% - 400%)
+              <ImageIcon className="h-4 w-4" /> صورة الجائزة والتحكم في الزووم (100% - 400%)
             </label>
             <input
               type="file"
@@ -462,7 +462,7 @@ export default function CommunityAdminPage() {
               <div className="space-y-3 p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs">
                 <div>
                   <div className="flex justify-between mb-1">
-                    <span className="flex items-center gap-1 text-slate-300"><ZoomIn className="h-3.5 w-3.5 text-amber-400" /> تكبير الصورة (Zoom)</span>
+                    <span className="text-slate-300">تكبير الصورة (Zoom)</span>
                     <span className="font-bold text-amber-400">{imgZoom}%</span>
                   </div>
                   <input 
@@ -474,7 +474,7 @@ export default function CommunityAdminPage() {
 
                 <div>
                   <div className="flex justify-between mb-1">
-                    <span className="flex items-center gap-1 text-slate-300"><Move className="h-3.5 w-3.5 text-sky-400" /> تحريك أفقي (يمين / يسار)</span>
+                    <span className="text-slate-300">تحريك أفقي (يمين / يسار)</span>
                     <span className="text-sky-400">{imgPosX}px</span>
                   </div>
                   <input 
@@ -486,7 +486,7 @@ export default function CommunityAdminPage() {
 
                 <div>
                   <div className="flex justify-between mb-1">
-                    <span className="flex items-center gap-1 text-slate-300"><Move className="h-3.5 w-3.5 text-emerald-400" /> تحريك رأسي (فوق / تحت)</span>
+                    <span className="text-slate-300">تحريك رأسي (فوق / تحت)</span>
                     <span className="text-emerald-400">{imgPosY}px</span>
                   </div>
                   <input 
@@ -502,7 +502,7 @@ export default function CommunityAdminPage() {
                   onClick={renderCanvasBanner}
                   className="w-full bg-gradient-to-r from-amber-600 to-amber-500 text-white font-bold h-8 mt-2"
                 >
-                  <Sparkles className="h-3.5 w-3.5 ml-1" /> تطبيق التعديلات وتوليد البانر
+                  <Sparkles className="h-3.5 w-3.5 ml-1" /> توليد البانر بالصورة والبيانات
                 </Button>
               </div>
             </div>
@@ -522,7 +522,448 @@ export default function CommunityAdminPage() {
           )}
         </section>
 
+        {/* نموذج سحوبات المشتريات */}
         {activeTab === "raffles" && (
           <section className="bg-slate-800/95 rounded-2xl border border-indigo-500/30 p-5 shadow-xl space-y-5">
             <div className="flex items-center justify-between border-b border-slate-700 pb-3">
-              
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Ticket className="h-5 w-5 text-amber-400" />
+                {editingRaffle ? "تعديل سحب المشتريات" : "إنشاء سحب مشتريات جديد"}
+              </h2>
+              {editingRaffle && (
+                <Button variant="ghost" size="sm" onClick={() => { setEditingRaffle(null); setRaffle(blankRaffle()); }}>
+                  إلغاء التعديل
+                </Button>
+              )}
+            </div>
+
+            <form onSubmit={saveRaffleForm} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold mb-1 text-slate-300">عنوان السحب *</label>
+                  <Input
+                    placeholder="مثال: سحب العيد الكبير"
+                    value={raffle.title}
+                    onChange={(e) => updateRaffle("title", e.target.value)}
+                    className="bg-slate-900 border-slate-700 text-white"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1 text-slate-300">اسم الجائزة *</label>
+                  <Input
+                    placeholder="مثال: برميل صابون / غسالة أوتوماتيك"
+                    value={raffle.prize_name}
+                    onChange={(e) => updateRaffle("prize_name", e.target.value)}
+                    className="bg-slate-900 border-slate-700 text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-300">تفاصيل وشروط السحب</label>
+                <Textarea
+                  placeholder="اكتب تعليمات وشروط استلام الجائزة..."
+                  value={raffle.description}
+                  onChange={(e) => updateRaffle("description", e.target.value)}
+                  className="bg-slate-900 border-slate-700 text-white"
+                  rows={2}
+                />
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-950 border border-indigo-900/60 space-y-3">
+                <h3 className="text-xs font-bold text-emerald-400">
+                  شروط الفواتير واكتمال النصاب (تأمين تكلفة الجائزة)
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-slate-300">الحد الأدنى للفاتورة (ج.م) *</label>
+                    <Input
+                      type="number" min="1" value={raffle.rules_config.minAmount}
+                      onChange={(e) => updateRaffleRule("minAmount", Number(e.target.value))}
+                      className="bg-slate-900 border-slate-700 text-white" required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-slate-300">تذكرة إضافية لكل (ج.م)</label>
+                    <Input
+                      type="number" min="1" value={raffle.rules_config.ticketPerAmount}
+                      onChange={(e) => updateRaffleRule("ticketPerAmount", Number(e.target.value))}
+                      className="bg-slate-900 border-slate-700 text-white"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-emerald-300">
+                      تارجت المشتركين المطلوب *
+                    </label>
+                    <Input
+                      type="number" min="1" value={raffle.rules_config.minParticipants}
+                      onChange={(e) => updateRaffleRule("minParticipants", Number(e.target.value))}
+                      className="bg-slate-900 border-emerald-600/60 text-emerald-200 font-bold" required
+                    />
+                  </div>
+
+                  <div>
+                    <label className="block text-[11px] font-semibold mb-1 text-slate-300">موعد نهاية السحب *</label>
+                    <Input
+                      type="datetime-local" value={toLocalInput(raffle.ends_at)}
+                      onChange={(e) => updateRaffle("ends_at", toIso(e.target.value))}
+                      className="bg-slate-900 border-slate-700 text-white" required
+                    />
+                  </div>
+                </div>
+
+                <div className="pt-2 border-t border-slate-800 flex flex-wrap items-center gap-4 text-xs">
+                  <span className="text-slate-400">نظام بدء السحب:</span>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-200">
+                    <input
+                      type="radio" name="drawCondition"
+                      checked={raffle.rules_config.drawConditionType === "count"}
+                      onChange={() => updateRaffleRule("drawConditionType", "count")}
+                      className="accent-emerald-500"
+                    />
+                    فور اكتمال العدد المطلوب ({raffle.rules_config.minParticipants} مشترك)
+                  </label>
+                  <label className="flex items-center gap-1.5 cursor-pointer text-slate-200">
+                    <input
+                      type="radio" name="drawCondition"
+                      checked={raffle.rules_config.drawConditionType === "date"}
+                      onChange={() => updateRaffleRule("drawConditionType", "date")}
+                      className="accent-emerald-500"
+                    />
+                    في التاريخ المحدد فقط
+                  </label>
+                </div>
+              </div>
+
+              <Button
+                type="submit"
+                disabled={busy === "save_raffle"}
+                className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold py-2.5"
+              >
+                <Save className="h-4 w-4 ml-2" />
+                {busy === "save_raffle" ? "جاري الحفظ..." : (editingRaffle ? "تحديث السحب" : "حفظ وإطلاق سحب المشتريات")}
+              </Button>
+            </form>
+          </section>
+        )}
+
+        {/* نموذج مسابقات وتحديات الأسئلة */}
+        {activeTab === "trivia" && (
+          <section className="bg-slate-800/95 rounded-2xl border border-emerald-500/30 p-5 shadow-xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              <h2 className="text-base font-bold text-white flex items-center gap-2">
+                <Brain className="h-5 w-5 text-emerald-400" />
+                {editingTrivia ? "تعديل المسابقة" : "إنشاء مسابقة وتحدي جديد"}
+              </h2>
+              {editingTrivia && (
+                <Button variant="ghost" size="sm" onClick={() => { setEditingTrivia(null); setTrivia(blankTrivia()); }}>
+                  إلغاء التعديل
+                </Button>
+              )}
+            </div>
+
+            <form onSubmit={saveTriviaForm} className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold mb-1 text-slate-300">عنوان المسابقة والتحدي *</label>
+                  <Input
+                    placeholder="مثال: مسابقة الجمعة التفاعلية"
+                    value={trivia.title}
+                    onChange={(e) => updateTrivia("title", e.target.value)}
+                    className="bg-slate-900 border-slate-700 text-white"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold mb-1 text-slate-300">الجائزة المقدمة *</label>
+                  <Input
+                    placeholder="مثال: عبوة منظف هدية / كود خصم 50%"
+                    value={trivia.prize_title}
+                    onChange={(e) => updateTrivia("prize_title", e.target.value)}
+                    className="bg-slate-900 border-slate-700 text-white"
+                    required
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-300">السؤال التفاعلي *</label>
+                <Input
+                  placeholder="مثال: ما هو المكون الأساسي لصناعة الصابون السائل عالي الجودة؟"
+                  value={trivia.question}
+                  onChange={(e) => updateTrivia("question", e.target.value)}
+                  className="bg-slate-900 border-slate-700 text-white"
+                  required
+                />
+              </div>
+
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-700 space-y-3">
+                <label className="block text-xs font-bold text-sky-400">خيارات الإجابة (حدد الدائرة بجانب الإجابة الصحيحة):</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {trivia.options.map((opt, idx) => (
+                    <div key={idx} className="flex items-center gap-2 bg-slate-900 p-2 rounded-lg border border-slate-800">
+                      <input
+                        type="radio"
+                        name="correct_option"
+                        checked={Number(trivia.correct_option_index) === idx}
+                        onChange={() => updateTrivia("correct_option_index", String(idx))}
+                        className="accent-emerald-500 h-4 w-4"
+                      />
+                      <Input
+                        placeholder={`الخيار رقم ${idx + 1}`}
+                        value={opt}
+                        onChange={(e) => updateTriviaOption(idx, e.target.value)}
+                        className="bg-transparent border-0 text-white h-7 text-xs focus-visible:ring-0"
+                        required
+                      />
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              {/* شروط السوشيال ميديا الإلزامية */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-emerald-900/70 space-y-4">
+                <div className="flex items-center justify-between border-b border-slate-800 pb-2">
+                  <h3 className="text-xs font-bold text-amber-400">
+                    شروط السوشيال ميديا الإلزامية لدخول المسابقة
+                  </h3>
+                  <span className="text-[10px] text-emerald-300 bg-emerald-950 px-2 py-0.5 rounded-full border border-emerald-800">
+                    نشر وتفاعل مجاني للصفحة
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-blue-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trivia.social_tasks.requireFacebookShare}
+                        onChange={(e) => updateSocialTask("requireFacebookShare", e.target.checked)}
+                        className="accent-blue-500"
+                      />
+                      متابعة صفحة الفيسبوك والتفاعل مع المنشور
+                    </label>
+                    <Input
+                      placeholder="رابط صفحة المتجر على فيسبوك"
+                      value={trivia.social_tasks.facebookPageUrl}
+                      onChange={(e) => updateSocialTask("facebookPageUrl", e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-xs text-white"
+                    />
+                    <Input
+                      placeholder="رابط بوست المسابقة (لايك وكومنت وشير)"
+                      value={trivia.social_tasks.facebookPostUrl}
+                      onChange={(e) => updateSocialTask("facebookPostUrl", e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-xs text-white"
+                    />
+                  </div>
+
+                  <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-emerald-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trivia.social_tasks.requireWhatsappShare}
+                        onChange={(e) => updateSocialTask("requireWhatsappShare", e.target.checked)}
+                        className="accent-emerald-500"
+                      />
+                      مشاركة المسابقة على واتساب (حالة / جروبات)
+                    </label>
+                    <Input
+                      placeholder="رسالة المشاركة التلقائية على واتساب"
+                      value={trivia.social_tasks.whatsappShareText}
+                      onChange={(e) => updateSocialTask("whatsappShareText", e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-xs text-white"
+                    />
+                  </div>
+
+                  <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-pink-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trivia.social_tasks.requireInstagramFollow}
+                        onChange={(e) => updateSocialTask("requireInstagramFollow", e.target.checked)}
+                        className="accent-pink-500"
+                      />
+                      متابعة حساب الإنستجرام (اختياري)
+                    </label>
+                    <Input
+                      placeholder="رابط حساب إنستجرام الخاص بالمتجر"
+                      value={trivia.social_tasks.instagramUrl}
+                      onChange={(e) => updateSocialTask("instagramUrl", e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-xs text-white"
+                    />
+                  </div>
+
+                  <div className="p-3 bg-slate-900 rounded-lg border border-slate-800 space-y-2">
+                    <label className="flex items-center gap-2 text-xs font-bold text-cyan-400 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trivia.social_tasks.requireTiktokFollow}
+                        onChange={(e) => updateSocialTask("requireTiktokFollow", e.target.checked)}
+                        className="accent-cyan-500"
+                      />
+                      متابعة حساب تيك توك (اختياري)
+                    </label>
+                    <Input
+                      placeholder="رابط حساب تيك توك"
+                      value={trivia.social_tasks.tiktokUrl}
+                      onChange={(e) => updateSocialTask("tiktokUrl", e.target.value)}
+                      className="bg-slate-950 border-slate-700 text-xs text-white"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-300">موعد انتهاء المسابقة *</label>
+                <Input
+                  type="datetime-local"
+                  value={toLocalInput(trivia.ends_at)}
+                  onChange={(e) => updateTrivia("ends_at", toIso(e.target.value))}
+                  className="bg-slate-900 border-slate-700 text-white"
+                  required
+                />
+              </div>
+
+              <Button
+                type="submit"
+                disabled={busy === "save_trivia"}
+                className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold py-2.5"
+              >
+                <Save className="h-4 w-4 ml-2" />
+                {busy === "save_trivia" ? "جاري الحفظ..." : (editingTrivia ? "تحديث المسابقة" : "حفظ ونشر المسابقة")}
+              </Button>
+            </form>
+          </section>
+        )}
+
+        {/* عرض السحوبات والمسابقات النشطة */}
+        <section className="space-y-4">
+          <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
+            <Users className="h-5 w-5 text-indigo-400" />
+            {activeTab === "raffles" ? "سحوبات المشتريات المفتوحة" : "مسابقات الأسئلة النشطة"}
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {activeTab === "raffles" ? (
+              adminData?.raffles?.map((item: any) => {
+                const targetCount = item.rules?.minParticipants || 10;
+                const participantsCount = item.entries_count || 0;
+                const isCountMet = participantsCount >= targetCount;
+                const isDatePassed = new Date(item.ends_at).getTime() <= clock;
+                const canDraw = item.rules?.drawConditionType === "count" ? isCountMet : isDatePassed;
+
+                return (
+                  <div key={item.id} className="p-4 rounded-xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col justify-between space-y-3">
+                    <div>
+                      <div className="flex items-start justify-between gap-2">
+                        <h3 className="font-bold text-white text-sm">{item.title}</h3>
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${canDraw ? "bg-emerald-950 text-emerald-300 border border-emerald-600" : "bg-amber-950 text-amber-300 border border-amber-600"}`}>
+                          {canDraw ? "جاهز للسحب" : "قيد جمع المشتركين"}
+                        </span>
+                      </div>
+                      <p className="text-xs text-amber-400 font-bold mt-1">🎁 {item.prize_name}</p>
+                      <p className="text-xs text-slate-300 mt-1">الحد الأدنى: {item.min_purchase_amount} ج.م | التارجت: {targetCount} مشترك</p>
+
+                      <div className="mt-2.5">
+                        <div className="flex justify-between text-[11px] text-slate-400 mb-1">
+                          <span>المشتركون: {participantsCount}</span>
+                          <span>المطلوب: {targetCount}</span>
+                        </div>
+                        <div className="w-full bg-slate-950 rounded-full h-2 overflow-hidden border border-slate-700">
+                          <div 
+                            className="bg-emerald-500 h-2 transition-all duration-500" 
+                            style={{ width: `${Math.min(100, (participantsCount / targetCount) * 100)}%` }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center justify-between pt-2 border-t border-slate-700 text-xs">
+                      <span className="text-[11px] text-slate-400">ينتهي: {new Date(item.ends_at).toLocaleDateString("ar-EG")}</span>
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          if (!canDraw && !confirm("تنبيه: لم يكتمل العدد المطلوب بعد لتغطية تكلفة الجائزة! هل أنت متأكد من إجراء السحب؟")) return;
+                          setBusy(`draw_${item.id}`);
+                          try {
+                            const res = await startCommunityDraw("purchase", item.id);
+                            setActiveWinnerModal(res);
+                            toast.success("تم إجراء السحب وإعلان الفائز بنجاح!");
+                          } catch (err: any) {
+                            toast.error(errorText(err));
+                          } finally {
+                            setBusy("");
+                          }
+                        }}
+                        disabled={busy === `draw_${item.id}`}
+                        className={`${canDraw ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-700 hover:bg-slate-600"} text-white font-bold text-xs`}
+                      >
+                        <Play className="h-3 w-3 ml-1" /> سحب الفائز الآن
+                      </Button>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              adminData?.contests?.map((contest: any) => (
+                <div key={contest.id} className="p-4 rounded-xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col justify-between space-y-3">
+                  <div>
+                    <div className="flex items-start justify-between gap-2">
+                      <h3 className="font-bold text-white text-sm">{contest.title}</h3>
+                      <span className="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-950 text-emerald-300 border border-emerald-600">
+                        مسابقة تفاعلية
+                      </span>
+                    </div>
+                    <p className="text-xs text-amber-400 font-bold mt-1">🎁 {contest.prize_title}</p>
+                    <p className="text-xs text-slate-300 mt-1 line-clamp-1">❓ {contest.question}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">الإجابات الصحيحة: {contest.correct_count || 0}</p>
+                  </div>
+
+                  <div className="flex items-center justify-between pt-2 border-t border-slate-700 text-xs">
+                    <span className="text-[11px] text-slate-400">ينتهي: {new Date(contest.ends_at).toLocaleDateString("ar-EG")}</span>
+                    <Button
+                      size="sm"
+                      onClick={async () => {
+                        setBusy(`draw_${contest.id}`);
+                        try {
+                          const res = await startCommunityDraw("trivia", contest.id);
+                          setActiveWinnerModal(res);
+                          toast.success("تم السحب من بين أصحاب الإجابات الصحيحة!");
+                        } catch (err: any) {
+                          toast.error(errorText(err));
+                        } finally {
+                          setBusy("");
+                        }
+                      }}
+                      disabled={busy === `draw_${contest.id}`}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                    >
+                      <Play className="h-3 w-3 ml-1" /> سحب فائز المسابقة
+                    </Button>
+                  </div>
+                </div>
+              ))
+            )}
+          </div>
+        </section>
+      </div>
+
+      {activeWinnerModal && (
+        <CommunityLiveWinner
+          draw={activeWinnerModal}
+          onClose={() => {
+            setActiveWinnerModal(null);
+            setRefreshKey((k) => k + 1);
+          }}
+        />
+      )}
+    </main>
+  );
+}
