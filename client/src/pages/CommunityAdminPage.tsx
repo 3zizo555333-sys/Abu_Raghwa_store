@@ -3,8 +3,7 @@ import { useLocation } from "wouter";
 import { 
   ArrowRight, Brain, Gift, Play, RefreshCw, Save, Ticket, Users, 
   Upload, Sparkles, Image as ImageIcon, Trash2, ZoomIn, 
-  Move, Target, Calendar, ShieldCheck, Share2, Facebook, 
-  CheckCircle2, PlusCircle, Globe
+  Move, Target, Calendar, ShieldCheck, Share2, Check 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +12,7 @@ import { toast } from "sonner";
 import { 
   listManagedCommunityEvents, 
   savePurchaseRaffle, 
-  saveTriviaContest,
+  saveTriviaContest, 
   startCommunityDraw, 
   subscribeManagedCommunityChanges 
 } from "@/lib/supabase/communityDraws";
@@ -51,7 +50,7 @@ const defaultRaffleRules: RaffleRuleConfig = {
 
 const defaultSocialTasks: SocialTasksConfig = {
   requireFacebookShare: true,
-  facebookPageUrl: "https://facebook.com/",
+  facebookPageUrl: "",
   facebookPostUrl: "",
   requireWhatsappShare: true,
   whatsappShareText: "ادخل مسابقة متجر رجوة واكسب جوائز فورية!",
@@ -111,15 +110,12 @@ export default function CommunityAdminPage() {
   const [clock, setClock] = useState(Date.now());
   const [activeWinnerModal, setActiveWinnerModal] = useState<any | null>(null);
 
-  // حالة سحب المشتريات
   const [editingRaffle, setEditingRaffle] = useState<{ id: string } | null>(null);
   const [raffle, setRaffle] = useState(blankRaffle());
 
-  // حالة مسابقات الأسئلة
   const [editingTrivia, setEditingTrivia] = useState<{ id: string } | null>(null);
   const [trivia, setTrivia] = useState(blankTrivia());
 
-  // أدوات تحريك وزووم الصور (100% إلى 400%)
   const [imgZoom, setImgZoom] = useState(100);
   const [imgPosX, setImgPosX] = useState(0);
   const [imgPosY, setImgPosY] = useState(0);
@@ -148,7 +144,6 @@ export default function CommunityAdminPage() {
     return subscribeManagedCommunityChanges(data.shopId, () => void refresh());
   }, [data?.shopId, refresh]);
 
-  // تحديث بيانات السحوبات
   const updateRaffle = (key: string, value: any) => {
     setRaffle((current) => ({ ...current, [key]: value }));
   };
@@ -161,7 +156,6 @@ export default function CommunityAdminPage() {
     }));
   };
 
-  // تحديث بيانات المسابقات
   const updateTrivia = (key: string, value: any) => {
     setTrivia((current) => ({ ...current, [key]: value }));
   };
@@ -181,7 +175,6 @@ export default function CommunityAdminPage() {
     });
   };
 
-  // رفع الصور
   const handleFileUpload = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -194,12 +187,11 @@ export default function CommunityAdminPage() {
       setImgZoom(100);
       setImgPosX(0);
       setImgPosY(0);
-      toast.success("تم رفع الصورة، اضبط الموضع واضغط توليد البانر");
+      toast.success("تم اختيار الصورة، اضبط الموضع واضغط توليد البانر");
     };
     reader.readAsDataURL(file);
   };
 
-  // توليد البانر لكلا القسمين
   const renderCanvasBanner = () => {
     const title = activeTab === "raffles" ? raffle.title : trivia.title;
     const prize = activeTab === "raffles" ? raffle.prize_name : trivia.prize_title;
@@ -218,7 +210,6 @@ export default function CommunityAdminPage() {
     canvas.width = 960;
     canvas.height = 480;
 
-    // خلفية راقية
     const bgGradient = ctx.createLinearGradient(0, 0, 960, 480);
     bgGradient.addColorStop(0, "#090d16");
     bgGradient.addColorStop(0.5, "#0f172a");
@@ -230,7 +221,6 @@ export default function CommunityAdminPage() {
     ctx.lineWidth = 2;
     ctx.strokeRect(20, 20, 920, 440);
 
-    // بطاقة الصورة
     const boxX = 50;
     const boxY = 60;
     const boxW = 360;
@@ -241,11 +231,10 @@ export default function CommunityAdminPage() {
     ctx.roundRect(boxX, boxY, boxW, boxH, 20);
     ctx.fill();
 
-    // نصوص البانر
     ctx.textAlign = "right";
     ctx.fillStyle = "#f59e0b";
     ctx.font = "bold 22px sans-serif";
-    ctx.fillText(activeTab === "raffles" ? "🎁 سحب متجر رجوة للمنظفات" : "🧠 تحدي ومسابقات متجر رجوة", 910, 85);
+    ctx.fillText(activeTab === "raffles" ? "🎁 سحب متجر رجوة للمنظفات" : "🧠 مسابقة وتحدي متجر رجوة", 910, 85);
 
     ctx.fillStyle = "#ffffff";
     ctx.font = "bold 38px sans-serif";
@@ -259,15 +248,15 @@ export default function CommunityAdminPage() {
       ctx.fillStyle = "#cbd5e1";
       ctx.font = "22px sans-serif";
       ctx.fillText(`• الحد الأدنى للفاتورة: ${raffle.min_purchase_amount} ج.م`, 910, 265);
-      ctx.fillText(`• تذكرة إضافية لكل: ${raffle.rules_config.ticketPerAmount} ج.م مشتريات`, 910, 310);
+      ctx.fillText(`• فرصة سحب إضافية لكل: ${raffle.rules_config.ticketPerAmount} ج.م مشتريات`, 910, 310);
 
       ctx.fillStyle = "#34d399";
       ctx.font = "bold 24px sans-serif";
-      ctx.fillText(`🎯 السحب يبدأ فور اكتمال: ${raffle.rules_config.minParticipants} مشتركين`, 910, 375);
+      ctx.fillText(`🎯 يبدأ السحب فور اكتمال: ${raffle.rules_config.minParticipants} مشتركين`, 910, 375);
     } else {
       ctx.fillStyle = "#cbd5e1";
       ctx.font = "22px sans-serif";
-      ctx.fillText(`• أجب عن السؤال الرياضي/العام لتدخل السحب فوراً`, 910, 265);
+      ctx.fillText(`• أجب عن السؤال لتدخل السحب على الجائزة فوراً`, 910, 265);
       ctx.fillText(`• شرط الدخول: متابعة صفحتنا ومشاركة المسابقة`, 910, 310);
 
       ctx.fillStyle = "#34d399";
@@ -302,7 +291,7 @@ export default function CommunityAdminPage() {
         if (activeTab === "raffles") updateRaffle("banner_image_url", dataUrl);
         else updateTrivia("banner_image_url", dataUrl);
 
-        toast.success("✨ تم توليد البانر وتطبيق الزووم المختار!");
+        toast.success("تم توليد البانر وتطبيق الزووم المختار بنجاح!");
       };
       img.src = imgSrc;
     } else {
@@ -310,11 +299,10 @@ export default function CommunityAdminPage() {
       if (activeTab === "raffles") updateRaffle("banner_image_url", dataUrl);
       else updateTrivia("banner_image_url", dataUrl);
 
-      toast.success("✨ تم توليد البانر بنجاح!");
+      toast.success("تم توليد البانر بنجاح!");
     }
   };
 
-  // حفظ سحب المشتريات
   const saveRaffleForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!raffle.title.trim()) return toast.error("يرجى إدخال اسم السحب");
@@ -347,7 +335,6 @@ export default function CommunityAdminPage() {
     }
   };
 
-  // حفظ مسابقة الأسئلة مع شروط السوشيال
   const saveTriviaForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!trivia.title.trim()) return toast.error("أدخل عنوان المسابقة");
@@ -390,7 +377,6 @@ export default function CommunityAdminPage() {
 
   return (
     <main dir="rtl" className="min-h-screen bg-slate-900 text-slate-100 pb-16">
-      {/* الرأس والتبويبات */}
       <header className="bg-slate-950 border-b border-indigo-900/50 px-4 py-4 shadow-lg sticky top-0 z-30">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -406,19 +392,20 @@ export default function CommunityAdminPage() {
           </Button>
         </div>
 
-        {/* أزرار التبديل السريع بين السحوبات والمسابقات */}
         <div className="max-w-4xl mx-auto flex gap-2 mt-4">
           <button
+            type="button"
             onClick={() => setActiveTab("raffles")}
-            className={`flex-1 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === "raffles" ? "bg-amber-500 text-slate-950 shadow-md scale-[1.01]" : "bg-slate-800 text-slate-400 hover:text-white"}`}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all border ${activeTab === "raffles" ? "bg-amber-500 border-amber-400 text-slate-950 shadow-md" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
           >
             <Ticket className="h-4 w-4" /> 1. سحوبات المشتريات (الفواتير واكتمال العدد)
           </button>
           <button
+            type="button"
             onClick={() => setActiveTab("trivia")}
-            className={`flex-1 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === "trivia" ? "bg-emerald-500 text-slate-950 shadow-md scale-[1.01]" : "bg-slate-800 text-slate-400 hover:text-white"}`}
+            className={`flex-1 py-2.5 px-3 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all border ${activeTab === "trivia" ? "bg-emerald-500 border-emerald-400 text-slate-950 shadow-md" : "bg-slate-800 border-slate-700 text-slate-300 hover:text-white"}`}
           >
-            <Brain className="h-4 w-4" /> 2. مسابقات الأسئلة (نشر السوشيال ومتابعة الصفحة)
+            <Brain className="h-4 w-4" /> 2. مسابقات وتحديات الأسئلة
           </button>
         </div>
       </header>
@@ -428,13 +415,10 @@ export default function CommunityAdminPage() {
       <div className="max-w-4xl mx-auto p-4 space-y-6 mt-2">
         {error && <div className="p-3 bg-red-950/80 border border-red-700 text-red-200 rounded-xl text-sm">{error}</div>}
 
-        {/* ============================================================== */}
-        {/* محرر الصور والزووم حتى 400% المشترك لكل من السحوبات والمسابقات */}
-        {/* ============================================================== */}
         <section className="bg-slate-800/90 rounded-2xl border border-indigo-500/30 p-4 shadow-xl space-y-4">
           <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
             <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-              <ImageIcon className="h-4 w-4" /> صورة الجائزة ومحرر الزووم (100% - 400%)
+              <ImageIcon className="h-4 w-4" /> صورة الجائزة وضبط الزووم (100% - 400%)
             </label>
             <input
               type="file"
@@ -530,4 +514,15 @@ export default function CommunityAdminPage() {
 
           {currentBannerImg && (
             <div className="pt-2 border-t border-slate-800">
-              <span className="text-[11px] font-se
+              <span className="text-[11px] font-semibold text-emerald-400 block mb-1.5">معاينة البانر الإعلاني المعتمد:</span>
+              <div className="h-36 rounded-xl overflow-hidden border border-slate-700 bg-slate-950">
+                <img src={currentBannerImg} alt="البانر" className="w-full h-full object-cover" />
+              </div>
+            </div>
+          )}
+        </section>
+
+        {activeTab === "raffles" && (
+          <section className="bg-slate-800/95 rounded-2xl border border-indigo-500/30 p-5 shadow-xl space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-700 pb-3">
+              
