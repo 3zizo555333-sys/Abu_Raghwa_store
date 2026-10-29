@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { 
   ArrowRight, Brain, Gift, Play, RefreshCw, Save, Ticket, Users, 
-  Upload, Sparkles, Image as ImageIcon, Trash2, Check 
+  Upload, Sparkles, Image as ImageIcon, Trash2, ZoomIn, 
+  Move, Target, Calendar, ShieldCheck, Share2, Facebook, 
+  CheckCircle2, PlusCircle, Globe
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +13,7 @@ import { toast } from "sonner";
 import { 
   listManagedCommunityEvents, 
   savePurchaseRaffle, 
+  saveTriviaContest,
   startCommunityDraw, 
   subscribeManagedCommunityChanges 
 } from "@/lib/supabase/communityDraws";
@@ -22,12 +25,40 @@ interface RaffleRuleConfig {
   minAmount: number;
   ticketPerAmount: number;
   allowMultipleEntries: boolean;
+  minParticipants: number;
+  drawConditionType: "count" | "date" | "both";
 }
 
-const defaultRules: RaffleRuleConfig = {
+interface SocialTasksConfig {
+  requireFacebookShare: boolean;
+  facebookPageUrl: string;
+  facebookPostUrl: string;
+  requireWhatsappShare: boolean;
+  whatsappShareText: string;
+  requireInstagramFollow: boolean;
+  instagramUrl: string;
+  requireTiktokFollow: boolean;
+  tiktokUrl: string;
+}
+
+const defaultRaffleRules: RaffleRuleConfig = {
   minAmount: 100,
   ticketPerAmount: 50,
-  allowMultipleEntries: true
+  allowMultipleEntries: true,
+  minParticipants: 10,
+  drawConditionType: "count"
+};
+
+const defaultSocialTasks: SocialTasksConfig = {
+  requireFacebookShare: true,
+  facebookPageUrl: "https://facebook.com/",
+  facebookPostUrl: "",
+  requireWhatsappShare: true,
+  whatsappShareText: "ادخل مسابقة متجر رجوة واكسب جوائز فورية!",
+  requireInstagramFollow: false,
+  instagramUrl: "",
+  requireTiktokFollow: false,
+  tiktokUrl: ""
 };
 
 const blankRaffle = () => ({
@@ -39,7 +70,20 @@ const blankRaffle = () => ({
   prize_description: "",
   min_purchase_amount: "100",
   ends_at: toIso(new Date(Date.now() + 7 * 86400000)),
-  rules_config: { ...defaultRules }
+  rules_config: { ...defaultRaffleRules }
+});
+
+const blankTrivia = () => ({
+  title: "",
+  question: "",
+  options: ["", "", "", ""],
+  correct_option_index: "0",
+  prize_title: "",
+  prize_image_url: "",
+  banner_image_url: "",
+  prize_description: "",
+  ends_at: toIso(new Date(Date.now() + 3 * 86400000)),
+  social_tasks: { ...defaultSocialTasks }
 });
 
 function toLocalInput(value: string) {
@@ -54,22 +98,33 @@ function toIso(value: string) {
 
 function errorText(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return message.includes("duplicate") ? "هذا السحب موجود مسبقاً" : message;
+  return message.includes("duplicate") ? "هذا العنصر مسجل مسبقاً" : message;
 }
 
 export default function CommunityAdminPage() {
   const [, navigate] = useLocation();
+  const [activeTab, setActiveTab] = useState<"raffles" | "trivia">("raffles");
   const [data, setData] = useState<AdminData | null>(null);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const [busy, setBusy] = useState("");
   const [clock, setClock] = useState(Date.now());
-  const [editingRaffle, setEditingRaffle] = useState<{ id: string } | null>(null);
-  const [raffle, setRaffle] = useState(blankRaffle());
   const [activeWinnerModal, setActiveWinnerModal] = useState<any | null>(null);
 
+  // حالة سحب المشتريات
+  const [editingRaffle, setEditingRaffle] = useState<{ id: string } | null>(null);
+  const [raffle, setRaffle] = useState(blankRaffle());
+
+  // حالة مسابقات الأسئلة
+  const [editingTrivia, setEditingTrivia] = useState<{ id: string } | null>(null);
+  const [trivia, setTrivia] = useState(blankTrivia());
+
+  // أدوات تحريك وزووم الصور (100% إلى 400%)
+  const [imgZoom, setImgZoom] = useState(100);
+  const [imgPosX, setImgPosX] = useState(0);
+  const [imgPosY, setImgPosY] = useState(0);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const bannerInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const refresh = useCallback(async () => {
@@ -93,11 +148,12 @@ export default function CommunityAdminPage() {
     return subscribeManagedCommunityChanges(data.shopId, () => void refresh());
   }, [data?.shopId, refresh]);
 
+  // تحديث بيانات السحوبات
   const updateRaffle = (key: string, value: any) => {
     setRaffle((current) => ({ ...current, [key]: value }));
   };
 
-  const updateRuleConfig = (key: keyof RaffleRuleConfig, value: any) => {
+  const updateRaffleRule = (key: keyof RaffleRuleConfig, value: any) => {
     setRaffle((current) => ({
       ...current,
       rules_config: { ...current.rules_config, [key]: value },
@@ -105,24 +161,52 @@ export default function CommunityAdminPage() {
     }));
   };
 
-  const handleFileUpload = (file: File, type: "prize" | "banner") => {
+  // تحديث بيانات المسابقات
+  const updateTrivia = (key: string, value: any) => {
+    setTrivia((current) => ({ ...current, [key]: value }));
+  };
+
+  const updateSocialTask = (key: keyof SocialTasksConfig, value: any) => {
+    setTrivia((current) => ({
+      ...current,
+      social_tasks: { ...current.social_tasks, [key]: value }
+    }));
+  };
+
+  const updateTriviaOption = (index: number, val: string) => {
+    setTrivia((current) => {
+      const opts = [...current.options];
+      opts[index] = val;
+      return { ...current, options: opts };
+    });
+  };
+
+  // رفع الصور
+  const handleFileUpload = (file: File) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const res = e.target?.result as string;
-      if (type === "prize") {
+      if (activeTab === "raffles") {
         updateRaffle("prize_image_url", res);
-        toast.success("تم اختيار صورة الجائزة بنجاح");
       } else {
-        updateRaffle("banner_image_url", res);
-        toast.success("تم اختيار بانر السحب بنجاح");
+        updateTrivia("prize_image_url", res);
       }
+      setImgZoom(100);
+      setImgPosX(0);
+      setImgPosY(0);
+      toast.success("تم رفع الصورة، اضبط الموضع واضغط توليد البانر");
     };
     reader.readAsDataURL(file);
   };
 
-  const generateAutoBanner = () => {
-    if (!raffle.prize_name && !raffle.title) {
-      toast.error("يرجى كتابة عنوان السحب واسم الجائزة أولاً");
+  // توليد البانر لكلا القسمين
+  const renderCanvasBanner = () => {
+    const title = activeTab === "raffles" ? raffle.title : trivia.title;
+    const prize = activeTab === "raffles" ? raffle.prize_name : trivia.prize_title;
+    const imgSrc = activeTab === "raffles" ? raffle.prize_image_url : trivia.prize_image_url;
+
+    if (!title || !prize) {
+      toast.error("يرجى إدخال عنوان الفعالية واسم الجائزة أولاً");
       return;
     }
 
@@ -131,47 +215,106 @@ export default function CommunityAdminPage() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    canvas.width = 800;
-    canvas.height = 400;
+    canvas.width = 960;
+    canvas.height = 480;
 
-    // خلفية كحلية أنيقة
-    ctx.fillStyle = "#0f172a";
-    ctx.fillRect(0, 0, 800, 400);
+    // خلفية راقية
+    const bgGradient = ctx.createLinearGradient(0, 0, 960, 480);
+    bgGradient.addColorStop(0, "#090d16");
+    bgGradient.addColorStop(0.5, "#0f172a");
+    bgGradient.addColorStop(1, activeTab === "raffles" ? "#1e1b4b" : "#14332b");
+    ctx.fillStyle = bgGradient;
+    ctx.fillRect(0, 0, 960, 480);
 
-    // نصوص البانر
-    ctx.fillStyle = "#f59e0b";
-    ctx.font = "bold 26px sans-serif";
-    ctx.textAlign = "right";
-    ctx.fillText("سحب متجر أبو راغوة 🎁", 750, 60);
+    ctx.strokeStyle = "rgba(245, 158, 11, 0.2)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(20, 20, 920, 440);
+
+    // بطاقة الصورة
+    const boxX = 50;
+    const boxY = 60;
+    const boxW = 360;
+    const boxH = 360;
 
     ctx.fillStyle = "#ffffff";
-    ctx.font = "bold 40px sans-serif";
-    ctx.fillText(raffle.title || "سحب المشتريات", 750, 130);
+    ctx.beginPath();
+    ctx.roundRect(boxX, boxY, boxW, boxH, 20);
+    ctx.fill();
+
+    // نصوص البانر
+    ctx.textAlign = "right";
+    ctx.fillStyle = "#f59e0b";
+    ctx.font = "bold 22px sans-serif";
+    ctx.fillText(activeTab === "raffles" ? "🎁 سحب متجر رجوة للمنظفات" : "🧠 تحدي ومسابقات متجر رجوة", 910, 85);
+
+    ctx.fillStyle = "#ffffff";
+    ctx.font = "bold 38px sans-serif";
+    ctx.fillText(title, 910, 145);
 
     ctx.fillStyle = "#38bdf8";
-    ctx.font = "bold 28px sans-serif";
-    ctx.fillText(`الجائزة: ${raffle.prize_name || "جائزة مميزة"}`, 750, 190);
+    ctx.font = "bold 30px sans-serif";
+    ctx.fillText(`الجائزة: ${prize}`, 910, 205);
 
-    ctx.fillStyle = "#94a3b8";
-    ctx.font = "20px sans-serif";
-    ctx.fillText(`الحد الأدنى للفاتورة: ${raffle.min_purchase_amount} ج.م`, 750, 250);
-    ctx.fillText(`تذكرة إضافية لكل ${raffle.rules_config.ticketPerAmount} ج.م`, 750, 290);
+    if (activeTab === "raffles") {
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "22px sans-serif";
+      ctx.fillText(`• الحد الأدنى للفاتورة: ${raffle.min_purchase_amount} ج.م`, 910, 265);
+      ctx.fillText(`• تذكرة إضافية لكل: ${raffle.rules_config.ticketPerAmount} ج.م مشتريات`, 910, 310);
 
-    // دمج صورة الجائزة إن وجدت
-    if (raffle.prize_image_url) {
+      ctx.fillStyle = "#34d399";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText(`🎯 السحب يبدأ فور اكتمال: ${raffle.rules_config.minParticipants} مشتركين`, 910, 375);
+    } else {
+      ctx.fillStyle = "#cbd5e1";
+      ctx.font = "22px sans-serif";
+      ctx.fillText(`• أجب عن السؤال الرياضي/العام لتدخل السحب فوراً`, 910, 265);
+      ctx.fillText(`• شرط الدخول: متابعة صفحتنا ومشاركة المسابقة`, 910, 310);
+
+      ctx.fillStyle = "#34d399";
+      ctx.font = "bold 24px sans-serif";
+      ctx.fillText(`📣 شارك المسابقة واكسب الجائزة مجاناً!`, 910, 375);
+    }
+
+    if (imgSrc) {
       const img = new Image();
       img.onload = () => {
-        ctx.drawImage(img, 50, 60, 280, 280);
-        updateRaffle("banner_image_url", canvas.toDataURL("image/jpeg", 0.9));
-        toast.success("تم تصميم البانر ودمج صورة الجائزة بنجاح!");
+        ctx.save();
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 20);
+        ctx.clip();
+
+        const scale = imgZoom / 100;
+        const drawW = boxW * scale;
+        const drawH = boxH * scale;
+        const drawX = boxX + (boxW - drawW) / 2 + imgPosX;
+        const drawY = boxY + (boxH - drawH) / 2 + imgPosY;
+
+        ctx.drawImage(img, drawX, drawY, drawW, drawH);
+        ctx.restore();
+
+        ctx.strokeStyle = "#f59e0b";
+        ctx.lineWidth = 4;
+        ctx.beginPath();
+        ctx.roundRect(boxX, boxY, boxW, boxH, 20);
+        ctx.stroke();
+
+        const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+        if (activeTab === "raffles") updateRaffle("banner_image_url", dataUrl);
+        else updateTrivia("banner_image_url", dataUrl);
+
+        toast.success("✨ تم توليد البانر وتطبيق الزووم المختار!");
       };
-      img.src = raffle.prize_image_url;
+      img.src = imgSrc;
     } else {
-      updateRaffle("banner_image_url", canvas.toDataURL("image/jpeg", 0.9));
-      toast.success("تم تصميم البانر التلقائي بنجاح!");
+      const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
+      if (activeTab === "raffles") updateRaffle("banner_image_url", dataUrl);
+      else updateTrivia("banner_image_url", dataUrl);
+
+      toast.success("✨ تم توليد البانر بنجاح!");
     }
   };
 
+  // حفظ سحب المشتريات
   const saveRaffleForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!raffle.title.trim()) return toast.error("يرجى إدخال اسم السحب");
@@ -193,7 +336,7 @@ export default function CommunityAdminPage() {
     setBusy("save_raffle");
     try {
       await savePurchaseRaffle(payload as any);
-      toast.success(editingRaffle ? "تم تعديل السحب بنجاح" : "تم إطلاق السحب بنجاح!");
+      toast.success(editingRaffle ? "تم تعديل السحب بنجاح" : "تم إطلاق سحب المشتريات بنجاح!");
       setEditingRaffle(null);
       setRaffle(blankRaffle());
       setRefreshKey((k) => k + 1);
@@ -204,269 +347,187 @@ export default function CommunityAdminPage() {
     }
   };
 
+  // حفظ مسابقة الأسئلة مع شروط السوشيال
+  const saveTriviaForm = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!trivia.title.trim()) return toast.error("أدخل عنوان المسابقة");
+    if (!trivia.question.trim()) return toast.error("أدخل سؤال المسابقة");
+    if (trivia.options.some((o) => !o.trim())) return toast.error("يرجى ملء جميع الخيارات الأربعة");
+    if (!trivia.ends_at) return toast.error("حدد موعد انتهاء المسابقة");
+
+    const payload = {
+      ...(editingTrivia ? { id: editingTrivia.id } : {}),
+      title: trivia.title,
+      question: trivia.question,
+      options: trivia.options,
+      correct_option_index: Number(trivia.correct_option_index) || 0,
+      prize_title: trivia.prize_title || "هدية مجانية",
+      prize_image_url: trivia.prize_image_url,
+      prize_description: trivia.prize_description,
+      banner_image_url: trivia.banner_image_url,
+      ends_at: trivia.ends_at,
+      rules: {
+        social_tasks: trivia.social_tasks
+      }
+    };
+
+    setBusy("save_trivia");
+    try {
+      await saveTriviaContest(payload as any);
+      toast.success(editingTrivia ? "تم تعديل المسابقة بنجاح" : "تم نشر المسابقة وتفعيل شروط المشاركة بنجاح!");
+      setEditingTrivia(null);
+      setTrivia(blankTrivia());
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const currentPrizeImg = activeTab === "raffles" ? raffle.prize_image_url : trivia.prize_image_url;
+  const currentBannerImg = activeTab === "raffles" ? raffle.banner_image_url : trivia.banner_image_url;
+
   return (
-    <main dir="rtl" className="min-h-screen bg-slate-50 text-slate-900 pb-16">
-      <header className="bg-slate-900 text-white px-4 py-4 shadow-md">
+    <main dir="rtl" className="min-h-screen bg-slate-900 text-slate-100 pb-16">
+      {/* الرأس والتبويبات */}
+      <header className="bg-slate-950 border-b border-indigo-900/50 px-4 py-4 shadow-lg sticky top-0 z-30">
         <div className="max-w-4xl mx-auto flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Button variant="ghost" size="sm" onClick={() => navigate("/")} className="text-slate-300">
               <ArrowRight className="h-5 w-5 ml-1" /> المتجر
             </Button>
             <h1 className="text-lg md:text-xl font-bold text-amber-400 flex items-center gap-2">
-              <Gift className="h-5 w-5" /> إدارة سحوبات المتجر
+              <Gift className="h-5 w-5" /> إدارة السحوبات والمسابقات
             </h1>
           </div>
-          <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)} className="text-xs bg-slate-800 border-slate-700">
+          <Button variant="outline" size="sm" onClick={() => setRefreshKey(k => k + 1)} className="border-indigo-700 text-indigo-200">
             <RefreshCw className="h-3.5 w-3.5 ml-1" /> تحديث
           </Button>
+        </div>
+
+        {/* أزرار التبديل السريع بين السحوبات والمسابقات */}
+        <div className="max-w-4xl mx-auto flex gap-2 mt-4">
+          <button
+            onClick={() => setActiveTab("raffles")}
+            className={`flex-1 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === "raffles" ? "bg-amber-500 text-slate-950 shadow-md scale-[1.01]" : "bg-slate-800 text-slate-400 hover:text-white"}`}
+          >
+            <Ticket className="h-4 w-4" /> 1. سحوبات المشتريات (الفواتير واكتمال العدد)
+          </button>
+          <button
+            onClick={() => setActiveTab("trivia")}
+            className={`flex-1 py-2 px-4 rounded-xl text-xs md:text-sm font-bold flex items-center justify-center gap-2 transition-all ${activeTab === "trivia" ? "bg-emerald-500 text-slate-950 shadow-md scale-[1.01]" : "bg-slate-800 text-slate-400 hover:text-white"}`}
+          >
+            <Brain className="h-4 w-4" /> 2. مسابقات الأسئلة (نشر السوشيال ومتابعة الصفحة)
+          </button>
         </div>
       </header>
 
       <canvas ref={canvasRef} className="hidden" />
 
       <div className="max-w-4xl mx-auto p-4 space-y-6 mt-2">
-        {error && <div className="p-3 bg-red-100 text-red-700 rounded-lg text-sm">{error}</div>}
+        {error && <div className="p-3 bg-red-950/80 border border-red-700 text-red-200 rounded-xl text-sm">{error}</div>}
 
-        <section className="bg-white rounded-2xl border border-amber-200 p-5 shadow-sm space-y-5">
-          <div className="flex items-center justify-between border-b pb-3">
-            <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-              <Ticket className="h-5 w-5 text-amber-500" />
-              {editingRaffle ? "تعديل السحب" : "إنشاء سحب مشتريات جديد"}
-            </h2>
-            {editingRaffle && (
-              <Button variant="ghost" size="sm" onClick={() => { setEditingRaffle(null); setRaffle(blankRaffle()); }}>
-                إلغاء
-              </Button>
-            )}
-          </div>
-
-          <form onSubmit={saveRaffleForm} className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-slate-700">عنوان السحب *</label>
-                <Input
-                  placeholder="مثال: سحب العيد الأكبر"
-                  value={raffle.title}
-                  onChange={(e) => updateRaffle("title", e.target.value)}
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold mb-1 text-slate-700">اسم الجائزة *</label>
-                <Input
-                  placeholder="مثال: غسالة أوتوماتيك / بوكس منظفات رجوة"
-                  value={raffle.prize_name}
-                  onChange={(e) => updateRaffle("prize_name", e.target.value)}
-                  required
-                />
-              </div>
-            </div>
-
-            <div>
-              <label className="block text-xs font-semibold mb-1 text-slate-700">تفاصيل ووصف السحب</label>
-              <Textarea
-                placeholder="اكتب رسالة للعملاء عن طريقة استلام الجائزة وشروطها..."
-                value={raffle.description}
-                onChange={(e) => updateRaffle("description", e.target.value)}
-                rows={2}
-              />
-            </div>
-
-            {/* أدوات اختيار وتوليد الصور */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 p-4 rounded-xl bg-slate-50 border border-slate-200">
-              {/* صورة الجائزة */}
-              <div>
-                <label className="block text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5">
-                  <ImageIcon className="h-4 w-4 text-amber-500" /> صورة الجائزة
-                </label>
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={fileInputRef}
-                  className="hidden"
-                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "prize")}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full bg-white mb-2"
-                >
-                  <Upload className="h-4 w-4 ml-1.5 text-blue-500" /> اختيار صورة للجائزة
-                </Button>
-
-                {raffle.prize_image_url ? (
-                  <div className="relative h-32 rounded-lg border bg-white flex items-center justify-center overflow-hidden">
-                    <img src={raffle.prize_image_url} alt="الجائزة" className="max-h-full object-contain" />
-                    <button
-                      type="button"
-                      onClick={() => updateRaffle("prize_image_url", "")}
-                      className="absolute top-2 left-2 p-1 bg-red-600 text-white rounded-full"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="h-32 rounded-lg border border-dashed flex items-center justify-center text-xs text-slate-400">
-                    لم يتم تحديد صورة
-                  </div>
-                )}
-              </div>
-
-              {/* بانر السحب */}
-              <div>
-                <div className="flex items-center justify-between mb-2">
-                  <label className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
-                    <Sparkles className="h-4 w-4 text-indigo-500" /> بانر السحب
-                  </label>
-                  <Button
-                    type="button"
-                    size="sm"
-                    onClick={generateAutoBanner}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-7 px-2"
-                  >
-                    توليد بانر تلقائي
-                  </Button>
-                </div>
-
-                <input
-                  type="file"
-                  accept="image/*"
-                  ref={bannerInputRef}
-                  className="hidden"
-                  onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0], "banner")}
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => bannerInputRef.current?.click()}
-                  className="w-full bg-white mb-2"
-                >
-                  <Upload className="h-4 w-4 ml-1.5 text-indigo-500" /> رفع بانر مخصص
-                </Button>
-
-                {raffle.banner_image_url ? (
-                  <div className="relative h-32 rounded-lg border bg-white flex items-center justify-center overflow-hidden">
-                    <img src={raffle.banner_image_url} alt="بانر" className="w-full h-full object-cover" />
-                    <button
-                      type="button"
-                      onClick={() => updateRaffle("banner_image_url", "")}
-                      className="absolute top-2 left-2 p-1 bg-red-600 text-white rounded-full"
-                    >
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </div>
-                ) : (
-                  <div className="h-32 rounded-lg border border-dashed flex items-center justify-center text-xs text-slate-400">
-                    اضغط "توليد بانر تلقائي" لتصميمه فوراً
-                  </div>
-                )}
-              </div>
-            </div>
-
-            {/* شروط الدخول السلسة بدون JSON */}
-            <div className="p-4 rounded-xl bg-amber-50/60 border border-amber-200 grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div>
-                <label className="block text-xs font-bold mb-1 text-slate-700">الحد الأدنى للفاتورة (ج.م) *</label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={raffle.rules_config.minAmount}
-                  onChange={(e) => updateRuleConfig("minAmount", Number(e.target.value))}
-                  className="bg-white"
-                  required
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold mb-1 text-slate-700">تذكرة إضافية لكل (ج.م)</label>
-                <Input
-                  type="number"
-                  min="1"
-                  value={raffle.rules_config.ticketPerAmount}
-                  onChange={(e) => updateRuleConfig("ticketPerAmount", Number(e.target.value))}
-                  className="bg-white"
-                />
-              </div>
-
-              <div>
-                <label className="block text-xs font-bold mb-1 text-slate-700">تاريخ ووقت انتهاء السحب *</label>
-                <Input
-                  type="datetime-local"
-                  value={toLocalInput(raffle.ends_at)}
-                  onChange={(e) => updateRaffle("ends_at", toIso(e.target.value))}
-                  className="bg-white"
-                  required
-                />
-              </div>
-            </div>
-
+        {/* ============================================================== */}
+        {/* محرر الصور والزووم حتى 400% المشترك لكل من السحوبات والمسابقات */}
+        {/* ============================================================== */}
+        <section className="bg-slate-800/90 rounded-2xl border border-indigo-500/30 p-4 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
+            <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
+              <ImageIcon className="h-4 w-4" /> صورة الجائزة ومحرر الزووم (100% - 400%)
+            </label>
+            <input
+              type="file"
+              accept="image/*"
+              ref={fileInputRef}
+              className="hidden"
+              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+            />
             <Button
-              type="submit"
-              disabled={busy === "save_raffle"}
-              className="w-full bg-amber-600 hover:bg-amber-700 text-white font-bold py-2.5"
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={() => fileInputRef.current?.click()}
+              className="border-slate-700 text-slate-200 hover:bg-slate-700 text-xs"
             >
-              <Save className="h-4 w-4 ml-2" />
-              {busy === "save_raffle" ? "جاري الحفظ..." : (editingRaffle ? "تحديث السحب" : "إنشاء وحفظ السحب")}
+              <Upload className="h-3.5 w-3.5 ml-1 text-blue-400" /> اختيار صورة من المعرض
             </Button>
-          </form>
-        </section>
-
-        {/* قائمة السحوبات */}
-        <section className="space-y-3">
-          <h2 className="text-base font-bold text-slate-800 flex items-center gap-2">
-            <Users className="h-5 w-5 text-slate-600" /> السحوبات الحالية
-          </h2>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            {data?.raffles?.map((item: any) => (
-              <div key={item.id} className="p-4 rounded-xl bg-white border border-slate-200 shadow-sm flex flex-col justify-between space-y-3">
-                <div>
-                  <h3 className="font-bold text-slate-800">{item.title}</h3>
-                  <p className="text-xs text-amber-600 font-semibold mt-1">🎁 {item.prize_name}</p>
-                  <p className="text-xs text-slate-500 mt-1">الحد الأدنى: {item.min_purchase_amount} ج.م</p>
-                </div>
-
-                <div className="flex items-center justify-between pt-2 border-t text-xs">
-                  <span className="text-slate-400">ينتهي: {new Date(item.ends_at).toLocaleDateString("ar-EG")}</span>
-                  <Button
-                    size="sm"
-                    onClick={async () => {
-                      setBusy(`draw_${item.id}`);
-                      try {
-                        const res = await startCommunityDraw("purchase", item.id);
-                        setActiveWinnerModal(res);
-                        toast.success("تم السحب بنجاح!");
-                      } catch (err: any) {
-                        toast.error(errorText(err));
-                      } finally {
-                        setBusy("");
-                      }
-                    }}
-                    disabled={busy === `draw_${item.id}`}
-                    className="bg-slate-900 text-white hover:bg-slate-800"
-                  >
-                    <Play className="h-3.5 w-3.5 ml-1" /> سحب الفائز
-                  </Button>
-                </div>
-              </div>
-            ))}
           </div>
-        </section>
-      </div>
 
-      {activeWinnerModal && (
-        <CommunityLiveWinner
-          draw={activeWinnerModal}
-          onClose={() => {
-            setActiveWinnerModal(null);
-            setRefreshKey((k) => k + 1);
-          }}
-        />
-      )}
-    </main>
-  );
-                  }
+          {currentPrizeImg ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="relative h-44 rounded-xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden">
+                <img 
+                  src={currentPrizeImg} 
+                  alt="معاينة" 
+                  style={{
+                    transform: `scale(${imgZoom / 100}) translate(${imgPosX / 2}px, ${imgPosY / 2}px)`,
+                    transition: "transform 0.1s ease"
+                  }}
+                  className="max-h-full object-contain" 
+                />
+                <button
+                  type="button"
+                  onClick={() => activeTab === "raffles" ? updateRaffle("prize_image_url", "") : updateTrivia("prize_image_url", "")}
+                  className="absolute top-2 left-2 p-1.5 bg-red-600/80 text-white rounded-full hover:bg-red-600"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+
+              <div className="space-y-3 p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs">
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="flex items-center gap-1 text-slate-300"><ZoomIn className="h-3.5 w-3.5 text-amber-400" /> تكبير الصورة (Zoom)</span>
+                    <span className="font-bold text-amber-400">{imgZoom}%</span>
+                  </div>
+                  <input 
+                    type="range" min="100" max="400" step="5" value={imgZoom} 
+                    onChange={(e) => setImgZoom(Number(e.target.value))}
+                    className="w-full accent-amber-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="flex items-center gap-1 text-slate-300"><Move className="h-3.5 w-3.5 text-sky-400" /> تحريك أفقي (يمين / يسار)</span>
+                    <span className="text-sky-400">{imgPosX}px</span>
+                  </div>
+                  <input 
+                    type="range" min="-150" max="150" value={imgPosX} 
+                    onChange={(e) => setImgPosX(Number(e.target.value))}
+                    className="w-full accent-sky-500"
+                  />
+                </div>
+
+                <div>
+                  <div className="flex justify-between mb-1">
+                    <span className="flex items-center gap-1 text-slate-300"><Move className="h-3.5 w-3.5 text-emerald-400" /> تحريك رأسي (فوق / تحت)</span>
+                    <span className="text-emerald-400">{imgPosY}px</span>
+                  </div>
+                  <input 
+                    type="range" min="-150" max="150" value={imgPosY} 
+                    onChange={(e) => setImgPosY(Number(e.target.value))}
+                    className="w-full accent-emerald-500"
+                  />
+                </div>
+
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={renderCanvasBanner}
+                  className="w-full bg-gradient-to-r from-amber-600 to-amber-500 text-white font-bold h-8 mt-2"
+                >
+                  <Sparkles className="h-3.5 w-3.5 ml-1" /> تطبيق التعديلات وتوليد البانر
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="h-24 border border-dashed border-slate-700 rounded-xl flex items-center justify-center text-xs text-slate-400">
+              ارفع صورة الجائزة لتشغيل أداة التكبير حتى 400% وتوليد البانر
+            </div>
+          )}
+
+          {currentBannerImg && (
+            <div className="pt-2 border-t border-slate-800">
+              <span className="text-[11px] font-se
