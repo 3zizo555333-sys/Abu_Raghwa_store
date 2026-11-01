@@ -2,7 +2,7 @@ begin;
 
 alter table public.trivia_contests add column if not exists question_image_url text;
 alter table public.trivia_contests add column if not exists banner_image_url text;
-
+drop view if exists public.public_trivia_contests;
 create or replace view public.public_trivia_contests with (security_barrier=true) as
   select id,shop_id,title,question,question_image_url,options,prize_title,prize_image_url,banner_image_url,ends_at,status,created_at
   from public.trivia_contests
