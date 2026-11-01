@@ -10,8 +10,8 @@ export type PurchaseRaffle = {
   ends_at: string; status: DrawStatus; created_at: string; updated_at: string;
 };
 export type TriviaContest = {
-  id: string; shop_id: string; title: string; question: string; options: string[];
-  prize_title: string; prize_image_url: string | null; ends_at: string; status: DrawStatus; created_at: string; updated_at: string;
+  id: string; shop_id: string; title: string; question: string; question_image_url: string | null; options: string[];
+  prize_title: string; prize_image_url: string | null; banner_image_url: string | null; ends_at: string; status: DrawStatus; created_at: string; updated_at: string;
 };
 export type LiveDrawStage = {
   id: string; shop_id: string; event_type: DrawEventType; event_id: string; title: string; prize_title: string;
@@ -88,7 +88,7 @@ export async function saveTriviaContest(input: Partial<TriviaContest> & { title:
   const { shopId, role } = await getActiveShopContext(true); assertDrawManager(role);
   const options = input.options.map(value => value.trim()).filter(Boolean);
   if (options.length < 2 || input.correct_option_index < 0 || input.correct_option_index >= options.length) throw new Error("أدخل خيارين صحيحين على الأقل وحدد الإجابة الصحيحة.");
-  const payload = { shop_id: shopId, title: input.title.trim(), question: input.question.trim(), options, correct_option_index: input.correct_option_index, prize_title: input.prize_title.trim(), prize_image_url: input.prize_image_url || null, ends_at: input.ends_at, status: input.status || "active" };
+  const payload = { shop_id: shopId, title: input.title.trim(), question: input.question.trim(), question_image_url: input.question_image_url || null, options, correct_option_index: input.correct_option_index, prize_title: input.prize_title.trim(), prize_image_url: input.prize_image_url || null, banner_image_url: input.banner_image_url || null, ends_at: input.ends_at, status: input.status || "active" };
   const query = input.id ? client().from("trivia_contests").update(payload).eq("id", input.id).eq("shop_id", shopId) : client().from("trivia_contests").insert(payload);
   return requireCloudResult(await query.select("*").single()) as TriviaContest;
 }
