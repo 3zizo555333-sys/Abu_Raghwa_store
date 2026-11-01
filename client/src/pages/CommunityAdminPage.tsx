@@ -2,12 +2,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { 
   ArrowRight, Brain, Gift, Play, RefreshCw, Save, Ticket, Users, 
-  Upload, Sparkles, Image as ImageIcon, Trash2, Check 
+  Upload, Sparkles, Image as ImageIcon, Trash2, Check, Edit, Wand2 
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
+import * as communityModule from "@/lib/supabase/communityDraws";
 import { 
   listManagedCommunityEvents, 
   savePurchaseRaffle, 
@@ -16,7 +17,6 @@ import {
   subscribeManagedCommunityChanges 
 } from "@/lib/supabase/communityDraws";
 import { CommunityLiveWinner } from "@/components/CommunityLiveWinner";
-import { CommunityImageStudio } from "@/components/CommunityImageStudio";
 import { uploadCommunityImage } from "@/lib/supabase/communityImages";
 import { removeProductBackground } from "@/lib/productBackgroundRemoval";
 
@@ -126,6 +126,7 @@ export default function CommunityAdminPage() {
   const [removeBackgroundEnabled, setRemoveBackgroundEnabled] = useState(true);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const questionFileInputRef = useRef<HTMLInputElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const adminData = data as any;
@@ -191,11 +192,39 @@ export default function CommunityAdminPage() {
         if (activeTab === "raffles") updateRaffle("prize_image_url", res);
         else updateTrivia("prize_image_url", res);
         setImgZoom(100); setImgPosX(0); setImgPosY(0);
-        toast.success(removeBackgroundEnabled ? "تم تفريغ خلفية الجائزة وتحميلها." : "تم رفع الصورة.");
+        toast.success(removeBackgroundEnabled ? "تم تفريغ خلفية الجائزة بنجاح." : "تم رفع الصورة.");
       };
       reader.readAsDataURL(source);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر تفريغ خلفية الصورة.");
+    }
+  };
+
+  const handleManualRemoveBg = async () => {
+    const currentImg = activeTab === "raffles" ? raffle.prize_image_url : trivia.prize_image_url;
+    if (!currentImg) {
+      toast.error("يرجى اختيار صورة أولاً لتفريغ خلفيتها");
+      return;
+    }
+    setBusy("remove_bg");
+    toast.loading("جاري تفريغ الخلفية وعزل المنتج...", { id: "bg-task" });
+    try {
+      const res = await fetch(currentImg);
+      const blob = await res.blob();
+      const file = new File([blob], "image.png", { type: blob.type });
+      const transparentBlob = await removeProductBackground(file);
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const url = e.target?.result as string;
+        if (activeTab === "raffles") updateRaffle("prize_image_url", url);
+        else updateTrivia("prize_image_url", url);
+        toast.success("تم تفريغ خلفية الصورة بنجاح!", { id: "bg-task" });
+      };
+      reader.readAsDataURL(transparentBlob);
+    } catch (err: any) {
+      toast.error(err?.message || "تعذر تفريغ الخلفية", { id: "bg-task" });
+    } finally {
+      setBusy("");
     }
   };
 
@@ -233,6 +262,12 @@ export default function CommunityAdminPage() {
     const boxW = 360;
     const boxH = 360;
 
+    // صندوق داكن شفاف بدون خلفيات بيضاء مشوهة
+    ctx.fillStyle = "rgba(15, 23, 42, 0.65)";
+    ctx.fillRect(boxX, boxY, boxW, boxH);
+    ctx.strokeStyle = "rgba(245, 158, 11, 0.35)";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(boxX, boxY, boxW, boxH);
 
     ctx.textAlign = "right";
     ctx.fillStyle = "#f59e0b";
@@ -300,6 +335,96 @@ export default function CommunityAdminPage() {
     }
   };
 
+  const handleEditRaffle = (item: any) => {
+    setActiveTab("raffles");
+    setEditingRaffle({ id: item.id });
+    setRaffle({
+      title: item.title || "",
+      description: item.description || "",
+      banner_image_url: item.banner_image_url || "",
+      prize_name: item.prize_name || "",
+      prize_image_url: item.prize_image_url || "",
+      prize_description: item.prize_description || "",
+      min_purchase_amount: String(item.min_purchase_amount || "100"),
+      ends_at: item.ends_at || "",
+      rules_config: {
+        minAmount: item.rules?.minAmount ?? 100,
+        ticketPerAmount: item.rules?.ticketPerAmount ?? 50,
+        allowMultipleEntries: item.rules?.allowMultipleEntries ?? true,
+        minParticipants: item.rules?.minParticipants ?? 10,
+        drawConditionType: item.rules?.drawConditionType ?? "count"
+      }
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast.info("تم تحميل بيانات السحب في النموذج للتعديل");
+  };
+
+  const handleDeleteRaffle = async (id: string) => {
+    if (!confirm("هل أنت متأكد من حذف هذا السحب نهائياً؟")) return;
+    setBusy(`delete_raffle_${id}`);
+    try {
+      if (typeof (communityModule as any).deletePurchaseRaffle === "function") {
+        await (communityModule as any).deletePurchaseRaffle(id);
+      } else {
+        await (savePurchaseRaffle as any)({ id, status: "archived" });
+      }
+      toast.success("تم حذف السحب بنجاح");
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleEditTrivia = (item: any) => {
+    setActiveTab("trivia");
+    setEditingTrivia({ id: item.id });
+    setTrivia({
+      title: item.title || "",
+      question: item.question || "",
+      question_image_url: item.question_image_url || "",
+      options: Array.isArray(item.options) && item.options.length === 4 ? item.options : (item.options || ["", "", "", ""]),
+      correct_option_index: String(item.correct_option_index ?? "0"),
+      prize_title: item.prize_title || "",
+      prize_image_url: item.prize_image_url || "",
+      banner_image_url: item.banner_image_url || "",
+      prize_description: item.prize_description || "",
+      ends_at: item.ends_at || "",
+      social_tasks: {
+        requireFacebookShare: item.rules?.social_tasks?.requireFacebookShare ?? true,
+        facebookPageUrl: item.rules?.social_tasks?.facebookPageUrl || "",
+        facebookPostUrl: item.rules?.social_tasks?.facebookPostUrl || "",
+        requireWhatsappShare: item.rules?.social_tasks?.requireWhatsappShare ?? true,
+        whatsappShareText: item.rules?.social_tasks?.whatsappShareText || "ادخل مسابقة متجر رجوة واكسب جوائز فورية!",
+        requireInstagramFollow: item.rules?.social_tasks?.requireInstagramFollow ?? false,
+        instagramUrl: item.rules?.social_tasks?.instagramUrl || "",
+        requireTiktokFollow: item.rules?.social_tasks?.requireTiktokFollow ?? false,
+        tiktokUrl: item.rules?.social_tasks?.tiktokUrl || ""
+      }
+    });
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    toast.info("تم تحميل بيانات المسابقة في النموذج للتعديل");
+  };
+
+  const handleDeleteTrivia = async (id: string) => {
+    if (!confirm("هل أنت متأكد من حذف هذه المسابقة نهائياً؟")) return;
+    setBusy(`delete_trivia_${id}`);
+    try {
+      if (typeof (communityModule as any).deleteTriviaContest === "function") {
+        await (communityModule as any).deleteTriviaContest(id);
+      } else {
+        await (saveTriviaContest as any)({ id, status: "archived" });
+      }
+      toast.success("تم حذف المسابقة بنجاح");
+      setRefreshKey((k) => k + 1);
+    } catch (err: any) {
+      toast.error(errorText(err));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const saveRaffleForm = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!raffle.title.trim()) return toast.error("يرجى إدخال اسم السحب");
@@ -323,7 +448,7 @@ export default function CommunityAdminPage() {
       if (String(payload.prize_image_url).startsWith("data:")) payload.prize_image_url = await uploadCommunityImage(String(payload.prize_image_url), "prize");
       if (String(payload.banner_image_url).startsWith("data:")) payload.banner_image_url = await uploadCommunityImage(String(payload.banner_image_url), "banner");
       await (savePurchaseRaffle as any)(payload);
-      toast.success(editingRaffle ? "تم تعديل السحب بنجاح" : "تم إطلاق سحب المشتريات بنجاح!");
+      toast.success(editingRaffle ? "تم حفظ التعديلات بنجاح" : "تم إطلاق سحب المشتريات بنجاح!");
       setEditingRaffle(null);
       setRaffle(blankRaffle());
       setRefreshKey((k) => k + 1);
@@ -364,7 +489,7 @@ export default function CommunityAdminPage() {
       if (String(payload.prize_image_url).startsWith("data:")) payload.prize_image_url = await uploadCommunityImage(String(payload.prize_image_url), "prize");
       if (String(payload.banner_image_url).startsWith("data:")) payload.banner_image_url = await uploadCommunityImage(String(payload.banner_image_url), "banner");
       await (saveTriviaContest as any)(payload);
-      toast.success(editingTrivia ? "تم تعديل المسابقة بنجاح" : "تم نشر المسابقة بنجاح!");
+      toast.success(editingTrivia ? "تم حفظ تعديلات المسابقة بنجاح" : "تم نشر المسابقة بنجاح!");
       setEditingTrivia(null);
       setTrivia(blankTrivia());
       setRefreshKey((k) => k + 1);
@@ -395,7 +520,6 @@ export default function CommunityAdminPage() {
           </Button>
         </div>
 
-        {/* أزرار التبديل بين السحوبات والمسابقات */}
         <div className="max-w-4xl mx-auto flex gap-2 mt-4">
           <button
             type="button"
@@ -419,34 +543,44 @@ export default function CommunityAdminPage() {
       <div className="max-w-4xl mx-auto p-4 space-y-6 mt-2">
         {error && <div className="p-3 bg-red-950/80 border border-red-700 text-red-200 rounded-xl text-sm">{error}</div>}
 
-        {/* محرر الصور المشترك والزووم 400% */}
+        {/* محرر الصور المشترك والزووم 400% وتفريغ الخلفية */}
         <section className="bg-slate-800/90 rounded-2xl border border-indigo-500/30 p-4 shadow-xl space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-700/80 pb-3">
+          <div className="flex items-center justify-between border-b border-slate-700/80 pb-3 flex-wrap gap-2">
             <label className="text-xs font-bold text-amber-400 flex items-center gap-1.5">
-              <ImageIcon className="h-4 w-4" /> صورة الجائزة والتحكم في الزووم (100% - 400%)
+              <ImageIcon className="h-4 w-4" /> صورة الجائزة وتفريغ الخلفية (100% - 400%)
             </label>
-            <input
-              type="file"
-              accept="image/*"
-              ref={fileInputRef}
-              className="hidden"
-              onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => fileInputRef.current?.click()}
-              className="border-slate-700 text-slate-200 hover:bg-slate-700 text-xs"
-            >
-              <Upload className="h-3.5 w-3.5 ml-1 text-blue-400" /> اختيار صورة من المعرض
-            </Button>
-            <label className="flex items-center gap-1.5 text-[11px] text-emerald-300"><input type="checkbox" checked={removeBackgroundEnabled} onChange={(e) => setRemoveBackgroundEnabled(e.target.checked)} /> تفريغ الخلفية تلقائياً</label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1.5 text-xs text-emerald-300 cursor-pointer">
+                <input 
+                  type="checkbox" 
+                  checked={removeBackgroundEnabled} 
+                  onChange={(e) => setRemoveBackgroundEnabled(e.target.checked)} 
+                  className="accent-emerald-500 h-3.5 w-3.5"
+                /> 
+                تفريغ تلقائي عند الرفع
+              </label>
+              <input
+                type="file"
+                accept="image/*"
+                ref={fileInputRef}
+                className="hidden"
+                onChange={(e) => e.target.files?.[0] && handleFileUpload(e.target.files[0])}
+              />
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="border-slate-700 text-slate-200 hover:bg-slate-700 text-xs"
+              >
+                <Upload className="h-3.5 w-3.5 ml-1 text-blue-400" /> اختيار صورة من المعرض
+              </Button>
+            </div>
           </div>
 
           {currentPrizeImg ? (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="relative h-44 rounded-xl border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden">
+              <div className="relative h-48 rounded-xl border border-slate-700 bg-slate-950/80 flex items-center justify-center overflow-hidden">
                 <img 
                   src={currentPrizeImg} 
                   alt="معاينة" 
@@ -466,6 +600,18 @@ export default function CommunityAdminPage() {
               </div>
 
               <div className="space-y-3 p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs">
+                {/* زر تفريغ الخلفية المباشر */}
+                <Button
+                  type="button"
+                  size="sm"
+                  onClick={handleManualRemoveBg}
+                  disabled={busy === "remove_bg"}
+                  className="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold h-8 flex items-center justify-center gap-1.5"
+                >
+                  <Wand2 className="h-3.5 w-3.5 text-amber-300" />
+                  {busy === "remove_bg" ? "جاري التفريغ..." : "✨ تفريغ خلفية الصورة الحالية"}
+                </Button>
+
                 <div>
                   <div className="flex justify-between mb-1">
                     <span className="text-slate-300">تكبير الصورة (Zoom)</span>
@@ -653,7 +799,7 @@ export default function CommunityAdminPage() {
                 className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold py-2.5"
               >
                 <Save className="h-4 w-4 ml-2" />
-                {busy === "save_raffle" ? "جاري الحفظ..." : (editingRaffle ? "تحديث السحب" : "حفظ وإطلاق سحب المشتريات")}
+                {busy === "save_raffle" ? "جاري الحفظ..." : (editingRaffle ? "تحديث وحفظ التعديلات" : "حفظ وإطلاق سحب المشتريات")}
               </Button>
             </form>
           </section>
@@ -708,7 +854,51 @@ export default function CommunityAdminPage() {
                   className="bg-slate-900 border-slate-700 text-white"
                   required
                 />
-                <CommunityImageStudio label="صورة السؤال التفاعلي (اختياري)" value={trivia.question_image_url} onChange={(value) => updateTrivia("question_image_url", value)} help="تظهر الصورة قبل خيارات الإجابة ويمكن تفريغ خلفيتها وتكبيرها حتى 400%." />
+              </div>
+
+              {/* رفع صورة توضيحية للسؤال */}
+              <div>
+                <label className="block text-xs font-semibold mb-1 text-slate-300">صورة توضيحية للسؤال (اختياري)</label>
+                <div className="flex items-center gap-3">
+                  <input
+                    type="file"
+                    accept="image/*"
+                    ref={questionFileInputRef}
+                    className="hidden"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = (ev) => {
+                        updateTrivia("question_image_url", ev.target?.result as string);
+                        toast.success("تم إرفاق صورة السؤال بنجاح");
+                      };
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => questionFileInputRef.current?.click()}
+                    className="border-slate-700 text-slate-300 text-xs"
+                  >
+                    <Upload className="h-3.5 w-3.5 ml-1 text-blue-400" /> اختيار صورة للسؤال
+                  </Button>
+                  {trivia.question_image_url && (
+                    <div className="flex items-center gap-2 bg-slate-950 p-1.5 rounded-lg border border-slate-800">
+                      <img src={trivia.question_image_url} alt="سؤال" className="h-8 w-8 object-cover rounded" />
+                      <span className="text-[11px] text-slate-300">تم تحديد الصورة</span>
+                      <button 
+                        type="button" 
+                        onClick={() => updateTrivia("question_image_url", "")} 
+                        className="p-1 text-red-400 hover:text-red-300"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                </div>
               </div>
 
               <div className="p-4 rounded-xl bg-slate-950 border border-slate-700 space-y-3">
@@ -735,7 +925,6 @@ export default function CommunityAdminPage() {
                 </div>
               </div>
 
-              {/* شروط السوشيال ميديا الإلزامية */}
               <div className="p-4 rounded-xl bg-slate-950 border border-emerald-900/70 space-y-4">
                 <div className="flex items-center justify-between border-b border-slate-800 pb-2">
                   <h3 className="text-xs font-bold text-amber-400">
@@ -844,13 +1033,13 @@ export default function CommunityAdminPage() {
                 className="w-full bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 text-white font-bold py-2.5"
               >
                 <Save className="h-4 w-4 ml-2" />
-                {busy === "save_trivia" ? "جاري الحفظ..." : (editingTrivia ? "تحديث المسابقة" : "حفظ ونشر المسابقة")}
+                {busy === "save_trivia" ? "جاري الحفظ..." : (editingTrivia ? "تحديث وحفظ التعديلات" : "حفظ ونشر المسابقة")}
               </Button>
             </form>
           </section>
         )}
 
-        {/* عرض السحوبات والمسابقات النشطة */}
+        {/* عرض السحوبات والمسابقات مع أزرار التعديل والحذف وسحب الفائز */}
         <section className="space-y-4">
           <h2 className="text-base font-bold text-slate-200 flex items-center gap-2">
             <Users className="h-5 w-5 text-indigo-400" />
@@ -892,15 +1081,37 @@ export default function CommunityAdminPage() {
                       </div>
                     </div>
 
-                    <div className="flex items-center justify-between pt-2 border-t border-slate-700 text-xs">
-                      <span className="text-[11px] text-slate-400">ينتهي: {new Date(item.ends_at).toLocaleDateString("ar-EG")}</span>
+                    <div className="pt-2 border-t border-slate-700 flex flex-col gap-2">
+                      <div className="flex items-center justify-between text-[11px] text-slate-400">
+                        <span>ينتهي: {new Date(item.ends_at).toLocaleDateString("ar-EG")}</span>
+                        <div className="flex items-center gap-1.5">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEditRaffle(item)}
+                            className="h-7 px-2 border-slate-600 text-slate-200 hover:bg-slate-700 text-xs"
+                          >
+                            <Edit className="h-3 w-3 ml-1 text-sky-400" /> تعديل
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDeleteRaffle(item.id)}
+                            disabled={busy === `delete_raffle_${item.id}`}
+                            className="h-7 px-2 border-red-900/60 text-red-300 hover:bg-red-950 text-xs"
+                          >
+                            <Trash2 className="h-3 w-3 ml-1" /> حذف
+                          </Button>
+                        </div>
+                      </div>
+
                       <Button
                         size="sm"
                         onClick={async () => {
                           if (!canDraw && !confirm("تنبيه: لم يكتمل العدد المطلوب بعد لتغطية تكلفة الجائزة! هل أنت متأكد من إجراء السحب؟")) return;
                           setBusy(`draw_${item.id}`);
                           try {
-                            const res = await startCommunityDraw("purchase", item.id);
+                            const res = await (communityModule as any).startCommunityDraw("purchase", item.id);
                             setActiveWinnerModal(res);
                             toast.success("تم إجراء السحب وإعلان الفائز بنجاح!");
                           } catch (err: any) {
@@ -910,7 +1121,7 @@ export default function CommunityAdminPage() {
                           }
                         }}
                         disabled={busy === `draw_${item.id}`}
-                        className={`${canDraw ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-700 hover:bg-slate-600"} text-white font-bold text-xs`}
+                        className={`${canDraw ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-700 hover:bg-slate-600"} text-white font-bold text-xs w-full h-8`}
                       >
                         <Play className="h-3 w-3 ml-1" /> سحب الفائز الآن
                       </Button>
@@ -930,17 +1141,44 @@ export default function CommunityAdminPage() {
                     </div>
                     <p className="text-xs text-amber-400 font-bold mt-1">🎁 {contest.prize_title}</p>
                     <p className="text-xs text-slate-300 mt-1 line-clamp-1">❓ {contest.question}</p>
+                    {contest.question_image_url && (
+                      <div className="mt-2 h-20 w-32 rounded-lg overflow-hidden border border-slate-700">
+                        <img src={contest.question_image_url} alt="سؤال" className="w-full h-full object-cover" />
+                      </div>
+                    )}
                     <p className="text-[11px] text-slate-400 mt-1">الإجابات الصحيحة: {contest.correct_count || 0}</p>
                   </div>
 
-                  <div className="flex items-center justify-between pt-2 border-t border-slate-700 text-xs">
-                    <span className="text-[11px] text-slate-400">ينتهي: {new Date(contest.ends_at).toLocaleDateString("ar-EG")}</span>
+                  <div className="pt-2 border-t border-slate-700 flex flex-col gap-2">
+                    <div className="flex items-center justify-between text-[11px] text-slate-400">
+                      <span>ينتهي: {new Date(contest.ends_at).toLocaleDateString("ar-EG")}</span>
+                      <div className="flex items-center gap-1.5">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleEditTrivia(contest)}
+                          className="h-7 px-2 border-slate-600 text-slate-200 hover:bg-slate-700 text-xs"
+                        >
+                          <Edit className="h-3 w-3 ml-1 text-sky-400" /> تعديل
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => handleDeleteTrivia(contest.id)}
+                          disabled={busy === `delete_trivia_${contest.id}`}
+                          className="h-7 px-2 border-red-900/60 text-red-300 hover:bg-red-950 text-xs"
+                        >
+                          <Trash2 className="h-3 w-3 ml-1" /> حذف
+                        </Button>
+                      </div>
+                    </div>
+
                     <Button
                       size="sm"
                       onClick={async () => {
                         setBusy(`draw_${contest.id}`);
                         try {
-                          const res = await startCommunityDraw("trivia", contest.id);
+                          const res = await (communityModule as any).startCommunityDraw("trivia", contest.id);
                           setActiveWinnerModal(res);
                           toast.success("تم السحب من بين أصحاب الإجابات الصحيحة!");
                         } catch (err: any) {
@@ -950,7 +1188,7 @@ export default function CommunityAdminPage() {
                         }
                       }}
                       disabled={busy === `draw_${contest.id}`}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs"
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs w-full h-8"
                     >
                       <Play className="h-3 w-3 ml-1" /> سحب فائز المسابقة
                     </Button>
@@ -964,7 +1202,11 @@ export default function CommunityAdminPage() {
 
       {activeWinnerModal && (
         <CommunityLiveWinner
-          stage={activeWinnerModal}
+          draw={activeWinnerModal}
+          onClose={() => {
+            setActiveWinnerModal(null);
+            setRefreshKey((k) => k + 1);
+          }}
         />
       )}
     </main>
