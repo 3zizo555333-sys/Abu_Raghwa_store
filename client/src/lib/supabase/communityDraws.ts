@@ -79,18 +79,44 @@ export async function listManagedCommunityEvents() {
 export async function savePurchaseRaffle(input: Partial<PurchaseRaffle> & { title: string; prize_name: string; ends_at: string }) {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true); assertDrawManager(role);
-  const payload = { shop_id: shopId, title: input.title.trim(), description: input.description || "", banner_image_url: input.banner_image_url || null, prize_name: input.prize_name.trim(), prize_image_url: input.prize_image_url || null, prize_description: input.prize_description || "", required_products_rules: input.required_products_rules || {}, min_invoice_total: input.min_invoice_total == null ? null : Number(input.min_invoice_total), ends_at: input.ends_at, status: input.status || "active" };
+  const title = String(input.title || "").trim();
+  const prizeName = String(input.prize_name || "").trim();
+  if (!title || !prizeName) throw new Error("اسم السحب واسم الجائزة مطلوبان.");
+  const payload = { shop_id: shopId, title, description: input.description || "", banner_image_url: input.banner_image_url || null, prize_name: prizeName, prize_image_url: input.prize_image_url || null, prize_description: input.prize_description || "", required_products_rules: input.required_products_rules || {}, min_invoice_total: input.min_invoice_total == null ? null : Number(input.min_invoice_total), ends_at: input.ends_at, status: input.status || "active" };
   const query = input.id ? client().from("purchase_raffles").update(payload).eq("id", input.id).eq("shop_id", shopId) : client().from("purchase_raffles").insert(payload);
   return requireCloudResult(await query.select("*").single()) as PurchaseRaffle;
 }
+
+export async function deletePurchaseRaffle(id: string): Promise<void> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true); assertDrawManager(role);
+  const raffleId = String(id || "").trim();
+  if (!raffleId) throw new Error("معرف السحب غير صالح.");
+  const deleted = requireCloudResult(await client().from("purchase_raffles").delete().eq("id", raffleId).eq("shop_id", shopId).select("id")) as Array<{ id: string }>;
+  if (!deleted?.length) throw new Error("لم يتم العثور على السحب المطلوب حذفه.");
+}
+
 export async function saveTriviaContest(input: Partial<TriviaContest> & { title: string; question: string; options: string[]; correct_option_index: number; prize_title: string; ends_at: string }) {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true); assertDrawManager(role);
-  const options = input.options.map(value => value.trim()).filter(Boolean);
+  const options = (Array.isArray(input.options) ? input.options : []).map(value => String(value || "").trim()).filter(Boolean);
   if (options.length < 2 || input.correct_option_index < 0 || input.correct_option_index >= options.length) throw new Error("أدخل خيارين صحيحين على الأقل وحدد الإجابة الصحيحة.");
-  const payload = { shop_id: shopId, title: input.title.trim(), question: input.question.trim(), question_image_url: input.question_image_url || null, options, correct_option_index: input.correct_option_index, prize_title: input.prize_title.trim(), prize_image_url: input.prize_image_url || null, banner_image_url: input.banner_image_url || null, ends_at: input.ends_at, status: input.status || "active" };
+  const title = String(input.title || "").trim();
+  const question = String(input.question || "").trim();
+  const prizeTitle = String(input.prize_title || "").trim();
+  if (!title || !question || !prizeTitle) throw new Error("عنوان المسابقة والسؤال واسم الجائزة مطلوبة.");
+  const payload = { shop_id: shopId, title, question, question_image_url: input.question_image_url || null, options, correct_option_index: input.correct_option_index, prize_title: prizeTitle, prize_image_url: input.prize_image_url || null, banner_image_url: input.banner_image_url || null, ends_at: input.ends_at, status: input.status || "active" };
   const query = input.id ? client().from("trivia_contests").update(payload).eq("id", input.id).eq("shop_id", shopId) : client().from("trivia_contests").insert(payload);
   return requireCloudResult(await query.select("*").single()) as TriviaContest;
+}
+
+export async function deleteTriviaContest(id: string): Promise<void> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true); assertDrawManager(role);
+  const contestId = String(id || "").trim();
+  if (!contestId) throw new Error("معرف المسابقة غير صالح.");
+  const deleted = requireCloudResult(await client().from("trivia_contests").delete().eq("id", contestId).eq("shop_id", shopId).select("id")) as Array<{ id: string }>;
+  if (!deleted?.length) throw new Error("لم يتم العثور على المسابقة المطلوبة لحذفها.");
 }
 export async function startCommunityDraw(eventType: DrawEventType, eventId: string): Promise<LiveDrawStage> {
   assertCloudOnline();
