@@ -67,6 +67,8 @@ export type InvokeParams = {
   responseFormat?: ResponseFormat;
   response_format?: ResponseFormat;
   model?: string;
+  apiKey?: string;
+  apiUrl?: string;
   thinking?: Record<string, unknown>;
   reasoning?: Record<string, unknown>;
 };
@@ -212,19 +214,21 @@ const normalizeToolChoice = (
   return toolChoice;
 };
 
-const resolveApiUrl = () => {
+const resolveApiUrl = (apiUrl?: string, apiKey?: string) => {
+  if (apiUrl) return `${apiUrl.replace(/\/$/, "")}${apiUrl.endsWith("/chat/completions") ? "" : "/chat/completions"}`;
+  if (apiKey) return "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
   if (ENV.forgeApiKey) return `${(ENV.forgeApiUrl || "https://forge.manus.im").replace(/\/$/, "")}/v1/chat/completions`;
   if (ENV.geminiApiKey) return `${(ENV.geminiApiUrl || "https://generativelanguage.googleapis.com/v1beta/openai").replace(/\/$/, "")}/chat/completions`;
   return `${(ENV.openAiApiUrl || "https://api.openai.com/v1").replace(/\/$/, "")}/chat/completions`;
 };
 
-const assertApiKey = () => {
-  if (!ENV.forgeApiKey && !ENV.openAiApiKey && !ENV.geminiApiKey) {
+const assertApiKey = (apiKey?: string) => {
+  if (!apiKey && !ENV.forgeApiKey && !ENV.openAiApiKey && !ENV.geminiApiKey) {
     throw new Error("OPENAI_API_KEY is not configured");
   }
 };
 
-const resolveApiKey = () => ENV.forgeApiKey || ENV.geminiApiKey || ENV.openAiApiKey;
+const resolveApiKey = (apiKey?: string) => apiKey || ENV.forgeApiKey || ENV.geminiApiKey || ENV.openAiApiKey;
 
 const normalizeResponseFormat = ({
   responseFormat,
@@ -343,7 +347,7 @@ const fetchWithBackoff = async (
 };
 
 export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
-  assertApiKey();
+  assertApiKey(params.apiKey);
 
   const {
     messages,
@@ -355,6 +359,8 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     responseFormat,
     response_format,
     model,
+    apiKey,
+    apiUrl,
     thinking,
     reasoning,
     maxTokens,
@@ -404,11 +410,11 @@ export async function invokeLLM(params: InvokeParams): Promise<InvokeResult> {
     payload.response_format = normalizedResponseFormat;
   }
 
-  const response = await fetchWithBackoff(resolveApiUrl(), {
+  const response = await fetchWithBackoff(resolveApiUrl(apiUrl, apiKey), {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      authorization: `Bearer ${resolveApiKey()}`,
+      authorization: `Bearer ${resolveApiKey(apiKey)}`,
     },
     body: JSON.stringify(payload),
   });

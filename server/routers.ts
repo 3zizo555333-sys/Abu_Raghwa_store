@@ -92,7 +92,7 @@ export const appRouter = router({
 
   invoiceOCR: router({
     parse: publicProcedure
-      .input(z.object({ imageDataUrl: z.string().min(64).max(3_000_000), supplierName: z.string().max(180).optional(), invoiceDate: z.string().max(32).optional() }))
+      .input(z.object({ imageDataUrl: z.string().min(64).max(3_000_000), supplierName: z.string().max(180).optional(), invoiceDate: z.string().max(32).optional(), apiKey: z.string().min(20).max(300).optional() }))
       .mutation(async ({ input }) => {
         let image: ReturnType<typeof parseInvoiceDataUrl>;
         try { image = parseInvoiceDataUrl(input.imageDataUrl); }
@@ -103,11 +103,12 @@ export const appRouter = router({
         try {
           const response = await invokeLLM({
             model: "gemini-3-flash-preview",
+            apiKey: input.apiKey?.trim() || undefined,
             maxTokens: 2200,
             messages: [
-              { role: "system", content: "أنت قارئ فواتير مشتريات عربي دقيق. اقرأ الفاتورة المطبوعة أو المكتوبة بخط اليد. استخرج البنود الظاهرة فقط ولا تخترع أرقاماً. أعد كائن JSON فقط بالشكل {\"items\":[{\"name\":string,\"barcode\":string,\"quantity\":number,\"unitCost\":number,\"totalCost\":number,\"confidence\":number}],\"totalAmount\":number}. إذا لم تستطع قراءة قيمة استخدم 0 وثقة منخفضة. اجعل الكمية وسعر الوحدة والإجمالي أرقاماً صافية بلا عملة أو فواصل آلاف." },
+              { role: "system", content: "أنت قارئ فواتير مشتريات عربي دقيق. اقرأ فواتير المنظفات المطبوعة وكذلك الفواتير المكتوبة بخط اليد في دفاتر أو كشاكيل الموردين، واستعن بالسياق البصري والخط العربي حتى لو كانت الصورة غير مثالية. استخرج البنود الظاهرة فقط ولا تخترع أرقاماً. أعد كائن JSON فقط بالشكل {\"items\":[{\"name\":string,\"barcode\":string,\"quantity\":number,\"unitCost\":number,\"totalCost\":number,\"confidence\":number}],\"totalAmount\":number}. إذا تعذر تمييز قيمة استخدم 0 وثقة منخفضة، ولا تسقط البند إذا أمكن قراءة اسمه فقط. اجعل الكمية وسعر الوحدة والإجمالي أرقاماً صافية بلا عملة أو فواصل آلاف." },
               { role: "user", content: [
-                { type: "text", text: `اقرأ هذه الفاتورة. المورد: ${input.supplierName || "غير معروف"}. التاريخ: ${input.invoiceDate || "غير معروف"}. استخرج لكل بند اسم الصنف والباركود إن ظهر والكمية وسعر شراء الوحدة والإجمالي.` },
+                { type: "text", text: `اقرأ هذه الفاتورة بدقة، بما في ذلك الكتابة اليدوية. المورد: ${input.supplierName || "غير معروف"}. التاريخ: ${input.invoiceDate || "غير معروف"}. استخرج لكل بند اسم الصنف والباركود إن ظهر والكمية وسعر شراء الوحدة والإجمالي، ثم أعد JSON فقط.` },
                 { type: "image_url", image_url: { url: input.imageDataUrl, detail: "high" } },
               ] },
             ],
@@ -126,7 +127,7 @@ export const appRouter = router({
         } catch (error) {
           const message = error instanceof Error ? error.message : "unknown error";
           console.error("[invoiceOCR.parse]", message.slice(0, 400));
-          if (/OPENAI_API_KEY is not configured|not configured/i.test(message)) {
+          if (/OPENAI_API_KEY is not configured|not configured|api key/i.test(message)) {
             throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة قراءة الفواتير غير مهيأة على الخادم؛ تحقّق من إعداد اتصال الذكاء الاصطناعي." });
           }
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذرت قراءة بنود الفاتورة. تأكد من وضوح الصورة واتصال الخدمة ثم أعد المحاولة." });

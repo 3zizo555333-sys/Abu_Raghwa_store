@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
-import { AlertTriangle, ArrowLeft, Camera, ChevronDown, ChevronUp, History, Loader2, Plus, Save, Trash2, TrendingDown, TrendingUp, Upload } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Camera, ChevronDown, ChevronUp, History, KeyRound, Loader2, Plus, Save, Trash2, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -55,6 +55,12 @@ export default function InvoiceOCR() {
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
   const [history, setHistory] = useState<SupplierPriceComparison[]>([]);
   const [historyName, setHistoryName] = useState("");
+  const [ocrApiKey, setOcrApiKey] = useState(() => {
+    if (typeof window !== "undefined") return window.localStorage.getItem("abu_raghwa_gemini_api_key") || import.meta.env.VITE_GEMINI_API_KEY || "";
+    return "";
+  });
+  const [isApiKeyModalOpen, setIsApiKeyModalOpen] = useState(false);
+  const [pendingOcrDataUrl, setPendingOcrDataUrl] = useState("");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
@@ -132,7 +138,7 @@ export default function InvoiceOCR() {
     setIsProcessing(true);
     setOcrError("");
     try {
-      const result = await parseInvoice.mutateAsync({ imageDataUrl: dataUrl, supplierName: supplier, invoiceDate });
+      const result = await parseInvoice.mutateAsync({ imageDataUrl: dataUrl, supplierName: supplier, invoiceDate, apiKey: ocrApiKey.trim() || undefined });
       const items = (result.items || []).map(item => {
         const quantity = Math.max(0, Number(item.quantity) || 0);
         const unitCost = Math.max(0, Number(item.unitCost) || 0);
@@ -145,8 +151,24 @@ export default function InvoiceOCR() {
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذرت قراءة الفاتورة. أعد المحاولة بعد التحقق من وضوح الصورة والاتصال.";
       setOcrError(message);
+      if (/غير مهيأة|not configured|api key/i.test(message)) {
+        setPendingOcrDataUrl(dataUrl);
+        setIsApiKeyModalOpen(true);
+      }
       toast.error(message);
     } finally { setIsProcessing(false); }
+  };
+
+  const saveOcrApiKey = () => {
+    const normalized = ocrApiKey.trim();
+    if (normalized.length < 20) { toast.error("أدخل مفتاح Gemini API صالحاً."); return; }
+    window.localStorage.setItem("abu_raghwa_gemini_api_key", normalized);
+    setOcrApiKey(normalized);
+    setIsApiKeyModalOpen(false);
+    const pending = pendingOcrDataUrl;
+    setPendingOcrDataUrl("");
+    if (pending) void runInvoiceOcr(pending);
+    else toast.success("تم حفظ مفتاح Gemini على هذا الجهاز.");
   };
 
   const handleImageUpload = async (file?: File) => {
@@ -339,6 +361,7 @@ export default function InvoiceOCR() {
       {unlinkedImages.length > 0 && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>صور قديمة غير مرتبطة بسجل فاتورة ({unlinkedImages.length})</CardTitle><CardDescription>هذه الصور موجودة سحابياً لكنها لم تُسجل كفواتير. أعد قراءتها، ثم أدخل اسم المورد وتاريخ الفاتورة الصحيحين واحفظها لربط الصورة بالأرشيف.</CardDescription></div><Button variant="destructive" size="sm" disabled={isDeletingAllUnlinked || Boolean(deletingImagePath)} onClick={() => void deleteAllUnlinkedImages()}>{isDeletingAllUnlinked ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}مسح جميع الصور المعلقة دفعة واحدة</Button></div></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">{unlinkedImages.map(image => <div key={image.path} className="rounded-xl border bg-white p-3"><a href={image.imageUrl} target="_blank" rel="noopener noreferrer"><img src={image.imageUrl} alt="صورة فاتورة قديمة غير مرتبطة" className="h-44 w-full rounded-lg bg-gray-50 object-contain" /></a><p className="mt-2 truncate text-xs text-gray-500">{image.path.split("/").pop()}</p>{image.createdAt && <p className="text-xs text-gray-500">وقت الرفع: {new Date(image.createdAt).toLocaleString("ar-EG")}</p>}<div className="mt-3 grid gap-2"><Button variant="outline" disabled={processing || Boolean(adoptingImagePath) || Boolean(deletingImagePath) || isDeletingAllUnlinked} onClick={() => void adoptStoredImage(image)}>{adoptingImagePath === image.path ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />جارٍ الاستعادة والقراءة...</> : "إعادة القراءة وربطها بالأرشيف"}</Button><Button variant="ghost" className="text-red-700 hover:bg-red-50 hover:text-red-800" disabled={processing || Boolean(adoptingImagePath) || isDeletingAllUnlinked} onClick={() => void deleteUnlinkedImage(image)}>{deletingImagePath === image.path ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}حذف الصورة نهائياً</Button></div></div>)}</CardContent></Card>}
 
       {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">السعر</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
+      {isApiKeyModalOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-blue-600" />إعداد قراءة الفواتير بالذكاء الاصطناعي</CardTitle><CardDescription>أدخل مفتاح Gemini API المجاني مرة واحدة. سيُحفظ محلياً على هذا الجهاز ويُرسل فقط لطلب قراءة الفاتورة.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="password" dir="ltr" autoFocus value={ocrApiKey} onChange={event => setOcrApiKey(event.target.value)} placeholder="AIza..." onKeyDown={event => { if (event.key === "Enter") saveOcrApiKey(); }} /><p className="text-xs text-slate-500">يمكنك الحصول على المفتاح من Google AI Studio. لا يحفظ التطبيق المفتاح في قاعدة بيانات المتجر.</p><div className="flex gap-2"><Button className="flex-1" onClick={saveOcrApiKey}>حفظ وإعادة القراءة</Button><Button variant="outline" onClick={() => { setIsApiKeyModalOpen(false); setPendingOcrDataUrl(""); }}>لاحقاً</Button></div></CardContent></Card></div>}
     </main>
   </div>;
 }
