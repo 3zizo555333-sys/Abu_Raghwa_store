@@ -46,7 +46,7 @@ function normalizeItem(item: SupplierInvoiceDraftItem) {
 export async function uploadSupplierInvoiceImage(image: Blob): Promise<string> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("رفع فواتير الموردين متاح للمدير أو المشرف فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   if (image.type !== "image/jpeg" || image.size <= 0 || image.size > 1_800_000) throw new Error("يجب ضغط صورة الفاتورة بصيغة JPEG قبل رفعها.");
   const extension = "jpg";
   const path = `${shopId}/${crypto.randomUUID()}.${extension}`;
@@ -71,7 +71,7 @@ export async function createSupplierInvoiceCategory(name: string): Promise<Suppl
   const normalized = name.trim();
   if (!normalized || normalized.length > 120) throw new Error("اسم الفئة مطلوب ويجب ألا يتجاوز 120 حرفاً.");
   const { shopId, role } = await getActiveShopContext(true);
-  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("إضافة الفئات متاحة للمدير أو المشرف فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   return requireCloudResult(await getSupabaseClient().from("supplier_invoice_categories").insert({ store_id: shopId, name: normalized }).select("*").single()) as SupplierInvoiceCategory;
 }
 
@@ -91,7 +91,7 @@ async function getPreviousCost(shopId: string, item: { item_name: string; barcod
 export async function saveSupplierInvoice(input: { supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
-  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حفظ فواتير الموردين متاح للمدير أو المشرف فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   const client = getSupabaseClient();
   const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
   if (!input.supplierName.trim() || !input.imageUrl || !normalized.length) throw new Error("أدخل المورد والصورة وبنداً واحداً على الأقل.");
@@ -136,7 +136,7 @@ function storagePathFromPublicUrl(url: string): string | null {
 export async function listUnlinkedSupplierInvoiceImages(limit = 100): Promise<UnlinkedSupplierInvoiceImage[]> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
-  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("عرض صور فواتير الموردين متاح للمدير أو المشرف فقط.");
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   const client = getSupabaseClient();
   const bucket = client.storage.from("invoices-images");
   const [filesResult, invoiceResult] = await Promise.all([
@@ -150,6 +150,26 @@ export async function listUnlinkedSupplierInvoiceImages(limit = 100): Promise<Un
     const path = `${shopId}/${file.name}`;
     return { path, imageUrl: bucket.getPublicUrl(path).data.publicUrl, createdAt: file.created_at || null };
   });
+}
+
+export async function deleteUnlinkedSupplierInvoiceImage(path: string): Promise<void> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
+  if (!path.startsWith(`${shopId}/`)) throw new Error("مسار صورة الفاتورة غير صالح.");
+  const result = await getSupabaseClient().storage.from("invoices-images").remove([path]);
+  if (result.error) throw new Error(`تعذر حذف صورة الفاتورة من Storage: ${result.error.message}`);
+}
+
+export async function deleteAllUnlinkedSupplierInvoiceImages(): Promise<number> {
+  const images = await listUnlinkedSupplierInvoiceImages(1000);
+  if (!images.length) return 0;
+  const bucket = getSupabaseClient().storage.from("invoices-images");
+  for (let offset = 0; offset < images.length; offset += 100) {
+    const result = await bucket.remove(images.slice(offset, offset + 100).map(image => image.path));
+    if (result.error) throw new Error(`تعذر حذف الصور القديمة من Storage: ${result.error.message}`);
+  }
+  return images.length;
 }
 
 export async function deleteSupplierInvoice(invoiceId: string): Promise<void> {
