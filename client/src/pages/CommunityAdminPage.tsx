@@ -180,6 +180,8 @@ export default function CommunityAdminPage() {
   const handleEditRaffle = (item: any) => {
     setActiveTab("raffles");
     setEditingRaffle({ id: item.id });
+    const storedRules = item.required_products_rules || item.rules || {};
+    const storedMinimum = item.min_invoice_total ?? storedRules.min_invoice_total ?? storedRules.minAmount;
     setRaffle({
       title: item.title || "",
       description: item.description || "",
@@ -187,14 +189,14 @@ export default function CommunityAdminPage() {
       prize_name: item.prize_name || "",
       prize_image_url: item.prize_image_url || "",
       prize_description: item.prize_description || "",
-      min_purchase_amount: String(item.min_purchase_amount || "100"),
+      min_purchase_amount: String(storedMinimum == null ? 100 : storedMinimum),
       ends_at: item.ends_at || "",
       rules_config: {
-        minAmount: item.rules?.minAmount ?? 100,
-        ticketPerAmount: item.rules?.ticketPerAmount ?? 50,
-        allowMultipleEntries: item.rules?.allowMultipleEntries ?? true,
-        minParticipants: item.rules?.minParticipants ?? 10,
-        drawConditionType: item.rules?.drawConditionType ?? "count"
+        minAmount: Number(storedMinimum == null ? 100 : storedMinimum),
+        ticketPerAmount: Number(storedRules.extra_ticket_price ?? storedRules.ticketPerAmount ?? 50),
+        allowMultipleEntries: storedRules.allowMultipleEntries ?? true,
+        minParticipants: Number(storedRules.target_participants ?? storedRules.minParticipants ?? 10),
+        drawConditionType: storedRules.drawConditionType ?? "count"
       }
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -276,9 +278,14 @@ export default function CommunityAdminPage() {
       prize_name: raffle.prize_name,
       prize_image_url: raffle.prize_image_url,
       prize_description: raffle.prize_description,
-      min_purchase_amount: Number(raffle.min_purchase_amount) || 0,
+      min_invoice_total: Number(raffle.min_purchase_amount),
       ends_at: raffle.ends_at,
-      rules: raffle.rules_config
+      required_products_rules: {
+        ...raffle.rules_config,
+        min_invoice_total: Number(raffle.min_purchase_amount),
+        extra_ticket_price: Number(raffle.rules_config.ticketPerAmount),
+        target_participants: Number(raffle.rules_config.minParticipants),
+      }
     };
 
     setBusy("save_raffle");
@@ -762,11 +769,13 @@ export default function CommunityAdminPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             {activeTab === "raffles" ? (
               adminData?.raffles?.map((item: any) => {
-                const targetCount = item.rules?.minParticipants || 10;
+                const rules = item.required_products_rules || item.rules || {};
+                const targetCount = Number(rules.target_participants ?? rules.minParticipants ?? 10);
+                const minimumPurchase = item.min_invoice_total ?? rules.min_invoice_total ?? rules.minAmount ?? 0;
                 const participantsCount = item.entries_count || 0;
                 const isCountMet = participantsCount >= targetCount;
                 const isDatePassed = new Date(item.ends_at).getTime() <= clock;
-                const canDraw = item.rules?.drawConditionType === "count" ? isCountMet : isDatePassed;
+                const canDraw = rules.drawConditionType === "count" ? isCountMet : isDatePassed;
 
                 return (
                   <div key={item.id} className="p-4 rounded-xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col justify-between space-y-3">
@@ -778,7 +787,7 @@ export default function CommunityAdminPage() {
                         </span>
                       </div>
                       <p className="text-xs text-amber-400 font-bold mt-1">🎁 {item.prize_name}</p>
-                      <p className="text-xs text-slate-300 mt-1">الحد الأدنى: {item.min_purchase_amount} ج.م | التارجت: {targetCount} مشترك</p>
+                      <p className="text-xs text-slate-300 mt-1">الحد الأدنى: {Number(minimumPurchase).toLocaleString("ar-EG")} ج.م | التارجت: {targetCount} مشترك</p>
 
                       <div className="mt-2.5">
                         <div className="flex justify-between text-[11px] text-slate-400 mb-1">

@@ -82,7 +82,25 @@ export async function savePurchaseRaffle(input: Partial<PurchaseRaffle> & { titl
   const title = String(input.title || "").trim();
   const prizeName = String(input.prize_name || "").trim();
   if (!title || !prizeName) throw new Error("اسم السحب واسم الجائزة مطلوبان.");
-  const payload = { shop_id: shopId, title, description: input.description || "", banner_image_url: input.banner_image_url || null, prize_name: prizeName, prize_image_url: input.prize_image_url || null, prize_description: input.prize_description || "", required_products_rules: input.required_products_rules || {}, min_invoice_total: input.min_invoice_total == null ? null : Number(input.min_invoice_total), ends_at: input.ends_at, status: input.status || "active" };
+  const legacyInput = input as Partial<PurchaseRaffle> & { rules?: Record<string, unknown>; min_purchase_amount?: number | string };
+  const sourceRules = input.required_products_rules || legacyInput.rules || {};
+  const minimumRaw = input.min_invoice_total ?? legacyInput.min_purchase_amount ?? sourceRules.min_invoice_total ?? sourceRules.minAmount;
+  const minimumNumber = minimumRaw == null || minimumRaw === "" ? null : Number(minimumRaw);
+  const minimum = minimumNumber == null || !Number.isFinite(minimumNumber) ? null : minimumNumber;
+  const extraRaw = sourceRules.extra_ticket_price ?? sourceRules.ticketPerAmount;
+  const targetRaw = sourceRules.target_participants ?? sourceRules.minParticipants;
+  const extraTicketPrice = Number.isFinite(Number(extraRaw)) ? Number(extraRaw) : 50;
+  const targetParticipants = Number.isFinite(Number(targetRaw)) ? Number(targetRaw) : 10;
+  const rules = {
+    ...sourceRules,
+    minAmount: minimum,
+    min_invoice_total: minimum,
+    ticketPerAmount: extraTicketPrice,
+    extra_ticket_price: extraTicketPrice,
+    minParticipants: targetParticipants,
+    target_participants: targetParticipants,
+  };
+  const payload = { shop_id: shopId, title, description: input.description || "", banner_image_url: input.banner_image_url || null, prize_name: prizeName, prize_image_url: input.prize_image_url || null, prize_description: input.prize_description || "", required_products_rules: rules, min_invoice_total: minimum, ends_at: input.ends_at, status: input.status || "active" };
   const query = input.id ? client().from("purchase_raffles").update(payload).eq("id", input.id).eq("shop_id", shopId) : client().from("purchase_raffles").insert(payload);
   return requireCloudResult(await query.select("*").single()) as PurchaseRaffle;
 }
