@@ -6,7 +6,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { trpc } from "@/lib/trpc";
 import { getActiveShopContext } from "@/lib/supabase/products";
 import { createSupplierInvoiceCategory, deleteSupplierInvoice, getSupplierPriceInsights, listSupplierInvoiceCategories, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type SupplierInvoice, type SupplierInvoiceCategory, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
 import { fileToDataUrl, prepareSupplierInvoiceImage } from "@/lib/supabase/prepareSupplierInvoiceImage";
@@ -22,6 +21,35 @@ function playTone(kind: "up" | "down") {
     gain.gain.setValueAtTime(0.0001, ctx.currentTime); gain.gain.exponentialRampToValueAtTime(0.05, ctx.currentTime + 0.02); gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + 0.18);
     osc.connect(gain).connect(ctx.destination); osc.start(); osc.stop(ctx.currentTime + 0.2);
   } catch { /* الصوت اختياري */ }
+}
+
+async function compressInvoiceForOcr(dataUrl: string): Promise<string> {
+  const image = await new Promise<HTMLImageElement>((resolve, reject) => {
+    const element = new Image();
+    element.onload = () => resolve(element);
+    element.onerror = () => reject(new Error("تعذر فتح صورة الفاتورة لضغطها قبل القراءة."));
+    element.src = dataUrl;
+  });
+  const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+  const context = canvas.getContext("2d");
+  if (!context) throw new Error("تعذر تجهيز Canvas لضغط صورة الفاتورة.");
+  context.fillStyle = "#ffffff";
+  context.fillRect(0, 0, canvas.width, canvas.height);
+  context.drawImage(image, 0, 0, canvas.width, canvas.height);
+  return canvas.toDataURL("image/jpeg", 0.75);
+}
+
+function extractInvoiceItems(responseText: string): Array<Record<string, unknown>> {
+  const cleaned = responseText.replace(/```json/gi, "").replace(/```/gi, "").trim();
+  const start = cleaned.indexOf("[");
+  const end = cleaned.lastIndexOf("]");
+  if (start < 0 || end <= start) throw new Error(`لم تُرجع Gemini مصفوفة أصناف JSON صالحة. الرد التقني: ${cleaned.slice(0, 500)}`);
+  const parsed: unknown = JSON.parse(cleaned.slice(start, end + 1));
+  if (!Array.isArray(parsed)) throw new Error("رد Gemini ليس مصفوفة أصناف.");
+  return parsed.filter(item => item && typeof item === "object") as Array<Record<string, unknown>>;
 }
 
 export default function InvoiceOCR() {
@@ -65,7 +93,6 @@ export default function InvoiceOCR() {
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const previewUrlRef = useRef<string | null>(null);
   const previousTrendRef = useRef<Record<number, "up" | "down" | "stable">>({});
-  const parseInvoice = trpc.invoiceOCR.parse.useMutation();
 
   const refreshInvoices = async () => {
     try {
@@ -138,13 +165,39 @@ export default function InvoiceOCR() {
     setIsProcessing(true);
     setOcrError("");
     try {
-      const result = await parseInvoice.mutateAsync({ imageDataUrl: dataUrl, supplierName: supplier, invoiceDate, apiKey: ocrApiKey.trim() || undefined });
-      const items = (result.items || []).map(item => {
+      const apiKey = ocrApiKey.trim() || import.meta.env.VITE_GEMINI_API_KEY || "";
+      if (apiKey.length < 20) {
+        setPendingOcrDataUrl(dataUrl);
+        setIsApiKeyModalOpen(true);
+        throw new Error("مفتاح Gemini API غير موجود. أدخله في النافذة ثم أعد القراءة.");
+      }
+      const compressedDataUrl = await compressInvoiceForOcr(dataUrl);
+      const base64 = compressedDataUrl.split(",")[1] || "";
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [
+            { text: `اقرأ هذه الفاتورة المطبوعة أو المكتوبة بخط اليد بدقة. المورد: ${supplier || "غير معروف"}. التاريخ: ${invoiceDate || "غير معروف"}. استخرج اسم الصنف والكمية وسعر الوحدة والإجمالي لكل بند. أعد مصفوفة JSON صافية فقط دون أي مقدمة أو Markdown وبالشكل الحرفي: [{"item_name":"اسم الصنف","quantity":1,"unit_price":10,"total_price":10}]` },
+            { inline_data: { mime_type: "image/jpeg", data: base64 } },
+          ] }],
+          generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
+        }),
+      });
+      const raw = await response.text();
+      let payload: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } } = {};
+      try { payload = JSON.parse(raw) as typeof payload; } catch { /* نعرض الرد الخام بالأسفل */ }
+      if (!response.ok) throw new Error(`Gemini API ${response.status}: ${payload.error?.message || raw.slice(0, 500)}`);
+      const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("\n") || raw;
+      const parsedItems = extractInvoiceItems(responseText);
+      const items = parsedItems.map(item => {
+        const name = String(item.item_name || item.name || "").trim();
         const quantity = Math.max(0, Number(item.quantity) || 0);
-        const unitCost = Math.max(0, Number(item.unitCost) || 0);
-        const totalCost = Math.round((Number(item.totalCost) || quantity * unitCost) * 100) / 100;
-        return { name: item.name, barcode: item.barcode || "", quantity, unitCost, totalCost, confidence: Number(item.confidence) || 0 };
-      }).filter(item => item.name.trim());
+        const unitCost = Math.max(0, Number(item.unit_price ?? item.unitCost) || 0);
+        const totalCost = Math.round((Number(item.total_price ?? item.totalCost) || quantity * unitCost) * 100) / 100;
+        return { name, barcode: String(item.barcode || "").trim(), quantity, unitCost, totalCost, confidence: Number(item.confidence) || 0 };
+      }).filter(item => item.name);
       if (!items.length) throw new Error("لم تُستخرج بنود مقروءة من هذه الصورة. أعد التصوير بإضاءة أوضح.");
       setParsedItems(items);
       toast.success(`تم استخراج ${items.length} بند تلقائياً وتشغيل رادار الأسعار.`);
