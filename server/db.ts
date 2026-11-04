@@ -1,20 +1,25 @@
 import { and, asc, desc, eq, gt, inArray, isNull, max, notInArray, or, sql } from "drizzle-orm";
 import { randomUUID } from "node:crypto";
 import { drizzle } from "drizzle-orm/mysql2";
-import { createClient } from "@supabase/supabase-js";
-import { InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers, globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders, offerPurchaseRequests } from "../drizzle/schema";
+import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import {
+  InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers,
+  globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders, offerPurchaseRequests
+} from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
 import * as loyaltyModule from "./supabaseLoyalty";
-import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile, listSupabaseLoyaltyProfiles, validateCatalogCouponServer, type SupabaseLoyaltyTransaction } from "./supabaseLoyalty";
+import {
+  applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile,
+  listSupabaseLoyaltyProfiles, validateCatalogCouponServer, type SupabaseLoyaltyTransaction
+} from "./supabaseLoyalty";
 
 export type { InsertStaffAccount } from "../drizzle/schema";
 export type UpdateStaffAccount = Partial<InsertStaffAccount>;
 
 let _db: ReturnType<typeof drizzle> | null = null;
 
-// Lazily create the drizzle instance so local tooling can run without a DB.
 export async function getDb() {
   if (!_db && process.env.DATABASE_URL) {
     try {
@@ -27,13 +32,19 @@ export async function getDb() {
   return _db;
 }
 
-export function getSupabaseServerClient() {
+let _supabaseServer: SupabaseClient | null = null;
+export function getSupabaseServerClient(): SupabaseClient | null {
+  if (_supabaseServer) return _supabaseServer;
+
   const existing = (loyaltyModule as any).supabase
     || (loyaltyModule as any).supabaseAdmin
     || (loyaltyModule as any).supabaseClient
     || (typeof (loyaltyModule as any).getSupabaseClient === 'function' && (loyaltyModule as any).getSupabaseClient())
     || (typeof (loyaltyModule as any).getSupabaseAdminClient === 'function' && (loyaltyModule as any).getSupabaseAdminClient());
-  if (existing) return existing;
+  if (existing) {
+    _supabaseServer = existing;
+    return _supabaseServer;
+  }
 
   const url = process.env.SUPABASE_URL
     || process.env.VITE_SUPABASE_URL
@@ -52,7 +63,8 @@ export function getSupabaseServerClient() {
 
   if (url && key) {
     try {
-      return createClient(url, key);
+      _supabaseServer = createClient(url, key, { auth: { persistSession: false } });
+      return _supabaseServer;
     } catch (e) {
       console.warn("[Supabase] Failed to init client:", e);
     }
@@ -61,35 +73,23 @@ export function getSupabaseServerClient() {
 }
 
 export async function upsertUser(user: InsertUser): Promise<void> {
-  if (!user.openId) {
-    throw new Error("User openId is required for upsert");
-  }
-
+  if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();
   if (!db) {
     console.warn("[Database] Cannot upsert user: database not available");
     return;
   }
-
   try {
-    const values: InsertUser = {
-      openId: user.openId,
-    };
+    const values: InsertUser = { openId: user.openId };
     const updateSet: Record<string, unknown> = {};
-
     const textFields = ["name", "email", "loginMethod"] as const;
-    type TextField = (typeof textFields)[number];
-
-    const assignNullable = (field: TextField) => {
+    textFields.forEach((field) => {
       const value = user[field];
-      if (value === undefined) return;
-      const normalized = value ?? null;
-      values[field] = normalized;
-      updateSet[field] = normalized;
-    };
-
-    textFields.forEach(assignNullable);
-
+      if (value !== undefined) {
+        values[field] = value ?? null;
+        updateSet[field] = value ?? null;
+      }
+    });
     if (user.lastSignedIn !== undefined) {
       values.lastSignedIn = user.lastSignedIn;
       updateSet.lastSignedIn = user.lastSignedIn;
@@ -101,18 +101,9 @@ export async function upsertUser(user: InsertUser): Promise<void> {
       values.role = 'admin';
       updateSet.role = 'admin';
     }
-
-    if (!values.lastSignedIn) {
-      values.lastSignedIn = new Date();
-    }
-
-    if (Object.keys(updateSet).length === 0) {
-      updateSet.lastSignedIn = new Date();
-    }
-
-    await db.insert(users).values(values).onDuplicateKeyUpdate({
-      set: updateSet,
-    });
+    if (!values.lastSignedIn) values.lastSignedIn = new Date();
+    if (Object.keys(updateSet).length === 0) updateSet.lastSignedIn = new Date();
+    await db.insert(users).values(values).onDuplicateKeyUpdate({ set: updateSet });
   } catch (error) {
     console.error("[Database] Failed to upsert user:", error);
     throw error;
@@ -121,13 +112,8 @@ export async function upsertUser(user: InsertUser): Promise<void> {
 
 export async function getUserByOpenId(openId: string) {
   const db = await getDb();
-  if (!db) {
-    console.warn("[Database] Cannot get user: database not available");
-    return undefined;
-  }
-
+  if (!db) return undefined;
   const result = await db.select().from(users).where(eq(users.openId, openId)).limit(1);
-
   return result.length > 0 ? result[0] : undefined;
 }
 
@@ -167,9 +153,7 @@ export async function importStaffAccounts(accounts: InsertStaffAccount[]) {
 export async function saveSharedOffer(id: string, offerData: string) {
   const db = await getDb();
   if (!db) return;
-  await db.insert(sharedOffers).values({ id, offerData }).onDuplicateKeyUpdate({
-    set: { offerData }
-  });
+  await db.insert(sharedOffers).values({ id, offerData }).onDuplicateKeyUpdate({ set: { offerData } });
 }
 
 export async function getSharedOffer(id: string) {
@@ -182,7 +166,6 @@ export async function getSharedOffer(id: string) {
 export async function listSharedOffers() {
   const db = await getDb();
   if (!db) return null;
-
   const rows = await db.select().from(sharedOffers).orderBy(desc(sharedOffers.createdAt));
   const legacy = await getGlobalAppSetting("abu_raghwa_saved_offers");
   return mergeSharedOfferRecords(legacy?.dataJson || null, rows.map(row => row.offerData));
@@ -192,7 +175,6 @@ export async function deleteSharedOffer(id: string) {
   const db = await getDb();
   if (!db) return;
   await db.delete(sharedOffers).where(eq(sharedOffers.id, id));
-
   const legacy = await getGlobalAppSetting("abu_raghwa_saved_offers");
   if (legacy) {
     const updated = removeOfferFromLegacyData(legacy.dataJson, id);
@@ -286,8 +268,7 @@ export async function mergeGlobalAppSettingChunk(key: string, dataJson: string, 
   if (!db) throw new Error("قاعدة البيانات غير متاحة لحفظ المنتجات الآن");
   const parsed = JSON.parse(dataJson);
   if (!Array.isArray(parsed) || parsed.length > CLOUD_RECORD_BATCH_SIZE) throw new Error("دفعة المنتجات غير صالحة");
-  const existing = await db.select({ recordId: cloudAppRecords.recordId, position: cloudAppRecords.position })
-    .from(cloudAppRecords).where(eq(cloudAppRecords.collectionKey, key));
+  const existing = await db.select({ recordId: cloudAppRecords.recordId, position: cloudAppRecords.position }).from(cloudAppRecords).where(eq(cloudAppRecords.collectionKey, key));
   const positions = new Map(existing.map(record => [record.recordId, record.position]));
   let nextPosition = existing.reduce((maxPosition, record) => Math.max(maxPosition, record.position), -1) + 1;
   const records = parsed.map((item, index) => {
@@ -306,8 +287,8 @@ export async function mergeGlobalAppSettingChunk(key: string, dataJson: string, 
   } catch (error) {
     if (!isMissingCloudTableError(error)) throw error;
     const current = await getGlobalAppSetting(key);
-    const existing = current ? parseJsonArray<Record<string, unknown>>(current.dataJson) : [];
-    const byId = new Map(existing.map(item => [String(item.id ?? item.key ?? item.code), item]));
+    const existingArr = current ? parseJsonArray<Record<string, unknown>>(current.dataJson) : [];
+    const byId = new Map(existingArr.map(item => [String(item.id ?? item.key ?? item.code), item]));
     for (const item of parsed) byId.set(String(item.id ?? item.key ?? item.code), item);
     const merged = Array.from(byId.values());
     await db.insert(globalAppSettings).values({ key, dataJson: JSON.stringify(merged) }).onDuplicateKeyUpdate({ set: { dataJson: JSON.stringify(merged) } });
@@ -362,18 +343,17 @@ export async function mergeGlobalAppSettingSnapshot(key: string, dataJson: strin
     try {
       const parsedBase = JSON.parse(baseDataJson);
       if (Array.isArray(parsedBase)) base = parsedBase as Record<string, unknown>[];
-    } catch { /* ignore */ }
+    } catch { }
   }
   await rejectAccidentalEmptyCollectionWrite(db, key, parsed);
   try {
     await db.transaction(async tx => {
       const existingRows = await tx.select().from(cloudAppRecords).where(eq(cloudAppRecords.collectionKey, key));
-      const existing = existingRows.map(row => ({ recordId: row.recordId, position: row.position }));
       const effectiveParsed = key === "abu_raghwa_products"
         ? mergeProductSnapshots(existingRows.map(row => JSON.parse(row.dataJson) as Record<string, unknown>), parsed as Record<string, unknown>[], base)
         : parsed;
-      const positions = new Map(existing.map(record => [record.recordId, record.position]));
-      let nextPosition = existing.reduce((maxPosition, record) => Math.max(maxPosition, record.position), -1) + 1;
+      const positions = new Map(existingRows.map(record => [record.recordId, record.position]));
+      let nextPosition = existingRows.reduce((maxPosition, record) => Math.max(maxPosition, record.position), -1) + 1;
       const records = effectiveParsed.map(item => {
         const value: Record<string, unknown> = item && typeof item === "object" ? item as Record<string, unknown> : { value: item };
         const rawId = value.id ?? value.key ?? value.code;
@@ -389,10 +369,7 @@ export async function mergeGlobalAppSettingSnapshot(key: string, dataJson: strin
       }
       const incomingIds = records.map(record => record.recordId);
       if (incomingIds.length > 0) {
-        await tx.delete(cloudAppRecords).where(and(
-          eq(cloudAppRecords.collectionKey, key),
-          notInArray(cloudAppRecords.recordId, incomingIds),
-        ));
+        await tx.delete(cloudAppRecords).where(and(eq(cloudAppRecords.collectionKey, key), notInArray(cloudAppRecords.recordId, incomingIds)));
       } else {
         await tx.delete(cloudAppRecords).where(eq(cloudAppRecords.collectionKey, key));
       }
@@ -442,7 +419,7 @@ export async function getGlobalAppSetting(key: string) {
   try {
     const parsed = JSON.parse(res[0].dataJson);
     if (Array.isArray(parsed)) await setGlobalAppSetting(key, res[0].dataJson);
-  } catch { /* preserve malformed */ }
+  } catch { }
   return res[0];
 }
 
@@ -520,7 +497,7 @@ export async function getGlobalAppSettingChunk(key: string, offset = 0, limit = 
         updatedAt: legacy[0].updatedAt?.toISOString() ?? null,
       };
     }
-  } catch { /* ignore */ }
+  } catch { }
   return { items: [], nextOffset: null as number | null, nextCursor: null as CloudCollectionCursor | null, hasMore: false, total: 0, updatedAt: legacy[0].updatedAt?.toISOString() ?? null };
 }
 
@@ -540,10 +517,6 @@ export type CatalogOrderInput = {
 };
 
 export async function createCatalogOrder(order: CatalogOrderInput) {
-  const db = await getDb();
-  const supabase = getSupabaseServerClient();
-  if (!db && !supabase) throw new Error("قاعدة البيانات غير متاحة لتسجيل الطلب الآن");
-
   const orderItems = parseJsonArray<{ productId?: unknown; name?: unknown; unit?: unknown; price?: unknown; quantity?: unknown; loyaltyPoints?: unknown }>(order.itemsJson);
   if (!orderItems.length || orderItems.length > 100) throw new Error("يجب أن يحتوي الطلب على صنف واحد إلى 100 صنف.");
   const computedTotal = orderItems.reduce((sum, item) => {
@@ -564,37 +537,10 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
   }
 
+  const db = await getDb();
   if (db) {
-    await db.insert(catalogOrders).values({
-      id: order.id,
-      customerName: order.customerName,
-      customerPhone: order.customerPhone,
-      customerCode: null,
-      address: order.address || null,
-      note: order.note || null,
-      itemsJson: JSON.stringify(orderItems),
-      totalAmount: finalTotal,
-      fulfillmentMethod: order.fulfillmentMethod || "pickup",
-      priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
-    }).onDuplicateKeyUpdate({ set: { id: order.id } });
-  } else if (supabase) {
-    const row = {
-      id: order.id,
-      customer_name: order.customerName,
-      customer_phone: order.customerPhone,
-      customer_code: null,
-      address: order.address || null,
-      note: order.note || null,
-      items_json: JSON.stringify(orderItems),
-      total_amount: finalTotal,
-      fulfillment_method: order.fulfillmentMethod || "pickup",
-      price_adjustment_percent: Number(order.priceAdjustmentPercent || 0),
-      status: "new",
-    };
-    const { error: insErr } = await supabase.from("catalog_orders").upsert(row, { onConflict: "id" });
-    if (insErr) {
-      console.warn("[Catalog] Supabase insert snake_case error, trying camelCase:", insErr.message);
-      const camelRow = {
+    try {
+      await db.insert(catalogOrders).values({
         id: order.id,
         customerName: order.customerName,
         customerPhone: order.customerPhone,
@@ -605,9 +551,31 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
         totalAmount: finalTotal,
         fulfillmentMethod: order.fulfillmentMethod || "pickup",
         priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
+      }).onDuplicateKeyUpdate({ set: { id: order.id } });
+    } catch (e) {
+      console.warn("[Catalog] MySQL write fallback to Supabase:", e);
+    }
+  }
+
+  const supabase = getSupabaseServerClient();
+  if (supabase) {
+    try {
+      await supabase.from("catalog_orders").upsert({
+        id: order.id,
+        customer_name: order.customerName,
+        customer_phone: normalizeCustomerPhone(order.customerPhone),
+        address: order.address || null,
+        note: order.note || null,
+        items_json: JSON.stringify(orderItems),
+        total_amount: finalTotal,
+        fulfillment_method: order.fulfillmentMethod || "pickup",
+        price_adjustment_percent: Number(order.priceAdjustmentPercent || 0),
         status: "new",
-      };
-      await supabase.from("catalog_orders").upsert(camelRow, { onConflict: "id" });
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      });
+    } catch (e) {
+      console.warn("[Catalog] Supabase order upsert error:", e);
     }
   }
 
@@ -617,103 +585,154 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     customerCode = profile?.customer_code || null;
     if (customerCode) {
       if (db) {
-        await db.update(catalogOrders).set({ customerCode }).where(eq(catalogOrders.id, order.id));
-      } else if (supabase) {
-        await supabase.from("catalog_orders").update({ customer_code: customerCode }).eq("id", order.id);
+        try { await db.update(catalogOrders).set({ customerCode }).where(eq(catalogOrders.id, order.id)); } catch { }
+      }
+      if (supabase) {
+        try { await supabase.from("catalog_orders").update({ customer_code: customerCode }).eq("id", order.id); } catch { }
       }
     }
   } catch (error) {
-    console.warn("[Catalog] Order saved; customer loyalty setup will need retry", {
-      orderId: order.id,
-      reason: error instanceof Error ? error.message : "unknown loyalty error",
-    });
+    console.warn("[Catalog] Loyalty profile delayed:", error);
   }
   return { customerCode };
 }
 
 export async function listCatalogOrders(options: { includeArchived?: boolean } = {}) {
-  const db = await getDb();
-  if (db) {
-    const query = db.select().from(catalogOrders);
-    return (options.includeArchived ? query : query.where(isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
-  }
   const supabase = getSupabaseServerClient();
   if (supabase) {
-    let q = supabase.from("catalog_orders").select("*").order("created_at", { ascending: false });
-    if (!options.includeArchived) {
-      q = q.is("archived_at", null);
-    }
-    const { data, error } = await q;
-    if (!error && Array.isArray(data)) {
-      return data.map((r: any) => ({
-        id: r.id,
-        customerName: r.customer_name ?? r.customerName,
-        customerPhone: r.customer_phone ?? r.customerPhone,
-        customerCode: r.customer_code ?? r.customerCode,
-        address: r.address,
-        note: r.note,
-        itemsJson: r.items_json ?? r.itemsJson,
-        totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
-        status: r.status || "new",
-        fulfillmentMethod: r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup",
-        priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
-        loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
-        createdAt: r.created_at ? new Date(r.created_at) : new Date(),
-        updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
-        archivedAt: r.archived_at ? new Date(r.archived_at) : null,
-        archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
-      }));
+    try {
+      let query = supabase.from("catalog_orders").select("*").order("created_at", { ascending: false });
+      if (!options.includeArchived) {
+        query = query.is("archived_at", null);
+      }
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        return data.map((r: any) => ({
+          id: r.id,
+          customerName: r.customer_name ?? r.customerName ?? "",
+          customerPhone: r.customer_phone ?? r.customerPhone ?? "",
+          customerCode: r.customer_code ?? r.customerCode ?? null,
+          address: r.address ?? null,
+          note: r.note ?? null,
+          itemsJson: typeof r.items_json === "string" ? r.items_json : JSON.stringify(r.items_json ?? []),
+          totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
+          status: (r.status || "new") as CatalogOrderStatus,
+          fulfillmentMethod: (r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup") as "pickup" | "delivery",
+          priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
+          loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
+          createdAt: r.created_at ? new Date(r.created_at) : new Date(),
+          updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
+          archivedAt: r.archived_at ? new Date(r.archived_at) : null,
+          archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
+        }));
+      }
+    } catch (err) {
+      console.warn("[Catalog] listCatalogOrders Supabase error:", err);
     }
   }
-  return [];
+
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    const query = db.select().from(catalogOrders);
+    return (options.includeArchived ? query : query.where(isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+  } catch (err) {
+    console.warn("[Catalog] listCatalogOrders DB error:", err);
+    return [];
+  }
 }
 
 export async function archiveCatalogOrder(id: string) {
   const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لأرشفة الطلب الآن");
-  const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
-  const order = rows[0];
+  const supabase = getSupabaseServerClient();
+  let order: any = null;
+  if (database) {
+    try {
+      const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
+      order = rows[0];
+    } catch { }
+  }
+  if (!order && supabase) {
+    const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
+    order = data;
+  }
   if (!order) throw new Error("الطلب غير موجود");
-  if (order.archivedAt) return { success: true as const, pointsReversed: Number(order.archivedPointsReversed || 0) };
+  if (order.archivedAt || order.archived_at) return { success: true as const, pointsReversed: Number(order.archivedPointsReversed || order.archived_points_reversed || 0) };
   const archivedAt = new Date();
-  const earned = order.status === "delivered" ? Math.max(0, Math.trunc(Number(order.loyaltyPointsAwarded) || 0)) : 0;
+  const earned = order.status === "delivered" ? Math.max(0, Math.trunc(Number(order.loyaltyPointsAwarded || order.loyalty_points_awarded) || 0)) : 0;
   let pointsReversed = 0;
-  if (earned > 0) {
-    const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -earned, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:archive:${new Date(order.updatedAt).getTime()}`, description: `عكس ${earned} نقطة عند أرشفة الطلب #${order.id.slice(-6).toUpperCase()}` });
+  const phone = order.customerPhone || order.customer_phone;
+  const name = order.customerName || order.customer_name;
+  if (earned > 0 && phone) {
+    const event = await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: -earned, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:archive:${new Date(order.updatedAt || order.updated_at || Date.now()).getTime()}`, description: `عكس ${earned} نقطة عند أرشفة الطلب #${order.id.slice(-6).toUpperCase()}` });
     pointsReversed = Math.abs(Number(event.points_delta) || 0);
   }
-  await database.update(catalogOrders).set({ archivedAt, archivedPointsReversed: pointsReversed }).where(eq(catalogOrders.id, id));
+  if (database) {
+    try { await database.update(catalogOrders).set({ archivedAt, archivedPointsReversed: pointsReversed }).where(eq(catalogOrders.id, id)); } catch { }
+  }
+  if (supabase) {
+    try { await supabase.from("catalog_orders").update({ archived_at: archivedAt.toISOString(), archived_points_reversed: pointsReversed }).eq("id", id); } catch { }
+  }
   return { success: true as const, pointsReversed };
 }
 
 export async function restoreCatalogOrder(id: string) {
   const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لاستعادة الطلب الآن");
-  const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
-  const order = rows[0];
-  if (!order) throw new Error("الطلب غير موجود");
-  if (!order.archivedAt) return { success: true as const, pointsRestored: 0 };
-  const points = Math.max(0, Math.trunc(Number(order.archivedPointsReversed) || 0));
-  if (points > 0) {
-    await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:restore:${new Date(order.archivedAt).getTime()}`, description: `استعادة ${points} نقطة بعد استعادة الطلب #${order.id.slice(-6).toUpperCase()}` });
+  const supabase = getSupabaseServerClient();
+  let order: any = null;
+  if (database) {
+    try {
+      const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
+      order = rows[0];
+    } catch { }
   }
-  await database.update(catalogOrders).set({ archivedAt: null, archivedPointsReversed: 0 }).where(eq(catalogOrders.id, id));
+  if (!order && supabase) {
+    const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
+    order = data;
+  }
+  if (!order) throw new Error("الطلب غير موجود");
+  if (!order.archivedAt && !order.archived_at) return { success: true as const, pointsRestored: 0 };
+  const points = Math.max(0, Math.trunc(Number(order.archivedPointsReversed || order.archived_points_reversed) || 0));
+  const phone = order.customerPhone || order.customer_phone;
+  const name = order.customerName || order.customer_name;
+  if (points > 0 && phone) {
+    await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:restore:${new Date().getTime()}`, description: `استعادة ${points} نقطة بعد استعادة الطلب #${order.id.slice(-6).toUpperCase()}` });
+  }
+  if (database) {
+    try { await database.update(catalogOrders).set({ archivedAt: null, archivedPointsReversed: 0 }).where(eq(catalogOrders.id, id)); } catch { }
+  }
+  if (supabase) {
+    try { await supabase.from("catalog_orders").update({ archived_at: null, archived_points_reversed: 0 }).eq("id", id); } catch { }
+  }
   return { success: true as const, pointsRestored: points };
 }
 
 export async function deleteCatalogOrder(id: string) {
   const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لحذف الطلب الآن");
-  const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
-  const order = rows[0];
+  const supabase = getSupabaseServerClient();
+  let order: any = null;
+  if (database) {
+    try {
+      const rows = await database.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
+      order = rows[0];
+    } catch { }
+  }
+  if (!order && supabase) {
+    const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
+    order = data;
+  }
   if (!order) throw new Error("الطلب غير موجود");
-  if (!order.archivedAt) throw new Error("يجب أرشفة الطلب قبل حذفه نهائيًا");
-  await database.delete(catalogOrders).where(eq(catalogOrders.id, id));
-  return { success: true as const, loyaltyPointsReversed: Number(order.archivedPointsReversed || 0) };
+  if (!order.archivedAt && !order.archived_at) throw new Error("يجب أرشفة الطلب قبل حذفه نهائيًا");
+  if (database) {
+    try { await database.delete(catalogOrders).where(eq(catalogOrders.id, id)); } catch { }
+  }
+  if (supabase) {
+    try { await supabase.from("catalog_orders").delete().eq("id", id); } catch { }
+  }
+  return { success: true as const, loyaltyPointsReversed: Number(order.archivedPointsReversed || order.archived_points_reversed || 0) };
 }
 
 export type CatalogOrderStatus = "new" | "contacted" | "confirmed" | "preparing" | "delivered" | "cancelled";
-
 export type LoyaltyTransaction = SupabaseLoyaltyTransaction;
 
 function parseJsonArray<T>(value: unknown): T[] {
@@ -957,24 +976,28 @@ export async function restoreDirectSaleLoyalty(input: { restoreId: string; saleI
 export async function updateCatalogOrderStatus(id: string, status: CatalogOrderStatus) {
   const db = await getDb();
   if (db) {
-    const rows = await db.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
-    const order = rows[0];
-    if (!order) throw new Error("الطلب غير موجود");
-    let awardedPoints = Number(order.loyaltyPointsAwarded || 0);
-    if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
-      const points = await getPointsFromItems(order.itemsJson);
-      if (points > 0) {
-        const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
-        awardedPoints = Math.max(0, Number(event.points_delta) || 0);
+    try {
+      const rows = await db.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
+      const order = rows[0];
+      if (order) {
+        let awardedPoints = Number(order.loyaltyPointsAwarded || 0);
+        if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
+          const points = await getPointsFromItems(order.itemsJson);
+          if (points > 0) {
+            const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
+            awardedPoints = Math.max(0, Number(event.points_delta) || 0);
+          }
+        }
+        if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0) {
+          await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
+          awardedPoints = 0;
+        }
+        await db.update(catalogOrders).set({ status, loyaltyPointsAwarded: awardedPoints }).where(eq(catalogOrders.id, id));
+        return { awardedPoints };
       }
-    }
-    if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0) {
-      await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
-      awardedPoints = 0;
-    }
-    await db.update(catalogOrders).set({ status, loyaltyPointsAwarded: awardedPoints }).where(eq(catalogOrders.id, id));
-    return { awardedPoints };
+    } catch { }
   }
+
   const supabase = getSupabaseServerClient();
   if (supabase) {
     const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
@@ -983,15 +1006,15 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
     let awardedPoints = Number(order.loyalty_points_awarded ?? order.loyaltyPointsAwarded ?? 0);
     const phone = order.customer_phone ?? order.customerPhone;
     const name = order.customer_name ?? order.customerName;
-    const itemsJson = order.items_json ?? order.itemsJson;
+    const itemsJson = typeof order.items_json === "string" ? order.items_json : JSON.stringify(order.items_json ?? []);
     if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
       const points = await getPointsFromItems(itemsJson);
-      if (points > 0) {
+      if (points > 0 && phone) {
         const event = await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
         awardedPoints = Math.max(0, Number(event.points_delta) || 0);
       }
     }
-    if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0) {
+    if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0 && phone) {
       await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
       awardedPoints = 0;
     }
@@ -1001,34 +1024,52 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
   throw new Error("قاعدة البيانات غير متاحة لتحديث الطلب الآن");
 }
 
-export async function getCatalogOrdersForCustomer(orderIds: string[], customerPhone: string) {
-  const db = await getDb();
-  if (db && orderIds.length) {
-    return db.select().from(catalogOrders).where(and(inArray(catalogOrders.id, orderIds), eq(catalogOrders.customerPhone, customerPhone), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
-  }
+export async function getCatalogOrdersForCustomer(orderIds: string[] = [], customerPhone: string) {
+  const phone = normalizeCustomerPhone(customerPhone);
   const supabase = getSupabaseServerClient();
-  if (supabase && orderIds.length) {
-    const { data } = await supabase.from("catalog_orders").select("*").in("id", orderIds).is("archived_at", null).order("created_at", { ascending: false });
-    if (Array.isArray(data)) {
-      return data.filter((r: any) => (r.customer_phone ?? r.customerPhone) === customerPhone).map((r: any) => ({
-        id: r.id,
-        customerName: r.customer_name ?? r.customerName,
-        customerPhone: r.customer_phone ?? r.customerPhone,
-        customerCode: r.customer_code ?? r.customerCode,
-        address: r.address,
-        note: r.note,
-        itemsJson: r.items_json ?? r.itemsJson,
-        totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
-        status: r.status || "new",
-        fulfillmentMethod: r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup",
-        priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
-        loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
-        createdAt: r.created_at ? new Date(r.created_at) : new Date(),
-        updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
-        archivedAt: r.archived_at ? new Date(r.archived_at) : null,
-        archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
-      }));
+  if (supabase) {
+    try {
+      let query = supabase.from("catalog_orders").select("*").is("archived_at", null).order("created_at", { ascending: false });
+      if (orderIds && orderIds.length > 0) {
+        query = query.in("id", orderIds);
+      }
+      const { data, error } = await query;
+      if (!error && Array.isArray(data)) {
+        const filtered = phone
+          ? data.filter((r: any) => normalizeCustomerPhone(r.customer_phone ?? r.customerPhone) === phone)
+          : data;
+        return filtered.map((r: any) => ({
+          id: r.id,
+          customerName: r.customer_name ?? r.customerName ?? "",
+          customerPhone: r.customer_phone ?? r.customerPhone ?? "",
+          customerCode: r.customer_code ?? r.customerCode ?? null,
+          address: r.address ?? null,
+          note: r.note ?? null,
+          itemsJson: typeof r.items_json === "string" ? r.items_json : JSON.stringify(r.items_json ?? []),
+          totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
+          status: (r.status || "new") as CatalogOrderStatus,
+          fulfillmentMethod: (r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup") as "pickup" | "delivery",
+          priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
+          loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
+          createdAt: r.created_at ? new Date(r.created_at) : new Date(),
+          updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
+          archivedAt: r.archived_at ? new Date(r.archived_at) : null,
+          archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
+        }));
+      }
+    } catch (err) {
+      console.warn("[Catalog] getCatalogOrdersForCustomer Supabase error:", err);
     }
   }
-  return [];
+
+  const db = await getDb();
+  if (!db) return [];
+  try {
+    if (orderIds.length > 0) {
+      return db.select().from(catalogOrders).where(and(inArray(catalogOrders.id, orderIds), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+    }
+    return db.select().from(catalogOrders).where(and(eq(catalogOrders.customerPhone, customerPhone), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+  } catch {
+    return [];
+  }
 }
