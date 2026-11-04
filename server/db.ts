@@ -524,6 +524,7 @@ export async function getGlobalAppSettingChunk(key: string, offset = 0, limit = 
 
 export type CatalogOrderInput = {
   id: string;
+  shopId?: string;
   customerName: string;
   customerPhone: string;
   customerCode?: string;
@@ -551,7 +552,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   }, 0);
   let finalTotal = computedTotal;
   if (order.couponCode?.trim()) {
-    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal });
+    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal, shopId: order.shopId });
     if (!coupon.valid) throw new Error(coupon.error_code === "min_order_not_met" ? `الحد الأدنى للكوبون هو ${coupon.min_order_amount || 0} ج.م` : "الكوبون غير صالح أو منتهي.");
     finalTotal = Math.max(0, Number(coupon.final_amount ?? computedTotal));
   }
@@ -562,7 +563,9 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   // Persist the order before any customer/loyalty side effect. Reusing the
   // same client-generated ID makes a retry safe when the first response was lost.
   await db.insert(catalogOrders).values({
-    ...order,
+    id: order.id,
+    customerName: order.customerName,
+    customerPhone: order.customerPhone,
     customerCode: null,
     address: order.address || null,
     note: order.note || null,

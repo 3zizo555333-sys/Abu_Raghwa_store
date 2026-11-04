@@ -80,6 +80,7 @@ export default function PublicCatalogPage() {
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
+  const [publicShopId, setPublicShopId] = useState<string | undefined>(undefined);
   const [rewardLevels, setRewardLevels] = useState<LoyaltyRewardLevel[]>(DEFAULT_LOYALTY_REWARDS);
   const [promoOffers, setPromoOffers] = useState<CloudStoreOffer[]>([]);
   const [categoryFilter, setCategoryFilter] = useState("الكل");
@@ -112,6 +113,7 @@ export default function PublicCatalogPage() {
   const [couponLoadError, setCouponLoadError] = useState(false);
   const [couponLoading, setCouponLoading] = useState(true);
   const applyCatalogSnapshot = (data: any) => {
+    setPublicShopId(typeof data.shopId === "string" ? data.shopId : undefined);
     setProducts((data.registeredProducts || []).filter((product: any) => product.catalogVisible === true && product.deleted_at == null).map((product: any) => ({ id: product.id, catalogSource: "product", name: product.name, unit: product.unit, categoryId: product.categoryId ?? product.category_id ?? null, companyId: product.companyId ?? product.company_id ?? null, retailPrice: product.retailPrice, wholesaleRetailPrice: product.wholesaleRetailPrice, category: product.category, company: product.company, catalogVisible: true, catalogPrice: product.catalogPrice ?? undefined, catalogOldPrice: product.catalogOldPrice ?? undefined, catalogDescription: product.catalogDescription || "", catalogDetailsUrl: product.catalogDetailsUrl || "", loyaltyPoints: product.loyaltyPoints, catalogImageUrl: getTrustedCatalogImageUrl(product.imageUrl) })));
     setManualProducts((data.manualProducts || []).filter((row: any) => row.is_visible === true && row.deleted_at == null).map((row: any) => ({ id: row.id, catalogSource: "manual", name: row.name, unit: row.unit, categoryId: row.category_id ?? null, companyId: row.company_id ?? null, wholesaleRetailPrice: row.price, catalogPrice: row.price, category: String(row.category || ""), company: String(row.company || ""), catalogDescription: row.description, catalogDetailsUrl: row.details_url, catalogVisible: true, loyaltyPoints: row.loyalty_points, catalogImageUrl: getTrustedCatalogImageUrl(row.catalog_image_url), catalogImageStoragePath: row.catalog_image_storage_path || undefined })));
     setRecipes((data.recipes || []).filter((recipe: any) => recipe.catalog_visible === true && recipe.deleted_at == null).map((recipe: any) => ({ id: String(recipe.id), version: Number(recipe.version || 1), name: String(recipe.name || ""), salePrice: Number(recipe.retail_price || 0), productionUnit: String(recipe.production_unit || "وحدة"), category: String(recipe.catalog_category || "تركيبات"), company: String(recipe.catalog_company || "أبو رغوة"), catalogVisible: recipe.catalog_visible === true, catalogPrice: recipe.catalog_price == null ? undefined : Number(recipe.catalog_price), catalogOldPrice: recipe.catalog_old_price == null ? undefined : Number(recipe.catalog_old_price), catalogDescription: String(recipe.catalog_description || ""), catalogDetailsUrl: String(recipe.catalog_details_url || ""), catalogImageUrl: getTrustedCatalogImageUrl(recipe.image_signed_url), imageStoragePath: String(recipe.image_storage_path || "") || undefined, loyaltyPoints: Number(recipe.loyalty_points || 0) })));
@@ -355,6 +357,7 @@ export default function PublicCatalogPage() {
     if (fulfillmentMode === "delivery" && customer.address.trim().length < 3) return toast.error("اكتب العنوان أو المنطقة لأن الطلب للتوصيل");
     const phone = customer.phone.trim();
     const payload = {
+      shopId: publicShopId,
       customerName: customer.name.trim(),
       customerPhone: phone,
       customerCode: customer.customerCode.trim() || undefined,
@@ -393,8 +396,10 @@ export default function PublicCatalogPage() {
       toast.success(assignedCustomerCode
         ? `تم حفظ طلب ${fulfillmentLabel}. كود نقاطك: ${assignedCustomerCode}. احتفظ به لمتابعة رصيدك.`
         : `تم حفظ طلب ${fulfillmentLabel} بنجاح. سلة التسوق جاهزة لطلب جديد.`);
-    } catch {
-      toast.error("تعذر إرسال الطلب الآن، يرجى المحاولة مرة أخرى أو التواصل هاتفياً.");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("[PublicCatalog] createOrder failed", { message, orderId: orderAttempt.current?.id, shopId: publicShopId });
+      toast.error(`تعذر إرسال الطلب: ${message || "خطأ غير معروف"}`);
     }
   };
 

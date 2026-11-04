@@ -251,6 +251,7 @@ export const appRouter = router({
     createOrder: publicProcedure
       .input(z.object({
         id: z.string().min(6).max(100),
+        shopId: z.string().uuid().optional(),
         customerName: z.string().min(2).max(255),
         customerPhone: z.string().min(7).max(32),
         customerCode: z.string().max(48).optional(),
