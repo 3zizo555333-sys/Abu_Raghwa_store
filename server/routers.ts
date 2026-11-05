@@ -264,8 +264,8 @@ export const appRouter = router({
         priceAdjustmentPercent: z.number().min(0).max(500).default(0),
       }))
       .mutation(async ({ input }) => {
-        const loyalty = await db.createCatalogOrder(input);
-        return { success: true, id: input.id, ...(loyalty?.customerCode ? { customerCode: loyalty.customerCode } : {}) };
+        const result = await db.createCatalogOrder(input);
+        return { success: true, id: result?.id || input.id, ...(result?.customerCode ? { customerCode: result.customerCode } : {}) };
       }),
     getCustomerOrders: publicProcedure
       .input(z.object({ orderIds: z.array(z.string().min(6)).min(1).max(50), customerPhone: z.string().min(7).max(32) }))

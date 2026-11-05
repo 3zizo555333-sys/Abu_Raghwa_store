@@ -6,6 +6,7 @@ import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
 import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile, listSupabaseLoyaltyProfiles, validateCatalogCouponServer, type SupabaseLoyaltyTransaction } from "./supabaseLoyalty";
+import { createSupabaseCatalogOrder, getSupabaseCatalogOrdersForCustomer } from "./supabaseCatalogOrders";
 
 export type { InsertStaffAccount } from "../drizzle/schema";
 export type UpdateStaffAccount = Partial<InsertStaffAccount>;
@@ -539,7 +540,7 @@ export type CatalogOrderInput = {
 
 export async function createCatalogOrder(order: CatalogOrderInput) {
   const db = await getDb();
-  if (!db) throw new Error("قاعدة البيانات غير متاحة لتسجيل الطلب الآن");
+  if (!db) return createSupabaseCatalogOrder(order);
   const orderItems = parseJsonArray<{ productId?: unknown; name?: unknown; unit?: unknown; price?: unknown; quantity?: unknown; loyaltyPoints?: unknown }>(order.itemsJson);
   if (!orderItems.length || orderItems.length > 100) throw new Error("يجب أن يحتوي الطلب على صنف واحد إلى 100 صنف.");
   const computedTotal = orderItems.reduce((sum, item) => {
@@ -562,18 +563,26 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
 
   // Persist the order before any customer/loyalty side effect. Reusing the
   // same client-generated ID makes a retry safe when the first response was lost.
-  await db.insert(catalogOrders).values({
-    id: order.id,
-    customerName: order.customerName,
-    customerPhone: order.customerPhone,
-    customerCode: null,
-    address: order.address || null,
-    note: order.note || null,
-    itemsJson: JSON.stringify(orderItems),
-    totalAmount: finalTotal,
-    fulfillmentMethod: order.fulfillmentMethod || "pickup",
-    priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
-  }).onDuplicateKeyUpdate({ set: { id: order.id } });
+  try {
+    await db.insert(catalogOrders).values({
+      id: order.id,
+      customerName: order.customerName,
+      customerPhone: order.customerPhone,
+      customerCode: null,
+      address: order.address || null,
+      note: order.note || null,
+      itemsJson: JSON.stringify(orderItems),
+      totalAmount: finalTotal,
+      fulfillmentMethod: order.fulfillmentMethod || "pickup",
+      priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
+    }).onDuplicateKeyUpdate({ set: { id: order.id } });
+  } catch (error) {
+    console.warn("[Catalog] MySQL order insert failed; falling back to Supabase", {
+      orderId: order.id,
+      reason: error instanceof Error ? error.message : "unknown error",
+    });
+    return createSupabaseCatalogOrder(order);
+  }
 
   let customerCode: string | null = null;
   try {
@@ -586,7 +595,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
       reason: error instanceof Error ? error.message : "unknown loyalty error",
     });
   }
-  return { customerCode };
+  return { id: order.id, customerCode };
 }
 
 export async function listCatalogOrders(options: { includeArchived?: boolean } = {}) {
@@ -904,6 +913,7 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
 
 export async function getCatalogOrdersForCustomer(orderIds: string[], customerPhone: string) {
   const db = await getDb();
-  if (!db || !orderIds.length) return [];
+  if (!db) return getSupabaseCatalogOrdersForCustomer(orderIds, customerPhone);
+  if (!orderIds.length) return [];
   return db.select().from(catalogOrders).where(and(inArray(catalogOrders.id, orderIds), eq(catalogOrders.customerPhone, customerPhone), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
 }
