@@ -1,5 +1,5 @@
 import { browserState } from "@/lib/browserState";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -86,18 +86,39 @@ export default function CatalogManager() {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
   const [pickupQrCodeDataUrl, setPickupQrCodeDataUrl] = useState("");
   const [deliveryQrCodeDataUrl, setDeliveryQrCodeDataUrl] = useState("");
-  // Start the query immediately; the server cookie/session is the source of truth.
-  // If it needs renewal, the ordersError effect renews it through loginWithStaffSession.
-  const [catalogSessionReady, setCatalogSessionReady] = useState(true);
+  const [orders, setOrders] = useState<CatalogOrder[]>([]);
+  const [ordersLoading, setOrdersLoading] = useState(true);
+  const [ordersError, setOrdersError] = useState<Error | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(() => { try { return browserState.get("abu_catalog_order_sound") === "on"; } catch { return false; } });
   const knownOrderIds = useRef<Set<string> | null>(null);
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => toast.error("حسابك غير مخول لمتابعة طلبات الكتالوج") });
-  const { data: orders = [], isLoading: ordersLoading, error: ordersError, refetch: refetchOrders } = trpc.catalog.listOrders.useQuery(undefined, { enabled: catalogSessionReady, refetchInterval: catalogSessionReady ? 10_000 : false, retry: false });
-  const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => refetchOrders() });
+  const loadOrders = useCallback(async (shopId: string) => {
+    setOrdersLoading(true);
+    setOrdersError(null);
+    try {
+      const result = await (getSupabaseClient() as any)
+        .from("catalog_orders")
+        .select("id,shop_id,customer_name,customer_phone,address,note,items,total_amount,status,created_at,updated_at")
+        .eq("shop_id", shopId)
+        .order("created_at", { ascending: false });
+      if (result.error) throw new Error(result.error.message);
+      setOrders((result.data || []).map((row: any) => ({
+        id: String(row.id), customerName: String(row.customer_name || ""), customerPhone: String(row.customer_phone || ""),
+        address: row.address || null, note: row.note || null, itemsJson: JSON.stringify(row.items || []),
+        totalAmount: Number(row.total_amount || 0), status: row.status === "pending" ? "new" : row.status || "new",
+        createdAt: row.created_at, loyaltyPointsAwarded: 0,
+      })));
+    } catch (error) {
+      setOrdersError(error instanceof Error ? error : new Error("تعذر تحميل طلبات الكتالوج من Supabase"));
+      setOrders([]);
+    } finally {
+      setOrdersLoading(false);
+    }
+  }, []);
+  const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId) void loadOrders(catalogShopId); } });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
   const [manualDeletePending, setManualDeletePending] = useState(false);
@@ -141,12 +162,13 @@ export default function CatalogManager() {
     void getActiveShopContext().then(async context => {
       if (!active) return;
       setCatalogShopId(context.shopId);
+      await loadOrders(context.shopId);
       await loadCatalog();
       unsubscribe = await subscribeToShopChanges(context.shopId, () => { void loadCatalog().catch(() => undefined); });
     }).catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"); });
     void listProductCategories().then(setPickerCategories).catch(() => undefined);
     return () => { active = false; if (unsubscribe) void unsubscribe(); };
-  }, []);
+  }, [loadOrders]);
 
   const loadPickerProducts = async (reset = true) => {
     if (pickerLoading && reset === false) return;
@@ -212,7 +234,6 @@ export default function CatalogManager() {
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       new Notification("طلب جديد من كتالوج أبو رغوة", { body: `طلب جديد من ${newOrders[0].customerName} بقيمة ${newOrders[0].totalAmount} ج.م` });
     }
-    if (!soundEnabled) return;
     try {
       const context = new AudioContext();
       // Repeat the three-tone alert three times so a new order is not missed.
@@ -247,19 +268,7 @@ export default function CatalogManager() {
   }, [pickupCatalogUrl, deliveryCatalogUrl]);
 
   useEffect(() => {
-    // The staff sync token is intentionally ephemeral and is cleared on boot.
-    // The server validates the existing staff-session cookie instead.
-    catalogLogin.mutate();
-  }, []);
-
-  useEffect(() => {
-    if (!ordersError) return;
-    setCatalogSessionReady(false);
-    if (!catalogLogin.isPending) catalogLogin.mutate();
-  }, [ordersError]);
-
-  useEffect(() => {
-    if (!catalogSessionReady || !catalogShopId) return;
+    if (!catalogShopId) return;
     let channel: RealtimeChannel | undefined;
     let client: ReturnType<typeof getSupabaseClient> | undefined;
     try {
@@ -267,7 +276,7 @@ export default function CatalogManager() {
       channel = client
         .channel(`catalog-orders:${catalogShopId}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
-          void refetchOrders();
+          void loadOrders(catalogShopId);
         })
         .subscribe();
     } catch {
@@ -276,7 +285,7 @@ export default function CatalogManager() {
     return () => {
       if (channel && client) void client.removeChannel(channel);
     };
-  }, [catalogSessionReady, catalogShopId, refetchOrders]);
+  }, [catalogShopId, loadOrders]);
 
   const safeProducts = useMemo(() => Array.isArray(products) ? products.filter(Boolean) : [], [products]);
   const safeManualProducts = useMemo(() => Array.isArray(manualProducts) ? manualProducts.filter(Boolean) : [], [manualProducts]);

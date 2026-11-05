@@ -35,7 +35,8 @@ const CUSTOMER_STATUS = {
 
 function loadSavedOrders(): SavedOrderReference[] {
   try {
-    const parsed = JSON.parse(browserState.get(CUSTOMER_ORDERS_KEY) || "[]");
+    const raw = typeof window !== "undefined" ? window.localStorage.getItem(CUSTOMER_ORDERS_KEY) : null;
+    const parsed = JSON.parse(raw || "[]");
     return Array.isArray(parsed) ? parsed.filter(item => typeof item?.id === "string" && typeof item?.phone === "string").slice(0, 20) : [];
   } catch {
     return [];
@@ -243,7 +244,7 @@ export default function PublicCatalogPage() {
   const cartLoyaltyPoints = getCatalogOrderLoyaltyPoints(cart);
   const persistOrders = (next: SavedOrderReference[]) => {
     setSavedOrders(next);
-    browserState.set(CUSTOMER_ORDERS_KEY, JSON.stringify(next));
+    try { window.localStorage.setItem(CUSTOMER_ORDERS_KEY, JSON.stringify(next)); } catch { /* storage can be blocked in private browsing */ }
   };
 
   const browseCategory = (category: string) => {
