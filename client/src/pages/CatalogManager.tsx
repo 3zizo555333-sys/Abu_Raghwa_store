@@ -1,4 +1,3 @@
-import { browserState } from "@/lib/browserState";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
@@ -89,7 +88,11 @@ export default function CatalogManager() {
   const [orders, setOrders] = useState<CatalogOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState<Error | null>(null);
-  const [soundEnabled, setSoundEnabled] = useState(() => { try { return browserState.get("abu_catalog_order_sound") === "on"; } catch { return false; } });
+  const [soundEnabled, setSoundEnabled] = useState(() => {
+    try { return window.localStorage.getItem("catalog_audio_enabled") === "true"; } catch { return false; }
+  });
+  const [archiveOpen, setArchiveOpen] = useState(false);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const knownOrderIds = useRef<Set<string> | null>(null);
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
@@ -198,29 +201,81 @@ export default function CatalogManager() {
     return () => window.clearTimeout(timer);
   }, [pickerSearch, pickerCategoryId]);
 
-  const enableOrderSound = () => {
-    try {
-      const context = new AudioContext();
+  const getAudioContext = () => {
+    const AudioContextConstructor = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextConstructor) throw new Error("Web Audio غير مدعوم");
+    if (!audioContextRef.current || audioContextRef.current.state === "closed") audioContextRef.current = new AudioContextConstructor();
+    return audioContextRef.current;
+  };
+
+  const playOrderMelody = (context: AudioContext) => {
+    const now = context.currentTime;
+    [880, 1175, 1568].forEach((frequency, index) => {
       const oscillator = context.createOscillator();
       const gain = context.createGain();
-      oscillator.frequency.value = 880;
-      gain.gain.value = 0.08;
+      const startAt = now + index * 0.18;
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(frequency, startAt);
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.14, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.15);
       oscillator.connect(gain);
       gain.connect(context.destination);
-      oscillator.start();
-      oscillator.stop(context.currentTime + 0.12);
-      oscillator.addEventListener("ended", () => void context.close());
-      browserState.set("abu_catalog_order_sound", "on");
+      oscillator.start(startAt);
+      oscillator.stop(startAt + 0.16);
+    });
+  };
+
+  const speakOrderAlert = () => {
+    if (!("speechSynthesis" in window) || !("SpeechSynthesisUtterance" in window)) return;
+    window.speechSynthesis.cancel();
+    const words = ["رَغْوَة", "رَغْوَة", "رَغْوَة!"];
+    const pitches = [1.0, 1.3, 1.6];
+    words.forEach((word, index) => {
+      const utterance = new SpeechSynthesisUtterance(word);
+      utterance.lang = "ar-EG";
+      utterance.pitch = pitches[index];
+      utterance.rate = 0.9;
+      window.setTimeout(() => window.speechSynthesis.speak(utterance), 650 + index * 620);
+    });
+  };
+
+  useEffect(() => {
+    if (!soundEnabled) return;
+    let initialized = false;
+    const prepareAudio = () => {
+      if (initialized) return;
+      initialized = true;
+      try { void getAudioContext().resume().catch(() => undefined); } catch { /* browser may not support Web Audio */ }
+      window.removeEventListener("pointerdown", prepareAudio, true);
+      window.removeEventListener("keydown", prepareAudio, true);
+      window.removeEventListener("touchstart", prepareAudio, true);
+    };
+    window.addEventListener("pointerdown", prepareAudio, true);
+    window.addEventListener("keydown", prepareAudio, true);
+    window.addEventListener("touchstart", prepareAudio, true);
+    return () => {
+      window.removeEventListener("pointerdown", prepareAudio, true);
+      window.removeEventListener("keydown", prepareAudio, true);
+      window.removeEventListener("touchstart", prepareAudio, true);
+    };
+  }, [soundEnabled]);
+
+  const enableOrderSound = () => {
+    try {
+      window.localStorage.setItem("catalog_audio_enabled", "true");
       setSoundEnabled(true);
-      if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
+      const context = getAudioContext();
+      void context.resume().then(() => playOrderMelody(context));
       toast.success("تم تفعيل رنة طلبات الكتالوج على هذا الهاتف");
+      if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
     } catch {
       toast.error("لم يسمح الهاتف بتفعيل الصوت؛ اضغط الزر مرة أخرى");
     }
   };
 
   useEffect(() => {
-    const currentOrders = (orders as CatalogOrder[]);
+    const currentOrders = orders;
     if (!currentOrders.length) return;
     const currentIds = new Set(currentOrders.map(order => order.id));
     if (!knownOrderIds.current) {
@@ -230,25 +285,20 @@ export default function CatalogManager() {
     const newOrders = currentOrders.filter(order => !knownOrderIds.current?.has(order.id) && order.status === "new");
     knownOrderIds.current = currentIds;
     if (!newOrders.length) return;
-    toast.success(`طلب جديد من ${newOrders[0].customerName}`);
+    const newestOrder = newOrders[0];
+    toast.success(`طلب جديد من ${newestOrder.customerName}`);
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
-      new Notification("طلب جديد من كتالوج أبو رغوة", { body: `طلب جديد من ${newOrders[0].customerName} بقيمة ${newOrders[0].totalAmount} ج.م` });
+      new Notification("طلب جديد من كتالوج أبو رغوة", { body: `طلب جديد من ${newestOrder.customerName} بقيمة ${newestOrder.totalAmount} ج.م` });
     }
-    try {
-      const context = new AudioContext();
-      // Repeat the three-tone alert three times so a new order is not missed.
-      [0, 0.22, 0.44, 1.2, 1.42, 1.64, 2.4, 2.62, 2.84].forEach(delay => {
-        const oscillator = context.createOscillator();
-        const gain = context.createGain();
-        oscillator.frequency.value = delay % 1.2 < 0.7 ? 880 : 1046;
-        gain.gain.value = 0.1;
-        oscillator.connect(gain);
-        gain.connect(context.destination);
-        oscillator.start(context.currentTime + delay);
-        oscillator.stop(context.currentTime + delay + 0.13);
-      });
-      window.setTimeout(() => void context.close(), 3400);
-    } catch { /* the visual toast remains available if audio is blocked */ }
+    if (soundEnabled) {
+      try {
+        const context = getAudioContext();
+        if (context.state === "running") {
+          playOrderMelody(context);
+          speakOrderAlert();
+        }
+      } catch { /* visual notification remains available if audio is blocked */ }
+    }
   }, [orders, soundEnabled]);
 
   useEffect(() => {
@@ -275,7 +325,21 @@ export default function CatalogManager() {
       client = getSupabaseClient();
       channel = client
         .channel(`catalog-orders:${catalogShopId}`)
-        .on("postgres_changes", { event: "*", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, payload => {
+          const row = payload.new as any;
+          const newOrder: CatalogOrder = {
+            id: String(row.id), customerName: String(row.customer_name || ""), customerPhone: String(row.customer_phone || ""),
+            address: row.address || null, note: row.note || null, itemsJson: JSON.stringify(row.items || []),
+            totalAmount: Number(row.total_amount || 0), status: row.status === "pending" ? "new" : row.status || "new",
+            createdAt: row.created_at || new Date().toISOString(), loyaltyPointsAwarded: 0,
+          };
+          setOrders(previous => previous.some(order => order.id === newOrder.id) ? previous : [newOrder, ...previous]);
+          setOrdersLoading(false);
+        })
+        .on("postgres_changes", { event: "UPDATE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
+          void loadOrders(catalogShopId);
+        })
+        .on("postgres_changes", { event: "DELETE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
           void loadOrders(catalogShopId);
         })
         .subscribe();
@@ -336,7 +400,9 @@ export default function CatalogManager() {
   const filteredProducts = useMemo(() => managedProducts.filter(product => `${product.name ?? ""} ${product.category ?? ""} ${product.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [managedProducts, search]);
   const filteredRecipes = useMemo(() => catalogRecipes.filter(recipe => `${recipe.name ?? ""} ${recipe.category ?? ""} ${recipe.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [catalogRecipes, search]);
   const visibleProducts = [...managedProducts, ...catalogRecipes].filter(product => product.catalogVisible === true).length;
-  const newOrders = (orders as CatalogOrder[]).filter(order => order.status === "new").length;
+  const openOrders = orders.filter(order => !["confirmed", "delivered", "cancelled"].includes(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const archivedOrders = orders.filter(order => ["confirmed", "delivered", "cancelled"].includes(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const newOrders = orders.filter(order => order.status === "new").length;
 
   const addCategory = async () => {
     const name = newCategory.trim();
@@ -606,6 +672,20 @@ export default function CatalogManager() {
     }
   };
 
+  const renderOrderCard = (order: CatalogOrder) => {
+    let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = [];
+    try { items = JSON.parse(order.itemsJson); } catch { /* malformed legacy order details */ }
+    const status = STATUS_LABELS[order.status];
+    const isDelivery = order.fulfillmentMethod === "delivery";
+    const phone = order.customerPhone.replace(/\D/g, "");
+    const whatsappPhone = phone.startsWith("00") ? phone.slice(2) : phone.startsWith("0") ? `20${phone.slice(1)}` : phone;
+    return <article key={order.id} className="rounded-2xl border border-slate-200 p-4">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div>
+      <div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map((item, index) => <p key={`${item.name}-${index}`}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div>
+      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div>
+    </article>;
+  };
+
   const copyCatalogLink = async () => {
     try { await navigator.clipboard.writeText(catalogUrl); toast.success("تم نسخ رابط كتالوج المحل"); } catch { toast.error("تعذر نسخ الرابط تلقائياً"); }
   };
@@ -694,6 +774,18 @@ export default function CatalogManager() {
           </div>
         </header>
 
+        <section aria-labelledby="open-orders-heading" className="scroll-mt-4">
+          <Card className="border-0 shadow-sm ring-2 ring-orange-100">
+            <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle id="open-orders-heading" className="flex items-center gap-2"><History className="text-orange-600" />الطلبات الجديدة / قيد الانتظار <span className="rounded-full bg-orange-100 px-2 py-0.5 text-sm text-orange-800">{openOrders.length}</span></CardTitle><CardDescription>الطلبات الجديدة وقيد المتابعة تظهر هنا فور وصولها.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader>
+            <CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : openOrders.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات جديدة أو قيد الانتظار.</p> : <div className="space-y-3">{openOrders.map(renderOrderCard)}</div>}</CardContent>
+          </Card>
+        </section>
+        <details className="group rounded-2xl" open={archiveOpen} onToggle={event => setArchiveOpen(event.currentTarget.open)}>
+          <summary className="cursor-pointer list-none rounded-2xl border bg-white p-4 shadow-sm"><span className="flex items-center justify-between font-black text-slate-900"><span className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />أرشيف الطلبات المكتملة <span className="rounded-full bg-slate-100 px-2 py-0.5 text-sm">{archivedOrders.length}</span></span><span className="text-sm text-slate-500">{archiveOpen ? "إخفاء ▲" : "عرض ▼"}</span></span></summary>
+          <div className="mt-3 space-y-4"><Card className="border-0 shadow-sm"><CardContent className="space-y-3 p-4">{archivedOrders.length ? archivedOrders.map(renderOrderCard) : <p className="py-5 text-center text-sm text-slate-500">لا توجد طلبات مكتملة أو ملغية في الأرشيف.</p>}</CardContent></Card>
+            {archivedOrders.length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{archivedOrders.map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} onChange={event => void updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
+          </div>
+        </details>
         <section className="grid gap-4 md:grid-cols-3">
           <Card className="border-0 shadow-sm"><CardContent className="flex items-center gap-3 p-5"><span className="rounded-2xl bg-orange-100 p-3 text-orange-700"><Package /></span><div><p className="text-xs text-slate-500">منتجات ظاهرة للزبون</p><p className="text-2xl font-black text-slate-900">{visibleProducts}</p></div></CardContent></Card>
           <Card className="border-0 shadow-sm"><CardContent className="flex items-center gap-3 p-5"><span className="rounded-2xl bg-amber-100 p-3 text-amber-700"><ShoppingBag /></span><div><p className="text-xs text-slate-500">طلبات جديدة تحتاج متابعة</p><p className="text-2xl font-black text-slate-900">{newOrders}</p></div></CardContent></Card>
@@ -900,8 +992,6 @@ export default function CatalogManager() {
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-sm"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle className="flex items-center gap-2"><History className="text-orange-600" />طلبات الكتالوج</CardTitle><CardDescription>هذه الطلبات تصل عند ضغط العميل «إرسال الطلب»، ثم تواصل معه لتأكيد التجهيز والتوصيل.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader><CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : (orders as CatalogOrder[]).length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات من الكتالوج بعد.</p> : <div className="space-y-3">{(orders as CatalogOrder[]).map(order => { let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = []; try { items = JSON.parse(order.itemsJson); } catch {} const status = STATUS_LABELS[order.status]; const isDelivery = order.fulfillmentMethod === "delivery"; return <article key={order.id} className="rounded-2xl border border-slate-200 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div><div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map(item => <p key={item.name}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => window.open(`https://wa.me/2${order.customerPhone.replace(/^0/, "")}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next || updateOrderStatus.isPending} onClick={() => updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div></article>; })}</div>}</CardContent></Card>
-        {(orders as CatalogOrder[]).length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{(orders as CatalogOrder[]).map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} disabled={updateOrderStatus.isPending} onChange={event => updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
         <AlertDialog open={Boolean(manualProductToDelete)} onOpenChange={open => { if (!open && !manualDeletePending) setManualProductToDelete(null); }}>
           <AlertDialogContent dir="rtl">
             <AlertDialogHeader>
