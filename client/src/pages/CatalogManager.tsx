@@ -32,7 +32,9 @@ type CatalogOrder = {
   customerPhone: string;
   address: string | null;
   note: string | null;
-  itemsJson: string;
+  itemsJson?: string;
+  items?: unknown;
+  catalog_order_items?: unknown;
   totalAmount: number;
   loyaltyPointsAwarded?: number;
   fulfillmentMethod?: "pickup" | "delivery";
@@ -93,6 +95,7 @@ export default function CatalogManager() {
   });
   const [archiveOpen, setArchiveOpen] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const ordersRefreshTimer = useRef<number | null>(null);
   const knownOrderIds = useRef<Set<string> | null>(null);
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
@@ -240,6 +243,17 @@ export default function CatalogManager() {
     });
   };
 
+  const playOrderAlert = () => {
+    if (!soundEnabled) return;
+    try {
+      const context = getAudioContext();
+      void context.resume().then(() => {
+        playOrderMelody(context);
+        speakOrderAlert();
+      }).catch(() => undefined);
+    } catch { /* audio must never interrupt order fetching */ }
+  };
+
   useEffect(() => {
     if (!soundEnabled) return;
     let initialized = false;
@@ -290,16 +304,7 @@ export default function CatalogManager() {
     if (typeof Notification !== "undefined" && Notification.permission === "granted") {
       new Notification("طلب جديد من كتالوج أبو رغوة", { body: `طلب جديد من ${newestOrder.customerName} بقيمة ${newestOrder.totalAmount} ج.م` });
     }
-    if (soundEnabled) {
-      try {
-        const context = getAudioContext();
-        if (context.state === "running") {
-          playOrderMelody(context);
-          speakOrderAlert();
-        }
-      } catch { /* visual notification remains available if audio is blocked */ }
-    }
-  }, [orders, soundEnabled]);
+  }, [orders]);
 
   useEffect(() => {
     if (!catalogUrl) return;
@@ -326,30 +331,43 @@ export default function CatalogManager() {
       channel = client
         .channel(`catalog-orders:${catalogShopId}`)
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, payload => {
-          const row = payload.new as any;
-          const newOrder: CatalogOrder = {
-            id: String(row.id), customerName: String(row.customer_name || ""), customerPhone: String(row.customer_phone || ""),
-            address: row.address || null, note: row.note || null, itemsJson: JSON.stringify(row.items || []),
-            totalAmount: Number(row.total_amount || 0), status: row.status === "pending" ? "new" : row.status || "new",
-            createdAt: row.created_at || new Date().toISOString(), loyaltyPointsAwarded: 0,
-          };
-          setOrders(previous => previous.some(order => order.id === newOrder.id) ? previous : [newOrder, ...previous]);
-          setOrdersLoading(false);
+          try {
+            const insertedId = String((payload.new as any)?.id ?? "");
+            try { playOrderAlert(); } catch { /* keep alert isolated from refetch */ }
+            if (insertedId) {
+              const known = knownOrderIds.current || new Set<string>();
+              known.add(insertedId);
+              knownOrderIds.current = known;
+            }
+            try {
+              if (ordersRefreshTimer.current !== null) window.clearTimeout(ordersRefreshTimer.current);
+              ordersRefreshTimer.current = window.setTimeout(() => {
+                ordersRefreshTimer.current = null;
+                try { void loadOrders(catalogShopId); } catch { /* loadOrders reports its own errors */ }
+              }, 100);
+            } catch {
+              try { void loadOrders(catalogShopId); } catch { /* never let a burst of events crash React */ }
+            }
+          } catch { /* malformed Realtime payloads must not escape the listener */ }
         })
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
-          void loadOrders(catalogShopId);
+          try { void loadOrders(catalogShopId); } catch { /* safely ignore transient listener failures */ }
         })
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
-          void loadOrders(catalogShopId);
+          try { void loadOrders(catalogShopId); } catch { /* safely ignore transient listener failures */ }
         })
         .subscribe();
     } catch {
       // The server query and polling remain the fallback when Realtime is unavailable.
     }
     return () => {
+      if (ordersRefreshTimer.current !== null) {
+        window.clearTimeout(ordersRefreshTimer.current);
+        ordersRefreshTimer.current = null;
+      }
       if (channel && client) void client.removeChannel(channel);
     };
-  }, [catalogShopId, loadOrders]);
+  }, [catalogShopId, loadOrders, soundEnabled]);
 
   const safeProducts = useMemo(() => Array.isArray(products) ? products.filter(Boolean) : [], [products]);
   const safeManualProducts = useMemo(() => Array.isArray(manualProducts) ? manualProducts.filter(Boolean) : [], [manualProducts]);
@@ -673,15 +691,25 @@ export default function CatalogManager() {
   };
 
   const renderOrderCard = (order: CatalogOrder) => {
-    let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = [];
-    try { items = JSON.parse(order.itemsJson); } catch { /* malformed legacy order details */ }
-    const status = STATUS_LABELS[order.status];
-    const isDelivery = order.fulfillmentMethod === "delivery";
-    const phone = order.customerPhone.replace(/\D/g, "");
+    const rawItems = order?.items || order?.catalog_order_items || [];
+    let items: Array<{ name?: string; quantity?: number; price?: number; loyaltyPoints?: number }> = Array.isArray(rawItems) ? rawItems : [];
+    if (!items.length && typeof order?.itemsJson === "string") {
+      try {
+        const parsedItems = JSON.parse(order.itemsJson);
+        items = Array.isArray(parsedItems) ? parsedItems : [];
+      } catch { /* malformed legacy order details */ }
+    }
+    const status = STATUS_LABELS[order?.status] || STATUS_LABELS.new;
+    const isDelivery = order?.fulfillmentMethod === "delivery";
+    const safePhone = String(order?.customerPhone || "");
+    const phone = safePhone.replace(/\D/g, "");
+    const safeTotal = Number.isFinite(Number(order?.totalAmount)) ? Number(order.totalAmount) : 0;
+    const timestamp = order?.createdAt ? new Date(order.createdAt) : null;
+    const safeDate = timestamp && Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString("ar-EG") : "تاريخ غير متاح";
     const whatsappPhone = phone.startsWith("00") ? phone.slice(2) : phone.startsWith("0") ? `20${phone.slice(1)}` : phone;
     return <article key={order.id} className="rounded-2xl border border-slate-200 p-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div>
-      <div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map((item, index) => <p key={`${item.name}-${index}`}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order?.customerName || "عميل"}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{safePhone || "—"}</p><p className="text-xs text-slate-500">{safeDate}{order?.address ? ` · ${order.address}` : ""}</p>{order?.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{safeTotal} ج.م</p></div></div>
+      <div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{(items || []).map((item, index) => { const quantity = Number.isFinite(Number(item?.quantity)) ? Number(item.quantity) : 0; const price = Number.isFinite(Number(item?.price)) ? Number(item.price) : 0; return <p key={`${item?.name || "صنف"}-${index}`}>• {item?.name || "صنف"} × {quantity} — {price * quantity} ج.م {Number(item?.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints) * quantity} نقطة</span>}</p>; })}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div>
       <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div>
     </article>;
   };
