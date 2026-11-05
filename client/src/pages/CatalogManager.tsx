@@ -24,6 +24,8 @@ import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, 
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
 import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import type { RealtimeChannel } from "@supabase/supabase-js";
 
 type CatalogOrder = {
   id: string;
@@ -84,10 +86,11 @@ export default function CatalogManager() {
   const [qrCodeDataUrl, setQrCodeDataUrl] = useState("");
   const [pickupQrCodeDataUrl, setPickupQrCodeDataUrl] = useState("");
   const [deliveryQrCodeDataUrl, setDeliveryQrCodeDataUrl] = useState("");
-  const [catalogSessionReady, setCatalogSessionReady] = useState(false);
+  // Start the query immediately; the server cookie/session is the source of truth.
+  // If it needs renewal, the ordersError effect renews it through loginWithStaffSession.
+  const [catalogSessionReady, setCatalogSessionReady] = useState(true);
   const [soundEnabled, setSoundEnabled] = useState(() => { try { return browserState.get("abu_catalog_order_sound") === "on"; } catch { return false; } });
   const knownOrderIds = useRef<Set<string> | null>(null);
-  const hasCatalogAccess = Boolean(browserState.get("abu_staff_sync_token"));
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
@@ -212,17 +215,18 @@ export default function CatalogManager() {
     if (!soundEnabled) return;
     try {
       const context = new AudioContext();
-      [0, 0.22, 0.44].forEach(delay => {
+      // Repeat the three-tone alert three times so a new order is not missed.
+      [0, 0.22, 0.44, 1.2, 1.42, 1.64, 2.4, 2.62, 2.84].forEach(delay => {
         const oscillator = context.createOscillator();
         const gain = context.createGain();
-        oscillator.frequency.value = 880;
+        oscillator.frequency.value = delay % 1.2 < 0.7 ? 880 : 1046;
         gain.gain.value = 0.1;
         oscillator.connect(gain);
         gain.connect(context.destination);
         oscillator.start(context.currentTime + delay);
         oscillator.stop(context.currentTime + delay + 0.13);
       });
-      window.setTimeout(() => void context.close(), 900);
+      window.setTimeout(() => void context.close(), 3400);
     } catch { /* the visual toast remains available if audio is blocked */ }
   }, [orders, soundEnabled]);
 
@@ -243,15 +247,36 @@ export default function CatalogManager() {
   }, [pickupCatalogUrl, deliveryCatalogUrl]);
 
   useEffect(() => {
-    if (!hasCatalogAccess) return;
+    // The staff sync token is intentionally ephemeral and is cleared on boot.
+    // The server validates the existing staff-session cookie instead.
     catalogLogin.mutate();
-  }, [hasCatalogAccess]);
+  }, []);
 
   useEffect(() => {
     if (!ordersError) return;
     setCatalogSessionReady(false);
-    if (hasCatalogAccess && !catalogLogin.isPending) catalogLogin.mutate();
-  }, [ordersError, hasCatalogAccess]);
+    if (!catalogLogin.isPending) catalogLogin.mutate();
+  }, [ordersError]);
+
+  useEffect(() => {
+    if (!catalogSessionReady || !catalogShopId) return;
+    let channel: RealtimeChannel | undefined;
+    let client: ReturnType<typeof getSupabaseClient> | undefined;
+    try {
+      client = getSupabaseClient();
+      channel = client
+        .channel(`catalog-orders:${catalogShopId}`)
+        .on("postgres_changes", { event: "*", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
+          void refetchOrders();
+        })
+        .subscribe();
+    } catch {
+      // The server query and polling remain the fallback when Realtime is unavailable.
+    }
+    return () => {
+      if (channel && client) void client.removeChannel(channel);
+    };
+  }, [catalogSessionReady, catalogShopId, refetchOrders]);
 
   const safeProducts = useMemo(() => Array.isArray(products) ? products.filter(Boolean) : [], [products]);
   const safeManualProducts = useMemo(() => Array.isArray(manualProducts) ? manualProducts.filter(Boolean) : [], [manualProducts]);
@@ -597,6 +622,12 @@ export default function CatalogManager() {
     }
   };
 
+  const notifyAdminOnWhatsApp = (order: CatalogOrder, items: Array<{ name: string; quantity: number; price: number }>) => {
+    const summary = items.map(item => `- ${item.name} × ${item.quantity} = ${item.price * item.quantity} ج.م`).join("\n");
+    const message = `طلب كتالوج جديد\nالعميل: ${order.customerName}\nالهاتف: ${order.customerPhone}\n${order.address ? `العنوان: ${order.address}\n` : ""}الإجمالي: ${order.totalAmount} ج.م\n${summary}\nرقم الطلب: ${order.id}`;
+    window.open(`https://wa.me/201069035599?text=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
+  };
+
   const shareOnFacebook = () => {
     const message = "تسوق من كتالوج أبو رغوة — أصل الرغوة في مصر. اختَر منتجاتك وأرسل طلبك بسهولة.";
     window.open(`https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(catalogUrl)}&quote=${encodeURIComponent(message)}`, "_blank", "noopener,noreferrer");
@@ -852,7 +883,7 @@ export default function CatalogManager() {
           </CardContent>
         </Card>
 
-        <Card className="border-0 shadow-sm"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle className="flex items-center gap-2"><History className="text-orange-600" />طلبات الكتالوج</CardTitle><CardDescription>هذه الطلبات تصل عند ضغط العميل «إرسال الطلب»، ثم تواصل معه لتأكيد التجهيز والتوصيل.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader><CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : (orders as CatalogOrder[]).length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات من الكتالوج بعد.</p> : <div className="space-y-3">{(orders as CatalogOrder[]).map(order => { let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = []; try { items = JSON.parse(order.itemsJson); } catch {} const status = STATUS_LABELS[order.status]; const isDelivery = order.fulfillmentMethod === "delivery"; return <article key={order.id} className="rounded-2xl border border-slate-200 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div><div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map(item => <p key={item.name}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => window.open(`https://wa.me/2${order.customerPhone.replace(/^0/, "")}`, "_blank")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next || updateOrderStatus.isPending} onClick={() => updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div></article>; })}</div>}</CardContent></Card>
+        <Card className="border-0 shadow-sm"><CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle className="flex items-center gap-2"><History className="text-orange-600" />طلبات الكتالوج</CardTitle><CardDescription>هذه الطلبات تصل عند ضغط العميل «إرسال الطلب»، ثم تواصل معه لتأكيد التجهيز والتوصيل.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader><CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : (orders as CatalogOrder[]).length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات من الكتالوج بعد.</p> : <div className="space-y-3">{(orders as CatalogOrder[]).map(order => { let items: Array<{ name: string; quantity: number; price: number; loyaltyPoints?: number }> = []; try { items = JSON.parse(order.itemsJson); } catch {} const status = STATUS_LABELS[order.status]; const isDelivery = order.fulfillmentMethod === "delivery"; return <article key={order.id} className="rounded-2xl border border-slate-200 p-4"><div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order.customerName}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{order.customerPhone}</p><p className="text-xs text-slate-500">{new Date(order.createdAt).toLocaleString("ar-EG")}{order.address ? ` · ${order.address}` : ""}</p>{order.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{order.totalAmount} ج.م</p></div></div><div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{items.map(item => <p key={item.name}>• {item.name} × {item.quantity} — {item.price * item.quantity} ج.م {Number(item.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints || 0) * item.quantity} نقطة</span>}</p>)}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div><div className="mt-3 flex flex-wrap gap-2"><Button size="sm" onClick={() => notifyAdminOnWhatsApp(order, items)} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />إشعار الإدارة واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next || updateOrderStatus.isPending} onClick={() => updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div></article>; })}</div>}</CardContent></Card>
         {(orders as CatalogOrder[]).length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{(orders as CatalogOrder[]).map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} disabled={updateOrderStatus.isPending} onChange={event => updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
         <AlertDialog open={Boolean(manualProductToDelete)} onOpenChange={open => { if (!open && !manualDeletePending) setManualProductToDelete(null); }}>
           <AlertDialogContent dir="rtl">
