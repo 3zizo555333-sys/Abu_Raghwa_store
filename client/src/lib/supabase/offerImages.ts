@@ -11,7 +11,7 @@ function explainUploadError(error: unknown): string {
   return message || "تعذر رفع صورة العرض. أعد المحاولة.";
 }
 
-export async function uploadCatalogOfferImage(offerId: string, file: File) {
+export async function uploadCatalogOfferImage(offerId: string, file: File, options: { preserveTransparency?: boolean } = {}) {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext();
   if (role !== "manager" && role !== "admin") {
@@ -21,10 +21,13 @@ export async function uploadCatalogOfferImage(offerId: string, file: File) {
   if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
     throw new Error("نوع الصورة غير مدعوم. اختر صورة JPEG أو PNG أو WebP.");
   }
+  if (options.preserveTransparency && (file.size <= 0 || file.size > 20 * 1024 * 1024)) {
+    throw new Error("حجم الصورة الشفافة يتجاوز الحد المسموح (20 MB).");
+  }
 
   let image: Blob;
   try {
-    image = await prepareCloudProductImage(file, { allowJpegFallback: true });
+    image = options.preserveTransparency ? file : await prepareCloudProductImage(file, { allowJpegFallback: true });
   } catch (error) {
     throw new Error(explainUploadError(error));
   }

@@ -101,6 +101,17 @@ function layerBounds(layer: ProductLayer, bitmap: DrawableImage): LayerBounds {
   return { left: centerX - width / 2, top: centerY - height / 2, width, height, centerX, centerY };
 }
 
+function clampLayerToStage(layer: ProductLayer, bitmap: DrawableImage): ProductLayer {
+  const bounds = layerBounds(layer, bitmap);
+  const centerX = bounds.width >= STAGE_SIZE
+    ? STAGE_SIZE / 2
+    : Math.max(bounds.width / 2, Math.min(STAGE_SIZE - bounds.width / 2, layer.x * STAGE_SIZE));
+  const bottom = bounds.height >= STAGE_SIZE
+    ? STAGE_SIZE / 2 + bounds.height / 2
+    : Math.max(bounds.height, Math.min(STAGE_SIZE, layer.baseline * STAGE_SIZE));
+  return { ...layer, x: centerX / STAGE_SIZE, baseline: bottom / STAGE_SIZE };
+}
+
 function shadowForScale(scale: number) {
   const normalized = Math.max(0.45, Math.min(MAX_SCALE_PERCENT / 100, scale));
   const blur = Math.round(Math.min(34, 10 + normalized * 7));
@@ -313,6 +324,7 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
 
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (isProcessing || isSaving) return;
+    event.preventDefault();
     const point = selectedPoint(event);
     const topFirst = [...layers].sort((a, b) => b.depth - a.depth);
     const hit = topFirst.find(layer => {
@@ -330,14 +342,15 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = dragRef.current;
     if (!drag) return;
+    event.preventDefault();
     const bounds = event.currentTarget.getBoundingClientRect();
     const deltaX = (event.clientX - drag.startX) / bounds.width;
     const deltaY = (event.clientY - drag.startY) / bounds.height;
-    setLayers(current => current.map(layer => layer.id === drag.id ? {
-      ...layer,
-      x: Math.max(0.13, Math.min(0.87, drag.originX + deltaX)),
-      baseline: Math.max(0.34, Math.min(0.95, drag.originBaseline + deltaY)),
-    } : layer));
+    const bitmap = bitmapsRef.current.get(drag.id);
+    if (!bitmap) return;
+    setLayers(current => current.map(layer => layer.id === drag.id
+      ? clampLayerToStage({ ...layer, x: drag.originX + deltaX, baseline: drag.originBaseline + deltaY }, bitmap)
+      : layer));
   };
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
@@ -408,7 +421,7 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
               <div className="mt-3 flex flex-wrap gap-2">{layers.map((layer, index) => <button key={layer.id} type="button" onClick={() => setSelectedLayerId(layer.id)} className={`max-w-full truncate rounded-full border px-3 py-1.5 text-xs font-black ${selectedLayerId === layer.id ? "border-violet-500 bg-violet-100 text-violet-950" : "border-slate-200 bg-white text-slate-700"}`}>{index === 0 ? "الأساسي · " : ""}{layer.name}</button>)}</div>
               {selectedLayer && <div className="mt-3 rounded-xl bg-slate-50 p-3">
                 <div className="flex items-center justify-between gap-2"><div><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><p className="text-[11px] text-slate-500">يمكن التكبير حتى 400%</p></div><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
-                <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min={MIN_SCALE_PERCENT / 100} max={MAX_SCALE_PERCENT / 100} step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, Number(event.target.value))) } : layer))} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /><Input aria-label="حجم المنتج بالنسبة المئوية" type="number" min={MIN_SCALE_PERCENT} max={MAX_SCALE_PERCENT} step="5" value={Math.round(selectedLayer.scale * 100)} disabled={isSaving || isProcessing} onChange={event => { const value = Number(event.target.value); if (!Number.isFinite(value)) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, value / 100)) } : layer)); }} className="h-8 w-20 text-center text-xs font-black" /></div>
+                <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min={MIN_SCALE_PERCENT / 100} max={MAX_SCALE_PERCENT / 100} step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => { const bitmap = bitmapsRef.current.get(selectedLayer.id); if (!bitmap) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? clampLayerToStage({ ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, Number(event.target.value))) }, bitmap) : layer)); }} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /><Input aria-label="حجم المنتج بالنسبة المئوية" type="number" min={MIN_SCALE_PERCENT} max={MAX_SCALE_PERCENT} step="5" value={Math.round(selectedLayer.scale * 100)} disabled={isSaving || isProcessing} onChange={event => { const value = Number(event.target.value); const bitmap = bitmapsRef.current.get(selectedLayer.id); if (!Number.isFinite(value) || !bitmap) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? clampLayerToStage({ ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, value / 100)) }, bitmap) : layer)); }} className="h-8 w-20 text-center text-xs font-black" /></div>
                 <div className="mt-3 flex items-center justify-between gap-2"><label htmlFor="product-stage-rotation" className="text-xs font-black text-slate-700">الدوران: {Math.round(selectedLayer.rotation)}°</label><Button type="button" size="sm" variant={selectedLayer.shadow ? "default" : "outline"} disabled={isSaving || isProcessing} onClick={() => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, shadow: !layer.shadow } : layer))} className={selectedLayer.shadow ? "h-8 bg-violet-700 text-xs" : "h-8 text-xs"}><Sparkles className="ml-1 h-3.5 w-3.5" />{selectedLayer.shadow ? "إيقاف الظل ثلاثي الأبعاد" : "إضافة ظل ثلاثي الأبعاد"}</Button></div>
                 <Input id="product-stage-rotation" aria-label="تدوير المنتج" type="range" min="-45" max="45" step="1" value={selectedLayer.rotation} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, rotation: Number(event.target.value) } : layer))} className="mt-1 h-8 cursor-pointer accent-violet-700" />
                 <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة لتحريكها، واستخدم منزلق الحجم والدوران باللمس أو الفأرة. تُطبّق المعاينة والتصدير التغييرات نفسها مع خلفية شفافة.</p>
@@ -430,7 +443,7 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
             </div>
             <div className="rounded-2xl border border-dashed border-slate-300 bg-[linear-gradient(45deg,#f1f5f9_25%,transparent_25%,transparent_75%,#f1f5f9_75%),linear-gradient(45deg,#f1f5f9_25%,white_25%,white_75%,#f1f5f9_75%)] bg-[length:24px_24px] bg-[position:0_0,12px_12px] p-2">
               <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] font-bold text-slate-600"><span>كادر شفاف — اسحب الصور إليه أو حرّك الطبقات</span>{layers.length > 0 && <span>{layers.length} / {MAX_PRODUCTS} منتجات</span>}</div>
-              <canvas ref={canvasRef} aria-label="كادر ترتيب المنتجات" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} className={`mx-auto block aspect-square w-full max-w-[400px] rounded-xl ${layers.length ? "cursor-move touch-none" : "border-2 border-dashed border-slate-300"}`} />
+              <canvas ref={canvasRef} aria-label="كادر ترتيب المنتجات" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} style={{ touchAction: "none", transformOrigin: "center center" }} className={`mx-auto block aspect-square w-full max-w-[400px] rounded-xl ${layers.length ? "cursor-move touch-none" : "border-2 border-dashed border-slate-300"}`} />
               {!layers.length && <p className="pb-2 text-center text-xs text-slate-500">أضف الصور من الكاميرا أو المعرض، أو أفلتها هنا، ثم اضغط «معالجة وتنسيق العرض تلقائياً».</p>}
             </div>
             <p className="text-[11px] leading-5 text-slate-500">المنتج الأساسي يظهر أمام بقية المنتجات، مع محاذاة القواعد وظلال ناعمة. الخلفية الشطرنجية للمعاينة فقط؛ التصدير WebP شفاف مضغوط، أو PNG عند عدم دعم WebP.</p>
