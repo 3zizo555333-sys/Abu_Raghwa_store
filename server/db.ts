@@ -762,6 +762,7 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
   const offerSnapshot = JSON.stringify({
     id: input.offerId,
     title: offerTitle,
+    originalTotalRetail: Math.max(0, Number(offer.originalTotalRetail) || Number(offer.originalPrice) || offerPrice),
     strategyName: String(offer.strategyName || "عرض أبو رغوة"),
     items: offer.items.map((rawItem: unknown) => {
       const item = rawItem && typeof rawItem === "object" ? rawItem as Record<string, unknown> : {};
@@ -782,7 +783,18 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
       eq(offerPurchaseRequests.customerCode, profile.customerCode),
       eq(offerPurchaseRequests.status, "pending"),
     )).limit(1);
-    if (existingRequests[0]) return { id: existingRequests[0].id, offerTitle: existingRequests[0].offerTitle, status: existingRequests[0].status, loyaltyPointsAwarded: Number(existingRequests[0].loyaltyPointsAwarded || 0), createdAt: existingRequests[0].createdAt };
+    if (existingRequests[0]) return {
+      id: existingRequests[0].id,
+      offerTitle: existingRequests[0].offerTitle,
+      status: existingRequests[0].status,
+      loyaltyPointsAwarded: Number(existingRequests[0].loyaltyPointsAwarded || 0),
+      createdAt: existingRequests[0].createdAt,
+      created: false,
+      customerName: existingRequests[0].customerName,
+      customerPhone: existingRequests[0].customerPhone,
+      customerNote: existingRequests[0].customerNote,
+      offerSnapshot: existingRequests[0].offerSnapshot,
+    };
 
     const id = `offer-purchase-${randomUUID()}`;
     await tx.insert(offerPurchaseRequests).values({
@@ -800,7 +812,18 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
     });
     const created = await tx.select().from(offerPurchaseRequests).where(eq(offerPurchaseRequests.id, id)).limit(1);
     if (!created[0]) throw new Error("تعذر حفظ طلب العرض");
-    return { id: created[0].id, offerTitle: created[0].offerTitle, status: created[0].status, loyaltyPointsAwarded: Number(created[0].loyaltyPointsAwarded || 0), createdAt: created[0].createdAt };
+    return {
+      id: created[0].id,
+      offerTitle: created[0].offerTitle,
+      status: created[0].status,
+      loyaltyPointsAwarded: Number(created[0].loyaltyPointsAwarded || 0),
+      createdAt: created[0].createdAt,
+      created: true,
+      customerName: created[0].customerName,
+      customerPhone: created[0].customerPhone,
+      customerNote: created[0].customerNote,
+      offerSnapshot: created[0].offerSnapshot,
+    };
   });
 }
 

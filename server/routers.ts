@@ -12,6 +12,7 @@ import { parseInvoiceDataUrl, safeInvoiceFilename } from "./invoiceUpload";
 import { invokeLLM } from "./_core/llm";
 import { buildEmployeeFinanceSummary, EMPLOYEE_FINANCE_KEY, getMonthKey, hashEmployeeFinancePin, normalizeEmployeeFinanceStore, type EmployeeFinanceStore } from "./employeeFinance";
 import { publicOfferData, publicOfferJson } from "./sharedOffers";
+import { notifyCatalogOrder, notifyOfferPurchase } from "./telegramNotifications";
 
 export const appRouter = router({
   system: systemRouter,
@@ -192,7 +193,14 @@ export const appRouter = router({
       .mutation(async ({ input }) => db.registerOfferCustomer(input)),
     createOfferPurchaseRequest: publicProcedure
       .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48), customerNote: z.string().max(1000).optional() }))
-      .mutation(async ({ input }) => db.createOfferPurchaseRequest(input)),
+      .mutation(async ({ input }) => {
+        const request = await db.createOfferPurchaseRequest(input);
+        if (request.created) {
+          try { await notifyOfferPurchase(request); }
+          catch (error) { console.warn("[Telegram] Offer notification skipped", { reason: error instanceof Error ? error.name : "unknown" }); }
+        }
+        return request;
+      }),
     getOfferPurchaseStatus: publicProcedure
       .input(z.object({ id: z.string().min(16).max(96), customerCode: z.string().min(4).max(48) }))
       .query(async ({ input }) => db.getCustomerOfferPurchaseStatus(input)),
@@ -265,6 +273,11 @@ export const appRouter = router({
       }))
       .mutation(async ({ input }) => {
         const result = await db.createCatalogOrder(input);
+        try {
+          await notifyCatalogOrder({ ...input, id: result?.id || input.id });
+        } catch (error) {
+          console.warn("[Telegram] Catalog notification skipped", { orderId: input.id, reason: error instanceof Error ? error.name : "unknown" });
+        }
         return { success: true, id: result?.id || input.id, ...(result?.customerCode ? { customerCode: result.customerCode } : {}) };
       }),
     getCustomerOrders: publicProcedure
