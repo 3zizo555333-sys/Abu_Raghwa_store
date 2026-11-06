@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Sparkles, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
@@ -22,6 +22,7 @@ import { uploadCloudProductImage } from "@/lib/supabase/productImages";
 import { getActiveShopContext, getSignedProductImageUrl, listProductCategories, listProductsPage, subscribeToShopChanges, updateProductCatalogSettings, type CloudProduct, type ProductCategory, type ProductCursor } from "@/lib/supabase/products";
 import { removeCatalogManualProductImage, uploadCatalogManualProductImage } from "@/lib/supabase/catalogManualImages";
 import { CatalogCouponsManager } from "@/components/CatalogCouponsManager";
+import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
@@ -126,6 +127,7 @@ export default function CatalogManager() {
   }, []);
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId) void loadOrders(catalogShopId); } });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
+  const [stagingProduct, setStagingProduct] = useState<{ id: string; name: string; price: number } | null>(null);
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
   const [manualDeletePending, setManualDeletePending] = useState(false);
   const [taxonomyImageUploading, setTaxonomyImageUploading] = useState<string | null>(null);
@@ -626,7 +628,7 @@ export default function CatalogManager() {
     }
   };
 
-  const handleProductImage = async (file: File | undefined, productId: string) => {
+  const handleProductImage = async (file: File | undefined, productId: string, throwOnError = false) => {
     if (!file) return;
     setUploadingProductId(productId);
     try {
@@ -648,6 +650,7 @@ export default function CatalogManager() {
       }
       toast.success("تم ضغط صورة المنتج ورفعها وربطها ببيانات Supabase.");
     } catch (error) {
+      if (throwOnError) throw error;
       toast.error(error instanceof Error ? error.message : "تعذر رفع الصورة، حاول مرة أخرى.");
     } finally {
       setUploadingProductId(null);
@@ -785,6 +788,9 @@ export default function CatalogManager() {
 
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-20" dir="rtl">
+      {stagingProduct && <OfferProductStagerBoundary key={stagingProduct.id} onClose={() => setStagingProduct(null)}>
+        <OfferProductStager variant="product" open offer={{ id: stagingProduct.id, title: stagingProduct.name, promoText: "صورة منتج بخلفية شفافة", bgColor: "transparent", backgroundMode: "solid", offerPrice: stagingProduct.price, discountPercent: 0 }} onOpenChange={open => { if (!open) setStagingProduct(null); }} onSave={file => handleProductImage(file, stagingProduct.id, true)} />
+      </OfferProductStagerBoundary>}
       <div className="mx-auto max-w-7xl space-y-6">
         <CatalogCouponsManager />
         <header className="overflow-hidden rounded-3xl bg-gradient-to-l from-orange-600 via-orange-500 to-amber-400 p-6 text-white shadow-xl">
@@ -979,6 +985,7 @@ export default function CatalogManager() {
                           <div className="mt-2 flex flex-wrap gap-2">
                             <label htmlFor={galleryInputId} className="inline-flex cursor-pointer items-center rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-xs font-bold text-slate-700 hover:bg-orange-50"><ImagePlus className="ml-1 h-3.5 w-3.5 text-orange-600" />المعرض<input id={galleryInputId} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => handleProductImage(event.target.files?.[0], product.id)} /></label>
                             <label htmlFor={cameraInputId} className="inline-flex cursor-pointer items-center rounded-lg bg-orange-600 px-2.5 py-1.5 text-xs font-bold text-white hover:bg-orange-700"><Camera className="ml-1 h-3.5 w-3.5" />الكاميرا<input id={cameraInputId} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={event => handleProductImage(event.target.files?.[0], product.id)} /></label>
+                            <Button type="button" size="sm" variant="outline" disabled={uploadingProductId === product.id} onClick={() => setStagingProduct({ id: product.id, name: product.name, price })} className="min-h-9 border-violet-300 bg-violet-50 px-2 text-xs font-black text-violet-900 hover:bg-violet-100"><Sparkles className="ml-1 h-3.5 w-3.5" />صورة 3D شفافة</Button>
                             {uploadingProductId === product.id && <span className="self-center text-xs font-bold text-orange-700">جارٍ رفع الصورة...</span>}
                           </div>
                         </div>

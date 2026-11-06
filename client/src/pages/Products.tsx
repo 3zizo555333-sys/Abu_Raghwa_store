@@ -3,7 +3,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { Plus, Trash2, Edit2, Eye, Package, Search, X, Camera, DollarSign, Minus, ImagePlus, Printer } from "lucide-react";
+import { Plus, Trash2, Edit2, Eye, Package, Search, X, Camera, DollarSign, Minus, ImagePlus, Printer, Sparkles } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { AdvancedBarcodeScanner } from "@/components/AdvancedBarcodeScanner";
@@ -23,6 +23,7 @@ import JsBarcode from "jsbarcode";
 import { createBarcodeLabelPrintHtml, createBarcodePrintLabels } from "@/lib/barcodeLabelPrint";
 import { createProduct, createProductCategory, createProductsInChunks, deleteProductCategory, deleteProducts, ensureProductCategory, listProductCategories, updateProduct, updateProductCategory, uploadProductImage, PRODUCT_BULK_CHUNK_SIZE, type BulkProgress, type CloudProduct, type ProductCategory, type ProductInput } from "@/lib/supabase/products";
 import { useCloudProducts } from "@/lib/supabase/useProducts";
+import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
 interface Product {
   id: string;
@@ -173,6 +174,7 @@ export default function Products() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingVersion, setEditingVersion] = useState<number | null>(null);
   const [pendingImage, setPendingImage] = useState<{ blob: Blob; mimeType: "image/jpeg" | "image/png" | "image/webp" } | null>(null);
+  const [imageStudioOpen, setImageStudioOpen] = useState(false);
   const [savingProduct, setSavingProduct] = useState(false);
   const [viewingProductId, setViewingProductId] = useState<string | null>(null);
   const [categoryFilter, setCategoryFilter] = useState("all");
@@ -461,7 +463,7 @@ export default function Products() {
     textarea.focus({ preventScroll: true });
   };
 
-  const handleProductImageUpload = async (file: File | undefined) => {
+  const handleProductImageUpload = async (file: File | undefined, throwOnError = false) => {
     if (!file) return;
     setIsUploadingImage(true);
     try {
@@ -470,6 +472,7 @@ export default function Products() {
       setFormData(current => ({ ...current, imageUrl: prepared.dataUrl }));
       toast.message("تم تجهيز الصورة؛ ستُرفع إلى Supabase عند حفظ المنتج.");
     } catch (error) {
+      if (throwOnError) throw error;
       toast.error(error instanceof Error && error.message.toLowerCase().includes("large") ? "الصورة كبيرة جدًا؛ جرّب صورة أصغر من 16 ميجابايت" : `تعذر تجهيز صورة المنتج. ${error instanceof Error ? error.message : "حاول مرة أخرى."}`);
     } finally {
       setIsUploadingImage(false);
@@ -739,6 +742,9 @@ export default function Products() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-4 pb-24" dir="rtl">
+      {imageStudioOpen && showForm && <OfferProductStagerBoundary onClose={() => setImageStudioOpen(false)}>
+        <OfferProductStager variant="product" open offer={{ id: editingId || "draft-product", title: formData.name.trim() || "منتج جديد", promoText: "صورة منتج بخلفية شفافة", bgColor: "transparent", backgroundMode: "solid", offerPrice: Number(formData.retailPrice) || 0, discountPercent: 0 }} onOpenChange={open => { if (!open) setImageStudioOpen(false); }} onSave={file => handleProductImageUpload(file, true)} />
+      </OfferProductStagerBoundary>}
       <div className="mx-auto max-w-7xl">{bulkProgressBanner}</div>
       {/* Header */}
       <header className="bg-white border-b border-gray-200 sticky top-0 z-30 shadow-sm mb-6">
@@ -1246,7 +1252,7 @@ export default function Products() {
                 <div className="md:col-span-2 rounded-xl border border-violet-200 bg-violet-50 p-4">
                   <div className="flex flex-col gap-4 sm:flex-row sm:items-center">
                     {formData.imageUrl ? <img src={formData.imageUrl} alt="معاينة المنتج" className="h-24 w-24 rounded-2xl border-2 border-white bg-white object-cover shadow" /> : <div className="flex h-24 w-24 items-center justify-center rounded-2xl border-2 border-dashed border-violet-300 bg-white text-violet-400"><ImagePlus className="h-8 w-8" /></div>}
-                    <div className="flex-1"><p className="font-black text-violet-950">صورة المنتج أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">اختَر صورة من المعرض أو صوّر المنتج مباشرة بالكاميرا.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label>{pendingImage && <Button type="button" size="sm" variant="outline" onClick={() => { setPendingImage(null); setFormData(current => ({ ...current, imageUrl: editingId ? products.find(product => product.id === editingId)?.imageUrl || "" : "" })); }}>إلغاء الصورة الجديدة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري تجهيز ورفع صورة الكاميرا...</p>}</div>
+                    <div className="flex-1"><p className="font-black text-violet-950">صورة المنتج أو الأيقونة</p><p className="mt-1 text-xs text-violet-700">اختَر صورة من المعرض أو صوّر المنتج مباشرة بالكاميرا.</p><div className="mt-3 flex flex-wrap gap-2"><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg bg-violet-600 px-3 py-2 text-sm font-bold text-white hover:bg-violet-700"><ImagePlus className="h-4 w-4" /> اختيار من المعرض<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label><label className="inline-flex cursor-pointer items-center gap-1 rounded-lg border border-violet-300 bg-white px-3 py-2 text-sm font-bold text-violet-700 hover:bg-violet-100"><Camera className="h-4 w-4" /> تصوير مباشر<input type="file" accept="image/*" className="hidden" onChange={(event) => handleProductImageUpload(event.target.files?.[0])} /></label><Button type="button" size="sm" variant="outline" disabled={isUploadingImage} onClick={() => setImageStudioOpen(true)} className="border-violet-300 bg-white text-violet-900"><Sparkles className="ml-1 h-4 w-4" />تفريغ 3D شفاف</Button>{pendingImage && <Button type="button" size="sm" variant="outline" onClick={() => { setPendingImage(null); setFormData(current => ({ ...current, imageUrl: editingId ? products.find(product => product.id === editingId)?.imageUrl || "" : "" })); }}>إلغاء الصورة الجديدة</Button>}</div>{isUploadingImage && <p className="mt-2 text-xs font-bold text-violet-700">جاري تجهيز ورفع صورة الكاميرا...</p>}</div>
                   </div>
                 </div>
               </div>

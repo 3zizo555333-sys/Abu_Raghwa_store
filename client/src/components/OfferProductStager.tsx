@@ -7,7 +7,7 @@ import { removeProductBackground } from "@/lib/productBackgroundRemoval";
 import { toast } from "sonner";
 import { LoaderCircle, Minus, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
 
-const STAGE_SIZE = 900;
+const STAGE_SIZE = 1200;
 const MAX_PRODUCTS = 4;
 const MAX_SCALE_PERCENT = 400;
 const MIN_SCALE_PERCENT = 45;
@@ -23,6 +23,7 @@ type ProductLayer = {
   scale: number;
   rotation: number;
   depth: number;
+  shadow: boolean;
 };
 
 type OfferTemplate = {
@@ -40,6 +41,7 @@ type OfferTemplate = {
 interface OfferProductStagerProps {
   open: boolean;
   offer: OfferTemplate;
+  variant?: "offer" | "product";
   onOpenChange: (open: boolean) => void;
   onSave: (image: File) => Promise<void>;
 }
@@ -121,7 +123,7 @@ function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: M
     context.save();
     context.translate(bounds.centerX, bounds.centerY);
     context.rotate((layer.rotation * Math.PI) / 180);
-    context.filter = shadowForScale(layer.scale);
+    context.filter = layer.shadow ? shadowForScale(layer.scale) : "none";
     context.drawImage(bitmap, -bounds.width / 2, -bounds.height / 2, bounds.width, bounds.height);
     context.restore();
     if (selectedId === layer.id) {
@@ -137,7 +139,7 @@ function drawStage(canvas: HTMLCanvasElement, layers: ProductLayer[], bitmaps: M
 
 function createCanvasBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("تعذر تصدير صورة المنتجات الشفافة.")), "image/png");
+    canvas.toBlob(blob => blob ? resolve(blob) : reject(new Error("تعذر تصدير صورة المنتجات الشفافة.")), "image/webp", 0.94);
   });
 }
 
@@ -180,7 +182,7 @@ function templateStyle(offer: OfferTemplate): React.CSSProperties {
   };
 }
 
-export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferProductStagerProps) {
+export function OfferProductStager({ open, offer, variant = "offer", onOpenChange, onSave }: OfferProductStagerProps) {
   const [queuedPhotos, setQueuedPhotos] = useState<QueuedPhoto[]>([]);
   const [layers, setLayers] = useState<ProductLayer[]>([]);
   const [selectedLayerId, setSelectedLayerId] = useState<string | null>(null);
@@ -212,9 +214,9 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
     bitmapsRef.current.clear();
   }, []);
 
-  const addFiles = (fileList: FileList | null) => {
-    if (!fileList?.length) return;
-    const incoming = Array.from(fileList);
+  const addFiles = (files: ArrayLike<File> | null) => {
+    if (!files?.length) return;
+    const incoming = Array.from(files);
     const valid = incoming.filter(file => {
       if (!ACCEPTED_TYPES.has(file.type)) {
         toast.error(`صيغة ${file.name} غير مدعومة؛ استخدم JPEG أو PNG أو WebP.`);
@@ -239,38 +241,25 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
     setStatusText("جاري تجهيز محرك المعالجة وعزل الخلفيات...");
     const additions: Array<{ layer: ProductLayer; bitmap: DrawableImage }> = [];
     const processedIds = new Set<string>();
-    let useBackgroundRemoval = !backgroundRemovalUnavailable;
-    let warnedAboutFallback = backgroundRemovalUnavailable;
     try {
       for (let index = 0; index < queuedPhotos.length; index += 1) {
         const queued = queuedPhotos[index];
         setProgress(0);
-        let bitmap: DrawableImage;
-        if (useBackgroundRemoval) {
-          try {
-            setStatusText(`جاري عزل المنتج ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
-            const modelInput = await resizeForMatting(queued.file);
-            const transparentPng = await removeProductBackground(modelInput, info => {
-              setProgress(Math.max(0, Math.min(100, Math.round(info.progress))));
-              if (info.step === "downloading") setStatusText("تحميل نموذج U²-NetP الخفيف (مرة واحدة)…");
-            });
-            bitmap = await createDrawableImage(transparentPng);
-          } catch {
-            useBackgroundRemoval = false;
-            setBackgroundRemovalUnavailable(true);
-            setStatusText("تعذر تشغيل محرك التفريغ؛ يجري تركيب الصور الأصلية مباشرةً.");
-            if (!warnedAboutFallback) {
-              toast.warning("تعذر تشغيل إزالة الخلفية على هذا الجهاز؛ سنكمل تركيب الصور مباشرة دون إيقاف الاستوديو.");
-              warnedAboutFallback = true;
-            }
-            bitmap = await createDrawableImage(queued.file);
-          }
-        } else {
-          setStatusText(`تركيب الصورة الأصلية ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
-          bitmap = await createDrawableImage(queued.file);
+        setStatusText(`جاري عزل المنتج ${index + 1} من ${queuedPhotos.length}: ${queued.file.name}`);
+        let transparentImage: Blob;
+        try {
+          const modelInput = await resizeForMatting(queued.file);
+          transparentImage = await removeProductBackground(modelInput, info => {
+            setProgress(Math.max(0, Math.min(100, Math.round(info.progress))));
+            if (info.step === "downloading") setStatusText("تحميل نموذج U²-NetP الخفيف (مرة واحدة)…");
+          });
+        } catch (error) {
+          setBackgroundRemovalUnavailable(true);
+          throw new Error(`تعذر عزل خلفية «${queued.file.name}». لم تتم إضافة الصورة حتى لا تُحفظ بخلفية مربعة. ${error instanceof Error ? error.message : "تحقق من دعم المتصفح ثم أعد المحاولة."}`);
         }
+        const bitmap = await createDrawableImage(transparentImage);
         additions.push({
-          layer: { id: queued.id, name: queued.file.name, x: 0.5, baseline: 0.86, scale: 1, rotation: 0, depth: 0 },
+          layer: { id: queued.id, name: queued.file.name, x: 0.5, baseline: 0.86, scale: 1, rotation: 0, depth: 0, shadow: true },
           bitmap,
         });
         processedIds.add(queued.id);
@@ -282,9 +271,10 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
       setLayers(next);
       setSelectedLayerId(additions.at(-1)?.layer.id || selectedLayerId);
       setQueuedPhotos(current => current.filter(photo => !processedIds.has(photo.id)));
-      setStatusText(useBackgroundRemoval ? "تم التفريغ والتجميع. اسحب كل عبوة أو غيّر حجمها عند الحاجة." : "تم تركيب الصور مباشرة. اسحب كل صورة أو غيّر حجمها عند الحاجة.");
+      setBackgroundRemovalUnavailable(false);
+      setStatusText("تم عزل الخلفية والتجميع. اسحب كل عبوة أو غيّر حجمها عند الحاجة.");
       setProgress(100);
-      toast.success(useBackgroundRemoval ? `تم تفريغ وتجهيز ${additions.length} صورة منتج بخلفية شفافة.` : `تم تركيب ${additions.length} صورة مباشرة؛ يمكنك ضبطها ومتابعة حفظ العرض.`);
+      toast.success(`تم تفريغ وتجهيز ${additions.length} صورة منتج بخلفية شفافة.`);
     } catch (error) {
       if (additions.length) {
         bitmapsRef.current = new Map(bitmapsRef.current);
@@ -362,9 +352,11 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
     drawStage(canvas, layers, bitmapsRef.current);
     setIsSaving(true);
     try {
-      setStatusText("تصدير صورة شفافة عالية الجودة ورفعها إلى العرض…");
+      setStatusText("تصدير صورة شفافة مضغوطة…");
       const blob = await createCanvasBlob(canvas);
-      const image = new File([blob], `offer-${offer.id}-products.png`, { type: "image/png" });
+      const type = blob.type === "image/webp" ? "image/webp" : "image/png";
+      const extension = type === "image/webp" ? "webp" : "png";
+      const image = new File([blob], `offer-${offer.id}-products.${extension}`, { type });
       await onSave(image);
       onOpenChange(false);
     } catch (error) {
@@ -378,8 +370,8 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
     <Dialog open={open} onOpenChange={next => { if (!isProcessing && !isSaving) onOpenChange(next); }}>
       <DialogContent dir="rtl" className="max-h-[94vh] max-w-5xl overflow-y-auto p-4 sm:p-6">
         <DialogHeader className="text-right">
-          <DialogTitle className="flex items-center gap-2 text-xl font-black text-slate-900"><Sparkles className="h-5 w-5 text-violet-600" />استوديو تفريغ وتنسيق صور العرض</DialogTitle>
-          <DialogDescription>العرض: {offer.title}. تُعالج الصور محلياً على جهازك، ثم يُرفع الكادر النهائي فقط. نموذج التفريغ الخفيف يُحمّل عند أول معالجة ويُخزّن في المتصفح.</DialogDescription>
+          <DialogTitle className="flex items-center gap-2 text-xl font-black text-slate-900"><Sparkles className="h-5 w-5 text-violet-600" />{variant === "product" ? "استوديو تفريغ وتجهيز صورة المنتج" : "استوديو تفريغ وتنسيق صور العرض"}</DialogTitle>
+          <DialogDescription>{variant === "product" ? `المنتج: ${offer.title}.` : `العرض: ${offer.title}.`} تُعالج الصور محلياً على جهازك، ثم يُرفع الكادر النهائي فقط. نموذج التفريغ الخفيف يُحمّل عند أول معالجة ويُخزّن في المتصفح.</DialogDescription>
         </DialogHeader>
 
         <div className="grid gap-4 lg:grid-cols-[0.92fr_1.08fr]">
@@ -407,7 +399,7 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
                 </div>
                 <div className="min-w-0"><p className="text-xs font-black text-violet-950">جاري تجهيز محرك المعالجة وعزل الخلفيات...</p><p className="mt-1 break-words text-[11px] text-slate-600">{statusText}</p></div>
               </div>}
-              {backgroundRemovalUnavailable && !isProcessing && <div role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><p className="font-bold">محرك التفريغ غير متاح على هذا الجهاز. يمكنك متابعة تركيب الصور الأصلية وحفظها دون توقف.</p><Button type="button" size="sm" variant="ghost" onClick={() => setBackgroundRemovalUnavailable(false)} className="mt-1 h-8 px-2 text-amber-900">إعادة محاولة إزالة الخلفية</Button></div>}
+              {backgroundRemovalUnavailable && !isProcessing && <div role="status" className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-900"><p className="font-bold">تعذر تشغيل إزالة الخلفية؛ لم تُضف الصورة الأصلية ولم يُسمح بحفظها كقصّ شفاف. تحقق من الاتصال ثم أعد المحاولة.</p><Button type="button" size="sm" variant="ghost" onClick={() => setBackgroundRemovalUnavailable(false)} className="mt-1 h-8 px-2 text-amber-900">إعادة محاولة إزالة الخلفية</Button></div>}
               {!isProcessing && !!statusText && <p className="mt-2 text-center text-xs font-bold text-emerald-700">{statusText}</p>}
             </div>
 
@@ -417,13 +409,15 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
               {selectedLayer && <div className="mt-3 rounded-xl bg-slate-50 p-3">
                 <div className="flex items-center justify-between gap-2"><div><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><p className="text-[11px] text-slate-500">يمكن التكبير حتى 400%</p></div><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
                 <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min={MIN_SCALE_PERCENT / 100} max={MAX_SCALE_PERCENT / 100} step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, Number(event.target.value))) } : layer))} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /><Input aria-label="حجم المنتج بالنسبة المئوية" type="number" min={MIN_SCALE_PERCENT} max={MAX_SCALE_PERCENT} step="5" value={Math.round(selectedLayer.scale * 100)} disabled={isSaving || isProcessing} onChange={event => { const value = Number(event.target.value); if (!Number.isFinite(value)) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, value / 100)) } : layer)); }} className="h-8 w-20 text-center text-xs font-black" /></div>
-                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة داخل الكادر لتحريكها، واستخدم المنزلق أو اكتب النسبة المئوية لتكبيرها أو تصغيرها. تستخدم المعاينة والتصدير التحويل نفسه.</p>
+                <div className="mt-3 flex items-center justify-between gap-2"><label htmlFor="product-stage-rotation" className="text-xs font-black text-slate-700">الدوران: {Math.round(selectedLayer.rotation)}°</label><Button type="button" size="sm" variant={selectedLayer.shadow ? "default" : "outline"} disabled={isSaving || isProcessing} onClick={() => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, shadow: !layer.shadow } : layer))} className={selectedLayer.shadow ? "h-8 bg-violet-700 text-xs" : "h-8 text-xs"}><Sparkles className="ml-1 h-3.5 w-3.5" />{selectedLayer.shadow ? "إيقاف الظل ثلاثي الأبعاد" : "إضافة ظل ثلاثي الأبعاد"}</Button></div>
+                <Input id="product-stage-rotation" aria-label="تدوير المنتج" type="range" min="-45" max="45" step="1" value={selectedLayer.rotation} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, rotation: Number(event.target.value) } : layer))} className="mt-1 h-8 cursor-pointer accent-violet-700" />
+                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة لتحريكها، واستخدم منزلق الحجم والدوران باللمس أو الفأرة. تُطبّق المعاينة والتصدير التغييرات نفسها مع خلفية شفافة.</p>
               </div>}
             </div>}
           </section>
 
           <section className="space-y-3">
-            <div><h3 className="mb-2 text-sm font-black text-slate-900">المعاينة النهائية فوق قالب العرض</h3>
+            <div><h3 className="mb-2 text-sm font-black text-slate-900">{variant === "product" ? "معاينة صورة المنتج المفرغة" : "المعاينة النهائية فوق قالب العرض"}</h3>
               <div className="relative h-40 overflow-hidden rounded-2xl text-white shadow-md sm:h-48" style={templateStyle(offer)}>
                 <canvas ref={previewCanvasRef} aria-label="معاينة المنتجات الشفافة فوق قالب العرض" className="absolute bottom-0 left-0 z-20 h-full w-[40%] object-contain" />
                 <div className="absolute right-3 top-3 z-30 w-[57%] space-y-1 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.75)] sm:right-5 sm:top-5">
@@ -435,11 +429,11 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
               </div>
             </div>
             <div className="rounded-2xl border border-dashed border-slate-300 bg-[linear-gradient(45deg,#f1f5f9_25%,transparent_25%,transparent_75%,#f1f5f9_75%),linear-gradient(45deg,#f1f5f9_25%,white_25%,white_75%,#f1f5f9_75%)] bg-[length:24px_24px] bg-[position:0_0,12px_12px] p-2">
-              <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] font-bold text-slate-600"><span>كادر شفاف قابل للسحب</span>{layers.length > 0 && <span>{layers.length} / {MAX_PRODUCTS} منتجات</span>}</div>
-              <canvas ref={canvasRef} aria-label="كادر ترتيب المنتجات" onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} className={`mx-auto block aspect-square w-full max-w-[400px] rounded-xl ${layers.length ? "cursor-move touch-none" : ""}`} />
-              {!layers.length && <p className="pb-2 text-center text-xs text-slate-500">أضف الصور ثم اضغط «معالجة وتنسيق العرض تلقائياً».</p>}
+              <div className="mb-2 flex items-center justify-between gap-2 px-1 text-[11px] font-bold text-slate-600"><span>كادر شفاف — اسحب الصور إليه أو حرّك الطبقات</span>{layers.length > 0 && <span>{layers.length} / {MAX_PRODUCTS} منتجات</span>}</div>
+              <canvas ref={canvasRef} aria-label="كادر ترتيب المنتجات" onDragOver={event => event.preventDefault()} onDrop={event => { event.preventDefault(); addFiles(event.dataTransfer.files); }} onPointerDown={handlePointerDown} onPointerMove={handlePointerMove} onPointerUp={handlePointerUp} onPointerCancel={handlePointerUp} className={`mx-auto block aspect-square w-full max-w-[400px] rounded-xl ${layers.length ? "cursor-move touch-none" : "border-2 border-dashed border-slate-300"}`} />
+              {!layers.length && <p className="pb-2 text-center text-xs text-slate-500">أضف الصور من الكاميرا أو المعرض، أو أفلتها هنا، ثم اضغط «معالجة وتنسيق العرض تلقائياً».</p>}
             </div>
-            <p className="text-[11px] leading-5 text-slate-500">المنتج الأساسي يظهر أمام بقية المنتجات، مع محاذاة القواعد وظلال ناعمة. الخلفية الشطرنجية للمعاينة فقط ولن تدخل في ملف PNG.</p>
+            <p className="text-[11px] leading-5 text-slate-500">المنتج الأساسي يظهر أمام بقية المنتجات، مع محاذاة القواعد وظلال ناعمة. الخلفية الشطرنجية للمعاينة فقط؛ التصدير WebP شفاف مضغوط، أو PNG عند عدم دعم WebP.</p>
           </section>
         </div>
 
@@ -447,7 +441,7 @@ export function OfferProductStager({ open, offer, onOpenChange, onSave }: OfferP
           <Button type="button" variant="outline" disabled={isProcessing || isSaving} onClick={() => onOpenChange(false)}>إلغاء</Button>
           <Button type="button" disabled={!layers.length || isProcessing || isSaving} onClick={() => void saveStage()} className="min-h-11 bg-emerald-700 font-black hover:bg-emerald-800">
             {isSaving ? <LoaderCircle className="ml-2 h-4 w-4 animate-spin" /> : <Upload className="ml-2 h-4 w-4" />}
-            {isSaving ? "جاري حفظ الصورة…" : "حفظ ونشر صورة العرض"}
+            {isSaving ? "جاري حفظ الصورة…" : variant === "product" ? "استخدام الصورة الشفافة" : "حفظ ونشر صورة العرض"}
           </Button>
         </div>
       </DialogContent>
