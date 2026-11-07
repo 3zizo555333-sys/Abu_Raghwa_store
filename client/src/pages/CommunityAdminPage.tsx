@@ -188,10 +188,11 @@ export default function CommunityAdminPage() {
   };
 
   const saveStagedPrizeImage = async (file: File, kind: "raffle" | "trivia") => {
-    const imageUrl = await fileAsDataUrl(file);
+    const dataUrl = await fileAsDataUrl(file);
+    const imageUrl = await uploadCommunityImage(dataUrl, "prize");
     if (kind === "raffle") updateRaffle("prize_image_url", imageUrl);
     else updateTrivia("prize_image_url", imageUrl);
-    toast.success("تم تجهيز صورة الجائزة الشفافة. احفظ النموذج لنشرها.");
+    toast.success("تم تفريغ صورة الجائزة وحفظها، وتم تحديث المعاينة فوراً.");
   };
 
   const handleEditRaffle = (item: any) => {

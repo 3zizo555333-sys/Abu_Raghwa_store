@@ -10,7 +10,7 @@ import { LoaderCircle, Minus, Plus, Sparkles, Trash2, Upload, X } from "lucide-r
 
 const STAGE_SIZE = 1200;
 const MAX_PRODUCTS = 4;
-const MAX_SCALE_PERCENT = 400;
+const MAX_SCALE_PERCENT = 1500;
 const MIN_SCALE_PERCENT = 45;
 const MAX_FILE_BYTES = 20 * 1024 * 1024;
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -209,6 +209,8 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
   const previewCanvasRef = useRef<HTMLCanvasElement>(null);
   const bitmapsRef = useRef(new Map<string, DrawableImage>());
   const dragRef = useRef<{ id: string; startX: number; startY: number; originX: number; originBaseline: number } | null>(null);
+  const activePointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const pinchRef = useRef<{ id: string; startDistance: number; startScale: number } | null>(null);
   const selectedLayer = useMemo(() => layers.find(layer => layer.id === selectedLayerId) || null, [layers, selectedLayerId]);
   const remainingSlots = Math.max(0, MAX_PRODUCTS - layers.length - queuedPhotos.length);
 
@@ -218,7 +220,20 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
     const previewCanvas = previewCanvasRef.current;
     if (!canvas || !previewCanvas) return;
     drawStage(canvas, layers, bitmapsRef.current, selectedLayerId);
-    drawStage(previewCanvas, layers, bitmapsRef.current);
+    const previewSource = document.createElement("canvas");
+    drawStage(previewSource, layers, bitmapsRef.current);
+    const sourceContext = previewSource.getContext("2d", { willReadFrequently: true });
+    if (!sourceContext) return;
+    const alpha = sourceContext.getImageData(0, 0, STAGE_SIZE, STAGE_SIZE);
+    const bounds = findAlphaBounds(alpha.data, STAGE_SIZE, STAGE_SIZE);
+    if (!bounds) {
+      previewCanvas.width = 1;
+      previewCanvas.height = 1;
+      return;
+    }
+    previewCanvas.width = bounds.width;
+    previewCanvas.height = bounds.height;
+    previewCanvas.getContext("2d")?.drawImage(previewSource, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
   }, [open, layers, selectedLayerId]);
 
   useEffect(() => () => {
@@ -326,6 +341,8 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
   const handlePointerDown = (event: React.PointerEvent<HTMLCanvasElement>) => {
     if (isProcessing || isSaving) return;
     event.preventDefault();
+    activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Pointer capture is optional on older mobile browsers. */ }
     const point = selectedPoint(event);
     const topFirst = [...layers].sort((a, b) => b.depth - a.depth);
     const hit = topFirst.find(layer => {
@@ -334,13 +351,36 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
       const bounds = layerBounds(layer, bitmap);
       return point.x >= bounds.left && point.x <= bounds.left + bounds.width && point.y >= bounds.top && point.y <= bounds.top + bounds.height;
     });
+    if (activePointersRef.current.size >= 2) {
+      const id = hit?.id || selectedLayerId;
+      const pointers = Array.from(activePointersRef.current.values()).slice(0, 2);
+      const distance = pointers.length === 2 ? Math.hypot(pointers[1].x - pointers[0].x, pointers[1].y - pointers[0].y) : 0;
+      const layer = layers.find(item => item.id === id);
+      if (id && layer && distance > 0) {
+        dragRef.current = null;
+        pinchRef.current = { id, startDistance: distance, startScale: layer.scale };
+        setSelectedLayerId(id);
+      }
+      return;
+    }
     if (!hit) return;
-    try { event.currentTarget.setPointerCapture(event.pointerId); } catch { /* Pointer capture is optional on older mobile browsers. */ }
     setSelectedLayerId(hit.id);
     dragRef.current = { id: hit.id, startX: event.clientX, startY: event.clientY, originX: hit.x, originBaseline: hit.baseline };
   };
 
   const handlePointerMove = (event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (activePointersRef.current.has(event.pointerId)) activePointersRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    const pinch = pinchRef.current;
+    if (pinch && activePointersRef.current.size >= 2) {
+      event.preventDefault();
+      const pointers = Array.from(activePointersRef.current.values()).slice(0, 2);
+      const distance = Math.hypot(pointers[1].x - pointers[0].x, pointers[1].y - pointers[0].y);
+      const bitmap = bitmapsRef.current.get(pinch.id);
+      if (!bitmap || !pinch.startDistance) return;
+      const scale = Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, pinch.startScale * distance / pinch.startDistance));
+      setLayers(current => current.map(layer => layer.id === pinch.id ? clampLayerToStage({ ...layer, scale }, bitmap) : layer));
+      return;
+    }
     const drag = dragRef.current;
     if (!drag) return;
     event.preventDefault();
@@ -356,6 +396,8 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
     dragRef.current = null;
+    activePointersRef.current.delete(event.pointerId);
+    pinchRef.current = null;
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
   };
 
@@ -432,11 +474,11 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
               <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="font-black text-slate-900">ضبط التجميع يدوياً</h3><Button type="button" size="sm" variant="outline" disabled={isSaving || isProcessing} onClick={resetAutoLayout} className="text-xs">إعادة الترتيب التلقائي</Button></div>
               <div className="mt-3 flex flex-wrap gap-2">{layers.map((layer, index) => <button key={layer.id} type="button" onClick={() => setSelectedLayerId(layer.id)} className={`max-w-full truncate rounded-full border px-3 py-1.5 text-xs font-black ${selectedLayerId === layer.id ? "border-violet-500 bg-violet-100 text-violet-950" : "border-slate-200 bg-white text-slate-700"}`}>{index === 0 ? "الأساسي · " : ""}{layer.name}</button>)}</div>
               {selectedLayer && <div className="mt-3 rounded-xl bg-slate-50 p-3">
-                <div className="flex items-center justify-between gap-2"><div><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><p className="text-[11px] text-slate-500">يمكن التكبير حتى 400%</p></div><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
+                <div className="flex items-center justify-between gap-2"><div><label htmlFor="product-stage-scale" className="text-xs font-black text-slate-700">حجم الطبقة المحددة: {Math.round(selectedLayer.scale * 100)}%</label><p className="text-[11px] text-slate-500">يمكن التكبير حتى 1500%، أو بإصبعين على الكادر الشفاف</p></div><Button type="button" size="sm" variant="ghost" disabled={isSaving || isProcessing} onClick={() => removeLayer(selectedLayer.id)} className="h-8 text-xs text-red-600"><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div>
                 <div className="mt-2 flex items-center gap-2"><Minus className="h-4 w-4 text-slate-500" /><Input id="product-stage-scale" type="range" min={MIN_SCALE_PERCENT / 100} max={MAX_SCALE_PERCENT / 100} step="0.05" value={selectedLayer.scale} disabled={isSaving || isProcessing} onChange={event => { const bitmap = bitmapsRef.current.get(selectedLayer.id); if (!bitmap) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? clampLayerToStage({ ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, Number(event.target.value))) }, bitmap) : layer)); }} className="h-8 cursor-pointer accent-violet-700" /><Plus className="h-4 w-4 text-slate-500" /><Input aria-label="حجم المنتج بالنسبة المئوية" type="number" min={MIN_SCALE_PERCENT} max={MAX_SCALE_PERCENT} step="5" value={Math.round(selectedLayer.scale * 100)} disabled={isSaving || isProcessing} onChange={event => { const value = Number(event.target.value); const bitmap = bitmapsRef.current.get(selectedLayer.id); if (!Number.isFinite(value) || !bitmap) return; setLayers(current => current.map(layer => layer.id === selectedLayer.id ? clampLayerToStage({ ...layer, scale: Math.max(MIN_SCALE_PERCENT / 100, Math.min(MAX_SCALE_PERCENT / 100, value / 100)) }, bitmap) : layer)); }} className="h-8 w-20 text-center text-xs font-black" /></div>
                 <div className="mt-3 flex items-center justify-between gap-2"><label htmlFor="product-stage-rotation" className="text-xs font-black text-slate-700">الدوران: {Math.round(selectedLayer.rotation)}°</label><Button type="button" size="sm" variant={selectedLayer.shadow ? "default" : "outline"} disabled={isSaving || isProcessing} onClick={() => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, shadow: !layer.shadow } : layer))} className={selectedLayer.shadow ? "h-8 bg-violet-700 text-xs" : "h-8 text-xs"}><Sparkles className="ml-1 h-3.5 w-3.5" />{selectedLayer.shadow ? "إيقاف الظل ثلاثي الأبعاد" : "إضافة ظل ثلاثي الأبعاد"}</Button></div>
                 <Input id="product-stage-rotation" aria-label="تدوير المنتج" type="range" min="-45" max="45" step="1" value={selectedLayer.rotation} disabled={isSaving || isProcessing} onChange={event => setLayers(current => current.map(layer => layer.id === selectedLayer.id ? { ...layer, rotation: Number(event.target.value) } : layer))} className="mt-1 h-8 cursor-pointer accent-violet-700" />
-                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة لتحريكها، واستخدم منزلق الحجم والدوران باللمس أو الفأرة. تُطبّق المعاينة والتصدير التغييرات نفسها مع خلفية شفافة.</p>
+                <p className="mt-1 text-[11px] text-slate-500">اسحب العبوة بإصبع واحد لتحريكها، واستخدم إصبعين للتكبير والتصغير أو منزلق الحجم والدوران. تعرض معاينة البانر حدود القص نفسها المستخدمة بالتصدير دون فراغات إضافية.</p>
               </div>}
             </div>}
           </section>
