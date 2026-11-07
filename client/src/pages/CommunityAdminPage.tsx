@@ -20,7 +20,7 @@ import {
 } from "@/lib/supabase/communityDraws";
 import { CommunityLiveWinner } from "@/components/CommunityLiveWinner";
 import { uploadCommunityImage } from "@/lib/supabase/communityImages";
-import { CommunityPrizeImageStudio } from "@/components/CommunityPrizeImageStudio";
+import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
 type AdminData = Awaited<ReturnType<typeof listManagedCommunityEvents>>;
 
@@ -105,6 +105,15 @@ function errorText(error: unknown) {
   return message.includes("duplicate") ? "هذا العنصر مسجل مسبقاً" : message;
 }
 
+function fileAsDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(new Error("تعذر قراءة صورة الجائزة."));
+    reader.readAsDataURL(file);
+  });
+}
+
 export default function CommunityAdminPage() {
   const [, navigate] = useLocation();
   const [activeTab, setActiveTab] = useState<"raffles" | "trivia">("raffles");
@@ -114,6 +123,7 @@ export default function CommunityAdminPage() {
   const [busy, setBusy] = useState("");
   const [clock, setClock] = useState(Date.now());
   const [activeWinnerModal, setActiveWinnerModal] = useState<any | null>(null);
+  const [stagingPrize, setStagingPrize] = useState<{ kind: "raffle" | "trivia"; title: string } | null>(null);
 
   const [editingRaffle, setEditingRaffle] = useState<{ id: string } | null>(null);
   const [raffle, setRaffle] = useState(blankRaffle());
@@ -175,6 +185,13 @@ export default function CommunityAdminPage() {
       opts[index] = val;
       return { ...current, options: opts };
     });
+  };
+
+  const saveStagedPrizeImage = async (file: File, kind: "raffle" | "trivia") => {
+    const imageUrl = await fileAsDataUrl(file);
+    if (kind === "raffle") updateRaffle("prize_image_url", imageUrl);
+    else updateTrivia("prize_image_url", imageUrl);
+    toast.success("تم تجهيز صورة الجائزة الشفافة. احفظ النموذج لنشرها.");
   };
 
   const handleEditRaffle = (item: any) => {
@@ -346,8 +363,6 @@ export default function CommunityAdminPage() {
   };
 
   const currentPrizeImg = activeTab === "raffles" ? raffle.prize_image_url : trivia.prize_image_url;
-  const currentBannerImg = activeTab === "raffles" ? raffle.banner_image_url : trivia.banner_image_url;
-
   return (
     <main dir="rtl" className="min-h-screen bg-slate-900 text-slate-100 pb-16">
       <header className="bg-slate-950 border-b border-indigo-900/50 px-4 py-4 shadow-lg sticky top-0 z-30">
@@ -387,13 +402,11 @@ export default function CommunityAdminPage() {
       <div className="max-w-4xl mx-auto p-4 space-y-6 mt-2">
         {error && <div className="p-3 bg-red-950/80 border border-red-700 text-red-200 rounded-xl text-sm">{error}</div>}
 
-        <CommunityPrizeImageStudio
-          value={currentPrizeImg}
-          title={activeTab === "raffles" ? raffle.title : trivia.title}
-          prizeTitle={activeTab === "raffles" ? raffle.prize_name : trivia.prize_title}
-          onChange={value => activeTab === "raffles" ? updateRaffle("prize_image_url", value) : updateTrivia("prize_image_url", value)}
-          onBannerChange={value => activeTab === "raffles" ? updateRaffle("banner_image_url", value) : updateTrivia("banner_image_url", value)}
-        />
+        <section className="flex flex-wrap items-center gap-4 rounded-2xl border border-violet-400/40 bg-slate-800/90 p-4 shadow-xl">
+          {currentPrizeImg ? <img src={currentPrizeImg} alt="معاينة صورة الجائزة" className="h-20 w-20 rounded-xl bg-white/10 object-contain p-1" /> : <div className="grid h-20 w-20 place-items-center rounded-xl bg-slate-950 text-amber-400"><Gift className="h-8 w-8" /></div>}
+          <div className="min-w-0 flex-1"><p className="text-sm font-black text-white">صورة الجائزة</p><p className="mt-1 text-xs leading-5 text-slate-300">استخدم استوديو التفريغ الموحد المعتمد في الكتالوج لمعالجة الصورة وخلفيتها الشفافة.</p></div>
+          <Button type="button" onClick={() => setStagingPrize({ kind: activeTab === "raffles" ? "raffle" : "trivia", title: (activeTab === "raffles" ? raffle.prize_name : trivia.prize_title) || "جائزة السحب" })} className="bg-violet-700 font-black text-white hover:bg-violet-600"><Sparkles className="ml-2 h-4 w-4" />استوديو صورة الجائزة</Button>
+        </section>
         {/* نموذج سحوبات المشتريات */}
         {activeTab === "raffles" && (
           <section className="bg-slate-800/95 rounded-2xl border border-indigo-500/30 p-5 shadow-xl space-y-5">
@@ -921,6 +934,16 @@ export default function CommunityAdminPage() {
           </div>
         </section>
       </div>
+
+      {stagingPrize && <OfferProductStagerBoundary key={stagingPrize.kind} onClose={() => setStagingPrize(null)}>
+        <OfferProductStager
+          variant="product"
+          open
+          offer={{ id: `community-${stagingPrize.kind}`, title: stagingPrize.title, promoText: "صورة جائزة بخلفية شفافة", bgColor: "transparent", backgroundMode: "solid", offerPrice: 0, discountPercent: 0 }}
+          onOpenChange={open => { if (!open) setStagingPrize(null); }}
+          onSave={file => saveStagedPrizeImage(file, stagingPrize.kind)}
+        />
+      </OfferProductStagerBoundary>}
 
       {activeWinnerModal && (
         <CommunityLiveWinner stage={activeWinnerModal} />

@@ -145,7 +145,7 @@ export default function SmartOffersList() {
   const handleStagedProductImage = async (offer: SmartOffer, file: File) => {
     setUploadingOfferId(offer.id);
     try {
-      const { publicUrl } = await uploadCatalogOfferImage(offer.id, file);
+      const { publicUrl } = await uploadCatalogOfferImage(offer.id, file, { preserveTransparency: true });
       const update = (item: SmartOffer) => item.id === offer.id ? { ...item, bannerImageUrl: publicUrl } : item;
       setSavedOffers(previous => previous.map(update));
       setSelectedOffer(previous => previous?.id === offer.id ? { ...previous, bannerImageUrl: publicUrl } : previous);
@@ -243,8 +243,8 @@ export default function SmartOffersList() {
         <CardHeader className="space-y-3 pb-3">
           <div className="relative h-40 overflow-hidden rounded-2xl p-3 text-white shadow-sm" style={{ backgroundColor: offer.bgColor || "#ea580c", backgroundImage: offer.bannerCustomImage ? `linear-gradient(90deg,rgba(15,23,42,.44),rgba(15,23,42,.16)),url("${offer.bannerCustomImage}")` : offer.backgroundMode === "solid" ? undefined : offer.bgGradient || undefined, backgroundSize: offer.bannerCustomImage ? "cover" : undefined, backgroundPosition: "center" }}>
             <span className={`absolute right-3 top-3 z-20 rounded-full px-3 py-1 text-xs font-black shadow ${isActive ? "bg-emerald-700 text-white" : "bg-slate-800 text-white"}`}>{isActive ? "متاح الآن" : "منتهي"}</span>
-            {offer.bannerImageUrl && <div className="absolute bottom-0 left-0 z-20 flex h-full w-[38%] items-end justify-center p-1"><img src={offer.bannerImageUrl} alt={`صورة المنتج في ${offer.title}`} className="h-full w-full object-contain" style={{ filter: "drop-shadow(0 12px 16px rgba(0,0,0,0.45))" }} /></div>}
-            <div className="relative z-30 mr-auto w-[58%] space-y-1 pt-8 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.8)]">
+            {offer.bannerImageUrl && <div className="absolute bottom-0 left-0 z-20 flex h-full w-[48%] items-end justify-center p-1"><img src={offer.bannerImageUrl} alt={`صورة المنتج في ${offer.title}`} className="h-full w-full object-contain" style={{ filter: "drop-shadow(0 12px 16px rgba(0,0,0,0.45))" }} /></div>}
+            <div className="relative z-30 mr-auto w-[48%] space-y-1 pt-8 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.8)]">
               <h3 className="line-clamp-2 text-lg font-black leading-tight">{offer.title}</h3>
               <p className="line-clamp-1 text-xs font-bold text-white">{offer.strategyName}</p>
               {offer.promoText && <p className="line-clamp-2 text-xs font-black text-white">{offer.promoText}</p>}

@@ -172,7 +172,7 @@ export function PromoCarousel({ offers }: PromoCarouselProps) {
                     {savings > 0 && <span className="rounded-full border border-white/20 bg-emerald-300 px-2 py-0.5 text-emerald-950 shadow-sm">وفر {savings.toLocaleString("ar-EG")} ج.م</span>}
                   </div>
                 </div>
-                <div dir="ltr" className="relative flex h-full w-[38%] shrink-0 items-end justify-center p-1">
+                <div dir="ltr" className="relative flex h-full w-[48%] shrink-0 items-end justify-center p-1">
                   <div aria-hidden="true" className="absolute bottom-[9px] left-1/2 z-10 h-2 w-[70%] -translate-x-1/2 rounded-[50%] bg-black/20 blur-[2px]" style={{ boxShadow: "0 16px 20px -2px rgba(0, 0, 0, 0.45)" }} />
                   {productImage ? <img
                     src={productImage}

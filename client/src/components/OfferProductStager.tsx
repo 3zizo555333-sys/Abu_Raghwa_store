@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { arrangeProductStage } from "@/lib/productStageLayout";
+import { findAlphaBounds } from "@/lib/alphaBounds";
 import { removeProductBackground } from "@/lib/productBackgroundRemoval";
 import { toast } from "sonner";
 import { LoaderCircle, Minus, Plus, Sparkles, Trash2, Upload, X } from "lucide-react";
@@ -359,13 +360,24 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
   };
 
   const saveStage = async () => {
-    const canvas = document.createElement("canvas");
-    canvas.width = STAGE_SIZE;
-    canvas.height = STAGE_SIZE;
-    drawStage(canvas, layers, bitmapsRef.current);
+    const stageCanvas = document.createElement("canvas");
+    stageCanvas.width = STAGE_SIZE;
+    stageCanvas.height = STAGE_SIZE;
+    drawStage(stageCanvas, layers, bitmapsRef.current);
     setIsSaving(true);
     try {
-      setStatusText("تصدير صورة شفافة مضغوطة…");
+      setStatusText("قص الفراغات الشفافة وتصدير صورة المنتج…");
+      const stageContext = stageCanvas.getContext("2d", { willReadFrequently: true });
+      if (!stageContext) throw new Error("تعذر قراءة حدود صورة المنتج.");
+      const pixels = stageContext.getImageData(0, 0, STAGE_SIZE, STAGE_SIZE);
+      const bounds = findAlphaBounds(pixels.data, STAGE_SIZE, STAGE_SIZE);
+      if (!bounds) throw new Error("لم نعثر على منتج ظاهر للتصدير. أضف الصور أو أعد معالجتها.");
+      const canvas = document.createElement("canvas");
+      canvas.width = bounds.width;
+      canvas.height = bounds.height;
+      const context = canvas.getContext("2d", { alpha: true });
+      if (!context) throw new Error("تعذر تجهيز مساحة صورة المنتج.");
+      context.drawImage(stageCanvas, bounds.x, bounds.y, bounds.width, bounds.height, 0, 0, bounds.width, bounds.height);
       const blob = await createCanvasBlob(canvas);
       const type = blob.type === "image/webp" ? "image/webp" : "image/png";
       const extension = type === "image/webp" ? "webp" : "png";
@@ -432,8 +444,8 @@ export function OfferProductStager({ open, offer, variant = "offer", onOpenChang
           <section className="space-y-3">
             <div><h3 className="mb-2 text-sm font-black text-slate-900">{variant === "product" ? "معاينة صورة المنتج المفرغة" : "المعاينة النهائية فوق قالب العرض"}</h3>
               <div className="relative h-40 overflow-hidden rounded-2xl text-white shadow-md sm:h-48" style={templateStyle(offer)}>
-                <canvas ref={previewCanvasRef} aria-label="معاينة المنتجات الشفافة فوق قالب العرض" className="absolute bottom-0 left-0 z-20 h-full w-[40%] object-contain" />
-                <div className="absolute right-3 top-3 z-30 w-[57%] space-y-1 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.75)] sm:right-5 sm:top-5">
+                <canvas ref={previewCanvasRef} aria-label="معاينة المنتجات الشفافة فوق قالب العرض" className="absolute bottom-0 left-0 z-20 h-full w-[48%] object-contain" />
+                <div className="absolute right-3 top-3 z-30 w-[48%] space-y-1 text-right [text-shadow:0_1px_3px_rgba(0,0,0,.75)] sm:right-5 sm:top-5">
                   <p className="line-clamp-2 text-sm font-black sm:text-lg">{offer.title}</p>
                   {offer.promoText && <p className="line-clamp-2 text-[10px] font-bold sm:text-xs">{offer.promoText}</p>}
                   <div className="flex flex-wrap gap-1 pt-1 text-[10px] font-black">{offer.discountPercent > 0 && <span className="rounded-full border border-white/25 bg-amber-300 px-2 py-0.5 text-amber-950">وفر {offer.discountPercent}%</span>}<span className="rounded-full bg-white/90 px-2 py-0.5 text-slate-900">{offer.offerPrice} ج.م</span></div>
