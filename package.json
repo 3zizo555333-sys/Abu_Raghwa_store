@@ -13,6 +13,7 @@
     "test:cloud": "vitest run client/src/lib/supabase",
     "build:web": "vite build",
     "build:trpc-runtime": "esbuild server/_core/vercelTrpcRuntime.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/trpc-runtime.mjs",
+    "build:api-runtime": "esbuild server/_core/vercelApiRuntime.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/api-index.mjs",
     "supabase:push": "supabase db push",
     "supabase:test": "supabase test db",
     "supabase:provision-shop": "tsx scripts/provision-shop.ts",

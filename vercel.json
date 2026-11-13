@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "buildCommand": "pnpm build:web && pnpm build:trpc-runtime",
+  "buildCommand": "pnpm build:web && pnpm build:trpc-runtime && pnpm build:api-runtime",
   "outputDirectory": "dist/public",
   "crons": [
     {
@@ -10,7 +10,8 @@
   ],
   "functions": {
     "api/index.ts": {
-      "maxDuration": 60
+      "maxDuration": 60,
+      "includeFiles": "dist/api-index.mjs"
     },
     "api/trpc.ts": {
       "maxDuration": 30,
