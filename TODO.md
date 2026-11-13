@@ -34,3 +34,10 @@
 - إضافة/تحديث اختبارات الوحدة والخدمات والمهاجرات والصلاحيات، وتشغيل `pnpm check`, `pnpm test`, `pnpm build:web`، و`pnpm build` إن أمكن.
 - إنشاء فرع Preview مستقل ودفعه بعد مراجعة diff نظيف، والتحقق من حالة Vercel Preview؛ لا دمج إلى `main` ولا Production حتى إغلاق شروط الترحيل في `plan.md`.
 - اختبار اتصال Telegram الفعلي بعد أن يدخل المستخدم التوكن ومعرفات القنوات بنفسه من الواجهة الآمنة؛ لا إرسال اختباري إلى قناة قبل إدخال الاعتمادات.
+
+## حالة التنفيذ — 2026-11-13
+- **مكتمل بالكود:** إعدادات Bot 2 منفصلة باستخدام Supabase Vault، مهاجرة additive، outbox للإشعارات، حفظ صور فواتير الموردين في Telegram مع fallback للصور القديمة، مشاركة إيصال البيع، WebP لصور الكتالوج، وتنظيف مقيّد للصور المنتهية.
+- **مكتمل للمعاينة:** فرع `feat/telegram-archive-bot2`، commit `e18aab2f2bf340515f361e74c7372ec790a972c3`، ونشر Vercel Preview بحالة `READY`؛ لم يُدمج أو يُنشر على Production.
+- **اجتاز التحقق:** `pnpm check`, `pnpm test` (382 ناجحاً و2 متجاوزان)، `pnpm build:web`, `pnpm build`، وتحليل المهاجرة الجديدة منفردة (42 عبارة SQL و7 دوال PL/pgSQL).
+- **معلّق قبل الاختبار الحي:** لم تُطبّق المهاجرة ولم يُرسل اختبار Telegram؛ Preview لا يملك مفاتيح Supabase server-side أو `CRON_SECRET`. لا تُستخدم أسرار Production في Preview؛ يلزم توفير Supabase staging منفصل وإعداد أسراره قبل تجربة Bot 2 والنسخ اليومي.
+- يفشل الفحص الشامل `pnpm supabase:check-sql` عند مهاجرة أقدم `20261027221000_purchase_raffles_trivia_live_stage.sql` برسالة parser عن `v_status`، قبل أن يصل إلى مهاجرة Bot 2 الجديدة.

@@ -105,3 +105,10 @@
 - العمل على فرع Preview مستقل؛ لا نشر إلى `main` أو Production بسبب معايير الترحيل القائمة في الأقسام السابقة من هذه الخطة.
 - لا تُطبّق أي تغييرات destructive أو حذف ملفات على بيانات/تخزين حي. مهاجرات الداتا additive، ويُتحقق من SQL/RLS قبل تفعيل الاتصال.
 - لا يُرسل اختبار Telegram حتى يملأ المستخدم Bot 2 token والقنوات من واجهة الإعدادات ويطلب اختبارها.
+
+### نتيجة التنفيذ الأولي — 2026-11-13
+- دُفعت التغييرات إلى `feat/telegram-archive-bot2` في commit `e18aab2f2bf340515f361e74c7372ec790a972c3`؛ لم يتغير `main` أو Production.
+- نشر المعاينة `dpl_26KxDnfLcxqQzyJnqZDpCxJttLLh` أصبح `READY`. حماية Vercel SSO مفعلة، ولذلك يعيد الفحص غير المسجل صفحة تسجيل دخول بدلاً من كشف API.
+- نجح `pnpm check` و`pnpm test` (100 ملف اختبار، 382 ناجحاً و2 متجاوزان) و`pnpm build:web` و`pnpm build`؛ ظهر تحذير أحجام chunks وبعض تحذيرات import قديمة في build.
+- نجح تحليل المهاجرة الجديدة منفردة: 42 عبارة SQL و7 أجسام PL/pgSQL. أمر `pnpm supabase:check-sql` الكامل ما زال يتوقف في مهاجرة أقدم `20261027221000_purchase_raffles_trivia_live_stage.sql` بسبب قصور/خطأ parser على `v_status`، قبل الوصول إلى الملف الجديد.
+- لم تُطبّق المهاجرة على قاعدة Supabase الحية ولم يُرسل اختبار Telegram. بيئة Vercel Preview الحالية لا تحتوي إعدادات `SUPABASE_URL` و`SUPABASE_SERVICE_ROLE_KEY` ولا `CRON_SECRET`؛ لم أنسخ مفاتيح Production إلى Preview. يلزم مشروع Supabase تجريبي/مخصص ومفاتيحه، إضافة إلى `CRON_SECRET`، قبل اختبار عمليات Bot 2 والنسخ المجدول.
