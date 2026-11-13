@@ -339,6 +339,7 @@ export default function InvoiceOCR() {
   };
 
   const openInvoicePreview = async (invoice: SupplierInvoice) => {
+    if (!invoice.image_url && !invoice.telegram_file_id) { toast.error("لا توجد صورة مرفقة بهذه الفاتورة."); return; }
     if (invoicePreviewUrlRef.current.startsWith("blob:")) URL.revokeObjectURL(invoicePreviewUrlRef.current);
     setInvoicePreviewUrl("");
     if (invoice.image_url) {
@@ -363,8 +364,6 @@ export default function InvoiceOCR() {
   };
 
   const saveInvoice = async () => {
-    if (!telegramArchiveReady && !uploadedImageUrl) { toast.error("ارفع صورة الفاتورة إلى الأرشيف أولاً."); return; }
-    if (telegramArchiveReady && !imageDataUrl) { toast.error("التقط صورة الفاتورة قبل حفظها في قناة الأرشيف."); return; }
     if (!categoryId) { toast.error("اختر تصنيف الفاتورة."); return; }
     if (!supplierId || !supplier.trim()) { toast.error("اختر التاجر أو المندوب قبل حفظ الفاتورة."); return; }
     if (!invoiceDate) { toast.error("أدخل تاريخ الفاتورة الصحيح قبل حفظها."); return; }
@@ -372,9 +371,9 @@ export default function InvoiceOCR() {
     try {
       setIsSaving(true);
       const invoiceDraft = { supplierId, supplierName: supplier, invoiceDate, categoryId, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) };
-      if (telegramArchiveReady) await saveSupplierInvoiceToTelegram({ ...invoiceDraft, imageDataUrl });
-      else await saveSupplierInvoice({ ...invoiceDraft, imageUrl: uploadedImageUrl });
-      toast.success(telegramArchiveReady ? "تم حفظ الفاتورة وإيداع صورتها في قناة أرشيف Telegram." : "تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
+      if (telegramArchiveReady && imageDataUrl) await saveSupplierInvoiceToTelegram({ ...invoiceDraft, imageDataUrl });
+      else await saveSupplierInvoice({ ...invoiceDraft, imageUrl: uploadedImageUrl || "" });
+      toast.success(telegramArchiveReady && imageDataUrl ? "تم حفظ الفاتورة وإيداع صورتها في قناة أرشيف Telegram." : !imageDataUrl ? "تم حفظ الفاتورة سحابياً بدون صورة." : "تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
       resetDraft(); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]);
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الفاتورة سحابياً."); }
     finally { setIsSaving(false); }
@@ -454,7 +453,7 @@ export default function InvoiceOCR() {
                 <td className="p-2"><Button variant="ghost" size="icon" onClick={() => setParsedItems(rows => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4 text-red-600" /></Button></td>
               </tr>;
             })}</tbody></table></div>
-          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><strong>الإجمالي العام: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || !(uploadedImageUrl || (telegramArchiveReady && imageDataUrl)) || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><strong>الإجمالي العام: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
         </CardContent>
       </Card>}
 

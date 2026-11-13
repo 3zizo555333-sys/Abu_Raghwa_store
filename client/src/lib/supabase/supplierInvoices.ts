@@ -121,13 +121,13 @@ async function getPreviousCost(shopId: string, item: { item_name: string; barcod
   return byName.data?.unit_cost == null ? null : Number(byName.data.unit_cost);
 }
 
-export async function saveSupplierInvoice(input: { supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+export async function saveSupplierInvoice(input: { supplierId: string; supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   const client = getSupabaseClient();
   const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
-  if (!input.supplierName.trim() || !input.imageUrl || !normalized.length) throw new Error("أدخل المورد والصورة وبنداً واحداً على الأقل.");
+  if (!input.supplierId || !input.supplierName.trim() || !normalized.length) throw new Error("أدخل المورد وبنداً واحداً على الأقل.");
   const previousCosts = await Promise.all(normalized.map(item => getPreviousCost(shopId, item)));
   const rows = normalized.map((item, index) => {
     const previous = previousCosts[index];
@@ -145,7 +145,9 @@ export async function saveSupplierInvoice(input: { supplierName: string; invoice
   }));
   if (!result || typeof result !== "object" || !("invoice" in result) || !("items" in result)) throw new Error("لم يؤكد الخادم حفظ الفاتورة وبنودها.");
   const saved = result as { invoice: Database["public"]["Tables"]["supplier_invoices"]["Row"]; items: SupplierInvoiceItem[] };
-  return { ...saved.invoice, items: saved.items || [] };
+  const invoice = requireCloudResult(await client.from("supplier_invoices").update({ supplier_id: input.supplierId })
+    .eq("id", saved.invoice.id).eq("store_id", shopId).select("*").single()) as Database["public"]["Tables"]["supplier_invoices"]["Row"];
+  return { ...invoice, items: saved.items || [] };
 }
 
 export async function saveSupplierInvoiceToTelegram(input: { supplierId: string; supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId: string; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {

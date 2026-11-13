@@ -89,7 +89,8 @@ async function telegramCall<T>(token: string, method: string, body: FormData | R
   try { result = JSON.parse(raw) as TelegramResult<T>; }
   catch { throw new Error(`TELEGRAM_BAD_RESPONSE_${response.status}`); }
   if (!response.ok || !result.ok || result.result === undefined) {
-    throw new Error(`TELEGRAM_REJECTED_${result.error_code || response.status}`);
+    const detail = (result.description || "Unknown Telegram API error").replace(/[\r\n]+/g, " ").slice(0, 200);
+    throw new Error(`TELEGRAM_REJECTED_${result.error_code || response.status}: ${detail}`);
   }
   return result.result;
 }
@@ -427,16 +428,17 @@ export async function archiveSupplierInvoice(req: Request, res: Response) {
       p_image_url: "", p_telegram_file_id: fileId, p_notes: String(input.notes || ""),
       p_items: input.items,
     });
-    if (rpc.error || !rpc.data || typeof rpc.data !== "object" || !("invoice" in rpc.data)) throw new Error("SUPPLIER_INVOICE_SAVE_FAILED");
+    if (rpc.error) throw new Error(rpc.error.message);
+    if (!rpc.data || typeof rpc.data !== "object" || !("invoice" in rpc.data)) throw new Error("SUPPLIER_INVOICE_SAVE_FAILED");
     const saved = rpc.data as { invoice: { id: string }; items: unknown[] };
     const { data: invoice, error: linkError } = await ctx.client.from("supplier_invoices")
-      .update({ category_id: category.id, supplier_id: supplier.id }).eq("id", saved.invoice.id).eq("store_id", ctx.shopId).select("*").single();
-    if (linkError || !invoice) throw new Error("SUPPLIER_INVOICE_LINK_FAILED");
+      .update({ invoice_category_id: category.id, supplier_id: supplier.id }).eq("id", saved.invoice.id).eq("store_id", ctx.shopId).select("*").single();
+    if (linkError || !invoice) throw new Error(linkError?.message || "SUPPLIER_INVOICE_LINK_FAILED");
     return res.status(200).json({ invoice, items: saved.items });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ARCHIVE_UPLOAD_FAILED";
     const status = safeStatus(error);
-    return res.status(status).json({ error: status === 500 ? "تعذر حفظ فاتورة المورد أو أرشفتها." : message });
+    return res.status(status).json({ error: message });
   }
 }
 
@@ -470,7 +472,7 @@ export async function telegramArchiveApi(req: Request, res: Response) {
   } catch (error) {
     const status = safeStatus(error);
     const message = error instanceof Error ? error.message : "TELEGRAM_ARCHIVE_FAILED";
-    return res.status(status).json({ error: status === 500 ? "تعذر تنفيذ العملية حالياً." : message });
+    return res.status(status).json({ error: message });
   }
 }
 
