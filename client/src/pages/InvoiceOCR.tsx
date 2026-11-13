@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { getActiveShopContext } from "@/lib/supabase/products";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { createSupplierInvoiceCategory, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listSupplierInvoiceCategories, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type SupplierInvoice, type SupplierInvoiceCategory, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
+import { createInvoiceCategory, createInvoiceSupplier, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listInvoiceCategories, listInvoiceSuppliers, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type InvoiceCategory, type InvoiceSupplier, type SupplierInvoice, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
 import { fileToDataUrl, prepareSupplierInvoiceImage } from "@/lib/supabase/prepareSupplierInvoiceImage";
 
 interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; totalCost: number; confidence: number; }
@@ -65,6 +65,7 @@ export default function InvoiceOCR() {
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [priceInsights, setPriceInsights] = useState<SupplierPriceInsight[]>([]);
   const [supplier, setSupplier] = useState("");
+  const [supplierId, setSupplierId] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split("T")[0]);
   const [notes, setNotes] = useState("");
   const [isCompressing, setIsCompressing] = useState(false);
@@ -82,9 +83,11 @@ export default function InvoiceOCR() {
   const [adoptingImagePath, setAdoptingImagePath] = useState("");
   const [deletingImagePath, setDeletingImagePath] = useState("");
   const [isDeletingAllUnlinked, setIsDeletingAllUnlinked] = useState(false);
-  const [categories, setCategories] = useState<SupplierInvoiceCategory[]>([]);
+  const [categories, setCategories] = useState<InvoiceCategory[]>([]);
+  const [supplierOptions, setSupplierOptions] = useState<InvoiceSupplier[]>([]);
   const [categoryId, setCategoryId] = useState("");
   const [newCategoryName, setNewCategoryName] = useState("");
+  const [newSupplierName, setNewSupplierName] = useState("");
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
   const [history, setHistory] = useState<SupplierPriceComparison[]>([]);
   const [historyName, setHistoryName] = useState("");
@@ -111,8 +114,11 @@ export default function InvoiceOCR() {
     }
   };
   const refreshCategories = async () => {
-    try { setCategories(await listSupplierInvoiceCategories()); }
-    catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحميل فئات الفواتير."); }
+    try {
+      const [nextCategories, nextSuppliers] = await Promise.all([listInvoiceCategories(), listInvoiceSuppliers()]);
+      setCategories(nextCategories);
+      setSupplierOptions(nextSuppliers);
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحميل التصنيفات والأسماء."); }
   };
   const refreshUnlinkedImages = async () => {
     try {
@@ -273,7 +279,7 @@ export default function InvoiceOCR() {
       const original = new File([blob], filename, { type: blob.type || "image/webp" });
       const compressed = await prepareSupplierInvoiceImage(original);
       const dataUrl = await fileToDataUrl(compressed);
-      setImageDataUrl(dataUrl); setUploadedImageUrl(telegramArchiveReady ? "telegram-archive-pending" : image.imageUrl); setInvoiceDate(""); setSupplier("");
+      setImageDataUrl(dataUrl); setUploadedImageUrl(telegramArchiveReady ? "telegram-archive-pending" : image.imageUrl); setInvoiceDate(""); setSupplier(""); setSupplierId("");
       setNotes("صورة قديمة محفوظة في Storage؛ أدخل بيانات المورد والتاريخ الصحيحين قبل الحفظ.");
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       const previewUrl = URL.createObjectURL(blob); previewUrlRef.current = previewUrl; setInvoiceImage(previewUrl);
@@ -288,7 +294,7 @@ export default function InvoiceOCR() {
   const resetDraft = () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     previewUrlRef.current = null;
-    setInvoiceImage(null); setImageDataUrl(""); setUploadedImageUrl(""); setParsedItems([]); setPriceInsights([]); setSupplier(""); setInvoiceDate(new Date().toISOString().split("T")[0]); setNotes(""); setCategoryId(""); setNewCategoryName(""); setOcrError(""); setHistory([]); setHistoryName(""); previousTrendRef.current = {};
+    setInvoiceImage(null); setImageDataUrl(""); setUploadedImageUrl(""); setParsedItems([]); setPriceInsights([]); setSupplier(""); setSupplierId(""); setInvoiceDate(new Date().toISOString().split("T")[0]); setNotes(""); setCategoryId(""); setNewCategoryName(""); setNewSupplierName(""); setOcrError(""); setHistory([]); setHistoryName(""); previousTrendRef.current = {};
   };
 
   const deleteUnlinkedImage = async (image: UnlinkedSupplierInvoiceImage) => {
@@ -314,12 +320,22 @@ export default function InvoiceOCR() {
   }));
 
   const addCategory = async () => {
-    if (!newCategoryName.trim()) { toast.error("اكتب اسم الفئة أولاً."); return; }
+    if (!newCategoryName.trim()) { toast.error("اكتب اسم التصنيف أولاً."); return; }
     try {
-      const row = await createSupplierInvoiceCategory(newCategoryName);
+      const row = await createInvoiceCategory(newCategoryName, "📁");
       setCategories(rows => [...rows, row].sort((a, b) => a.name.localeCompare(b.name, "ar")));
-      setCategoryId(row.id); setNewCategoryName(""); toast.success("تم حفظ الفئة سحابياً.");
-    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الفئة سحابياً."); }
+      setCategoryId(row.id); setSupplierId(""); setSupplier(""); setNewCategoryName(""); toast.success("تم حفظ التصنيف الجديد فوراً.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ التصنيف."); }
+  };
+
+  const addSupplier = async () => {
+    if (!categoryId) { toast.error("اختر التصنيف أولاً."); return; }
+    if (!newSupplierName.trim()) { toast.error("اكتب الاسم الجديد أولاً."); return; }
+    try {
+      const row = await createInvoiceSupplier(categoryId, newSupplierName);
+      setSupplierOptions(rows => [...rows, row].sort((a, b) => a.name.localeCompare(b.name, "ar")));
+      setSupplierId(row.id); setSupplier(row.name); setNewSupplierName(""); toast.success("تم حفظ الاسم تحت التصنيف فوراً.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الاسم."); }
   };
 
   const openInvoicePreview = async (invoice: SupplierInvoice) => {
@@ -349,12 +365,13 @@ export default function InvoiceOCR() {
   const saveInvoice = async () => {
     if (!telegramArchiveReady && !uploadedImageUrl) { toast.error("ارفع صورة الفاتورة إلى الأرشيف أولاً."); return; }
     if (telegramArchiveReady && !imageDataUrl) { toast.error("التقط صورة الفاتورة قبل حفظها في قناة الأرشيف."); return; }
-    if (!supplier.trim()) { toast.error("أدخل اسم المورد قبل حفظ الفاتورة."); return; }
+    if (!categoryId) { toast.error("اختر تصنيف الفاتورة."); return; }
+    if (!supplierId || !supplier.trim()) { toast.error("اختر التاجر أو المندوب قبل حفظ الفاتورة."); return; }
     if (!invoiceDate) { toast.error("أدخل تاريخ الفاتورة الصحيح قبل حفظها."); return; }
     if (!parsedItems.some(item => item.name.trim())) { toast.error("أضف بنداً واحداً على الأقل."); return; }
     try {
       setIsSaving(true);
-      const invoiceDraft = { supplierName: supplier, invoiceDate, categoryId: categoryId || null, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) };
+      const invoiceDraft = { supplierId, supplierName: supplier, invoiceDate, categoryId, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) };
       if (telegramArchiveReady) await saveSupplierInvoiceToTelegram({ ...invoiceDraft, imageDataUrl });
       else await saveSupplierInvoice({ ...invoiceDraft, imageUrl: uploadedImageUrl });
       toast.success(telegramArchiveReady ? "تم حفظ الفاتورة وإيداع صورتها في قناة أرشيف Telegram." : "تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
@@ -384,11 +401,6 @@ export default function InvoiceOCR() {
       {!invoiceImage ? <Card>
         <CardHeader><CardTitle>إضافة فاتورة مورد</CardTitle><CardDescription>التقط صورة واضحة أو ارفعها من المعرض؛ ستُضغط الصورة وتُقرأ البنود تلقائياً ثم تحفظ في الأرشيف السحابي.</CardDescription></CardHeader>
         <CardContent>
-          <div className="mb-4 grid gap-2 md:grid-cols-[1fr_auto_auto]">
-            <Input value={newCategoryName} onChange={event => setNewCategoryName(event.target.value)} placeholder="اسم فئة جديدة مثل: فواتير شهر أكتوبر" />
-            <Button variant="outline" onClick={() => void addCategory()}>حفظ الفئة سحابياً</Button>
-            <select value={categoryId} onChange={event => setCategoryId(event.target.value)} className="rounded-md border bg-white px-3"><option value="">بدون فئة</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
-          </div>
           <div className="grid gap-4 md:grid-cols-2">
             <Button onClick={() => cameraInputRef.current?.click()} disabled={processing} className="h-28 bg-blue-600"><Camera className="ml-2" />التقاط بالكاميرا</Button>
             <Button onClick={() => fileInputRef.current?.click()} disabled={processing} className="h-28 bg-green-600"><Upload className="ml-2" />رفع من المعرض</Button>
@@ -408,8 +420,16 @@ export default function InvoiceOCR() {
           <div className="grid gap-6 lg:grid-cols-2">
             <div><img src={invoiceImage} alt="صورة فاتورة المورد بعد ضغطها" className="max-h-[620px] w-full rounded-xl border object-contain" /><p className="mt-2 text-xs text-green-700">أرشفة الصورة: {telegramArchiveReady ? (uploadedImageUrl ? "ستُرسل إلى قناة Telegram عند الحفظ" : "بانتظار اختيار الصورة") : isUploading ? "جارية الآن..." : uploadedImageUrl ? "تم الرفع؛ ستحفظ مع الفاتورة" : "لم تبدأ"}</p></div>
             <div className="space-y-3">
-              <label className="text-sm font-bold">الفئة</label><select value={categoryId} onChange={event => setCategoryId(event.target.value)} className="rounded-md border bg-white px-3 py-2"><option value="">بدون فئة</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
-              <label className="text-sm font-bold">اسم المورد</label><Input value={supplier} onChange={event => setSupplier(event.target.value)} placeholder="اسم المورد" />
+              <div className="space-y-2">
+                <label className="text-sm font-bold">التصنيف</label>
+                <select value={categoryId} onChange={event => { setCategoryId(event.target.value); setSupplierId(""); setSupplier(""); }} className="w-full rounded-md border bg-white px-3 py-2"><option value="">اختر التصنيف</option>{categories.map(category => <option key={category.id} value={category.id}>{category.icon} {category.name}</option>)}</select>
+                <div className="flex gap-2"><Input value={newCategoryName} onChange={event => setNewCategoryName(event.target.value)} placeholder="اسم تصنيف جديد" /><Button type="button" variant="outline" onClick={() => void addCategory()} className="shrink-0">(+ تصنيف جديد)</Button></div>
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-bold">التاجر/المندوب</label>
+                <select value={supplierId} onChange={event => { const chosen = supplierOptions.find(row => row.id === event.target.value); setSupplierId(event.target.value); setSupplier(chosen?.name || ""); }} disabled={!categoryId} className="w-full rounded-md border bg-white px-3 py-2 disabled:bg-gray-100"><option value="">اختر التاجر أو المندوب</option>{supplierOptions.filter(row => row.category_id === categoryId).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
+                <div className="flex gap-2"><Input value={newSupplierName} onChange={event => setNewSupplierName(event.target.value)} placeholder="اسم تاجر أو مندوب جديد" disabled={!categoryId} /><Button type="button" variant="outline" onClick={() => void addSupplier()} disabled={!categoryId} className="shrink-0">(+ اسم جديد)</Button></div>
+              </div>
               <label className="text-sm font-bold">تاريخ الفاتورة</label><Input type="date" value={invoiceDate} onChange={event => setInvoiceDate(event.target.value)} />
               <label className="text-sm font-bold">ملاحظات</label><Textarea value={notes} onChange={event => setNotes(event.target.value)} placeholder="ملاحظات اختيارية" />
             </div>

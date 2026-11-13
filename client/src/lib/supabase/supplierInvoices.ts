@@ -5,6 +5,8 @@ import type { Database } from "./database.types";
 export type SupplierInvoiceItem = Database["public"]["Tables"]["supplier_invoice_items"]["Row"];
 export type SupplierInvoice = Database["public"]["Tables"]["supplier_invoices"]["Row"] & { items: SupplierInvoiceItem[] };
 export type SupplierInvoiceCategory = Database["public"]["Tables"]["supplier_invoice_categories"]["Row"];
+export type InvoiceCategory = Database["public"]["Tables"]["invoice_categories"]["Row"];
+export type InvoiceSupplier = Database["public"]["Tables"]["suppliers"]["Row"];
 export type UnlinkedSupplierInvoiceImage = { path: string; imageUrl: string; createdAt: string | null };
 export type SupplierInvoiceDraftItem = {
   itemName: string;
@@ -61,6 +63,37 @@ export async function uploadSupplierInvoiceImage(image: Blob): Promise<string> {
     throw new Error(error instanceof Error ? error.message : "تعذر رفع صورة الفاتورة إلى Supabase Storage.");
   }
 }
+export async function listInvoiceCategories(): Promise<InvoiceCategory[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  return (requireCloudResult(await getSupabaseClient().from("invoice_categories").select("*").eq("store_id", shopId).order("name").limit(500)) || []) as InvoiceCategory[];
+}
+
+export async function createInvoiceCategory(name: string, icon = "📁"): Promise<InvoiceCategory> {
+  assertCloudOnline();
+  const normalized = name.trim();
+  if (!normalized || normalized.length > 120) throw new Error("اسم التصنيف مطلوب ويجب ألا يتجاوز 120 حرفاً.");
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("إضافة التصنيفات متاحة للإدارة أو المشرف فقط.");
+  const row = requireCloudResult(await getSupabaseClient().from("invoice_categories").insert({ store_id: shopId, name: normalized, icon: icon || "📁" }).select("*").single()) as InvoiceCategory;
+  return row;
+}
+
+export async function listInvoiceSuppliers(): Promise<InvoiceSupplier[]> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  return (requireCloudResult(await getSupabaseClient().from("suppliers").select("*").eq("store_id", shopId).order("name").limit(1000)) || []) as InvoiceSupplier[];
+}
+
+export async function createInvoiceSupplier(categoryId: string, name: string): Promise<InvoiceSupplier> {
+  assertCloudOnline();
+  const normalized = name.trim();
+  if (!categoryId || !normalized || normalized.length > 180) throw new Error("اختر تصنيفاً وأدخل اسماً صالحاً.");
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("إضافة الأسماء متاحة للإدارة أو المشرف فقط.");
+  return requireCloudResult(await getSupabaseClient().from("suppliers").insert({ store_id: shopId, category_id: categoryId, name: normalized }).select("*").single()) as InvoiceSupplier;
+}
+
 export async function listSupplierInvoiceCategories(): Promise<SupplierInvoiceCategory[]> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
@@ -115,7 +148,7 @@ export async function saveSupplierInvoice(input: { supplierName: string; invoice
   return { ...saved.invoice, items: saved.items || [] };
 }
 
-export async function saveSupplierInvoiceToTelegram(input: { supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+export async function saveSupplierInvoiceToTelegram(input: { supplierId: string; supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId: string; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حفظ فواتير الموردين متاح للمدير أو المشرف فقط.");
@@ -134,7 +167,7 @@ export async function saveSupplierInvoiceToTelegram(input: { supplierName: strin
   const response = await fetch("/api/telegram-archive/supplier-invoice", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionData.session.access_token}` },
-    body: JSON.stringify({ shopId, supplierName: input.supplierName.trim(), invoiceDate: input.invoiceDate, categoryId: input.categoryId || null, notes: input.notes?.trim() || "", items: rows, totalAmount: rows.reduce((sum, row) => sum + Number(row.total_cost || 0), 0), imageDataUrl: input.imageDataUrl }),
+    body: JSON.stringify({ shopId, supplierId: input.supplierId, supplierName: input.supplierName.trim(), invoiceDate: input.invoiceDate, categoryId: input.categoryId, notes: input.notes?.trim() || "", items: rows, totalAmount: rows.reduce((sum, row) => sum + Number(row.total_cost || 0), 0), imageDataUrl: input.imageDataUrl }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || "تعذر إرسال الفاتورة إلى قناة الأرشيف.");

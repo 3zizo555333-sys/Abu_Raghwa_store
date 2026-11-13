@@ -10,6 +10,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-
 const CHANNEL_ID_RE = /^(?:-?[0-9]{1,25}|@[A-Za-z0-9_]{5,32})$/;
 const TOKEN_RE = /^[0-9]{5,12}:[A-Za-z0-9_-]{20,}$/;
 const TELEGRAM_API = "https://api.telegram.org";
+const INVOICE_ARCHIVE_GROUP_ID = "-1004340253350";
 
 type Role = "manager" | "admin" | "supervisor" | "seller";
 type AuthContext = { client: SupabaseClient; userId: string; shopId: string; role: Role };
@@ -188,6 +189,18 @@ async function sendDocument(token: string, channelId: string, fileName: string, 
   return telegramCall<{ message_id: number; document?: { file_id?: string } }>(token, "sendDocument", form);
 }
 
+async function sendPhoto(token: string, chatId: string, bytes: Uint8Array, caption: string, threadId?: number | null) {
+  const form = new FormData();
+  form.set("chat_id", chatId);
+  form.set("caption", caption.slice(0, 1024));
+  form.set("parse_mode", "HTML");
+  if (threadId) form.set("message_thread_id", String(threadId));
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  form.set("photo", new Blob([copy.buffer], { type: "image/jpeg" }), `supplier-invoice-${randomUUID()}.jpg`);
+  return telegramCall<{ message_id: number; photo?: Array<{ file_id: string }> }>(token, "sendPhoto", form);
+}
+
 async function archiveSettingsTest(ctx: AuthContext) {
   const settings = await getSettings(ctx.client, ctx.shopId);
   if (!settings?.is_enabled) throw new Error("BOT2_DISABLED");
@@ -357,28 +370,69 @@ export async function archiveSupplierInvoice(req: Request, res: Response) {
     const input = req.body as Record<string, unknown>;
     const ctx = await authorizeShop(req, input.shopId, ["manager", "admin", "supervisor"]);
     const settings = await getSettings(ctx.client, ctx.shopId);
-    if (!settings?.is_enabled || !settings.archive_channel_id) throw new Error("ARCHIVE_CHANNEL_NOT_CONFIGURED");
+    if (!settings?.is_enabled) throw new Error("ARCHIVE_CHANNEL_NOT_CONFIGURED");
+    const categoryId = String(input.categoryId || "");
+    const supplierId = String(input.supplierId || "");
+    const [{ data: category, error: categoryError }, { data: supplier, error: supplierError }] = await Promise.all([
+      ctx.client.from("invoice_categories").select("id,name,icon").eq("id", categoryId).eq("store_id", ctx.shopId).maybeSingle(),
+      ctx.client.from("suppliers").select("id,name,category_id,telegram_topic_id").eq("id", supplierId).eq("store_id", ctx.shopId).eq("category_id", categoryId).maybeSingle(),
+    ]);
+    if (categoryError || !category) throw new Error("INVALID_INVOICE_CATEGORY");
+    if (supplierError || !supplier) throw new Error("INVALID_INVOICE_SUPPLIER");
     const imageDataUrl = String(input.imageDataUrl || "");
     const match = imageDataUrl.match(/^data:image\/(jpeg|jpg);base64,([A-Za-z0-9+/=]+)$/);
     if (!match) throw new Error("INVALID_INVOICE_IMAGE");
     const bytes = Buffer.from(match[2], "base64");
     if (!bytes.length || bytes.length > 1_800_000) throw new Error("INVOICE_IMAGE_TOO_LARGE");
     const token = await getBotToken(ctx.client, ctx.shopId);
-    const form = new FormData();
-    form.set("chat_id", settings.archive_channel_id);
-    form.set("caption", `فاتورة مورد\nالمورد: ${String(input.supplierName || "غير محدد").slice(0,180)}\nالتاريخ: ${String(input.invoiceDate || "").slice(0,30)}\nالإجمالي: ${safeMoney(input.totalAmount)} ج.م`);
-    form.set("document", new Blob([bytes], { type: "image/jpeg" }), `supplier-invoice-${randomUUID()}.jpg`);
-    const sent = await telegramCall<{ message_id: number; document?: { file_id?: string }; photo?: Array<{ file_id: string }> }>(token, "sendDocument", form);
-    const fileId = sent.document?.file_id || sent.photo?.at(-1)?.file_id;
+    let threadId = supplier.telegram_topic_id == null ? null : Number(supplier.telegram_topic_id);
+    if (threadId !== null && (!Number.isSafeInteger(threadId) || threadId < 1)) threadId = null;
+    if (!threadId) {
+      let createdThreadId: number | null = null;
+      try {
+        const topic = await telegramCall<{ message_thread_id: number }>(token, "createForumTopic", {
+          chat_id: INVOICE_ARCHIVE_GROUP_ID,
+          name: `${category.icon || "📁"} ${category.name} | ${supplier.name}`.slice(0, 128),
+        });
+        if (Number.isSafeInteger(topic.message_thread_id) && topic.message_thread_id > 0) createdThreadId = topic.message_thread_id;
+      } catch { /* تعذر إنشاء موضوع: أرسل إلى المجموعة العامة كـ fallback. */ }
+      if (createdThreadId) {
+        const { data: claimed, error: updateError } = await ctx.client.from("suppliers")
+          .update({ telegram_topic_id: createdThreadId }).eq("id", supplier.id).eq("store_id", ctx.shopId)
+          .is("telegram_topic_id", null).select("telegram_topic_id").maybeSingle();
+        if (updateError) throw new Error("SUPPLIER_TOPIC_SAVE_FAILED");
+        if (claimed?.telegram_topic_id != null) threadId = Number(claimed.telegram_topic_id);
+        else {
+          const { data: current, error: readError } = await ctx.client.from("suppliers")
+            .select("telegram_topic_id").eq("id", supplier.id).eq("store_id", ctx.shopId).maybeSingle();
+          if (readError) throw new Error("SUPPLIER_TOPIC_READ_FAILED");
+          threadId = current?.telegram_topic_id == null ? createdThreadId : Number(current.telegram_topic_id);
+        }
+      }
+    }
+    const caption = [
+      "🧾 <b>فاتورة مورد</b>",
+      `التصنيف: ${escapeHtml(category.icon || "📁")} ${escapeHtml(category.name)}`,
+      `التاجر/المندوب: <b>${escapeHtml(supplier.name)}</b>`,
+      `التاريخ: ${escapeHtml(input.invoiceDate || "")}`,
+      `الإجمالي: ${safeMoney(input.totalAmount)} ج.م`,
+      input.notes ? `ملاحظات: ${escapeHtml(String(input.notes).slice(0, 500))}` : "",
+    ].filter(Boolean).join("\n");
+    const sent = await sendPhoto(token, INVOICE_ARCHIVE_GROUP_ID, bytes, caption, threadId);
+    const fileId = sent.photo?.at(-1)?.file_id;
     if (!fileId) throw new Error("TELEGRAM_FILE_ID_MISSING");
     const rpc = await ctx.client.rpc("save_supplier_invoice_v2", {
-      p_store_id: ctx.shopId, p_category_id: (input.categoryId as string | null) || null,
-      p_supplier_name: String(input.supplierName || ""), p_invoice_date: String(input.invoiceDate || ""),
+      p_store_id: ctx.shopId, p_category_id: null,
+      p_supplier_name: supplier.name, p_invoice_date: String(input.invoiceDate || ""),
       p_image_url: "", p_telegram_file_id: fileId, p_notes: String(input.notes || ""),
       p_items: input.items,
     });
-    if (rpc.error) throw new Error("SUPPLIER_INVOICE_SAVE_FAILED");
-    return res.status(200).json(rpc.data);
+    if (rpc.error || !rpc.data || typeof rpc.data !== "object" || !("invoice" in rpc.data)) throw new Error("SUPPLIER_INVOICE_SAVE_FAILED");
+    const saved = rpc.data as { invoice: { id: string }; items: unknown[] };
+    const { data: invoice, error: linkError } = await ctx.client.from("supplier_invoices")
+      .update({ category_id: category.id, supplier_id: supplier.id }).eq("id", saved.invoice.id).eq("store_id", ctx.shopId).select("*").single();
+    if (linkError || !invoice) throw new Error("SUPPLIER_INVOICE_LINK_FAILED");
+    return res.status(200).json({ invoice, items: saved.items });
   } catch (error) {
     const message = error instanceof Error ? error.message : "ARCHIVE_UPLOAD_FAILED";
     const status = safeStatus(error);

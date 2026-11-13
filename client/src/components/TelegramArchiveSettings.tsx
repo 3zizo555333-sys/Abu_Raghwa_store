@@ -15,7 +15,7 @@ type Settings = {
   enable_daily_backup: boolean;
   has_bot_token: boolean;
 };
-const EMPTY: Settings = { sales_channel_id: "", archive_channel_id: "", backup_channel_id: "", is_enabled: false, notify_live_sales: true, notify_low_stock: true, enable_daily_backup: false, has_bot_token: false };
+const EMPTY: Settings = { sales_channel_id: "", archive_channel_id: "-1004340253350", backup_channel_id: "", is_enabled: false, notify_live_sales: true, notify_low_stock: true, enable_daily_backup: false, has_bot_token: false };
 
 export default function TelegramArchiveSettings() {
   const [shopId, setShopId] = useState("");
