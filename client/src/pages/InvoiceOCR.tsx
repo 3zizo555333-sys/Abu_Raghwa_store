@@ -50,6 +50,57 @@ function numericOcrValue(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+type GeminiListedModel = { name?: string; displayName?: string; version?: string; supportedGenerationMethods?: string[] };
+
+function compareGeminiModelFreshness(a: GeminiListedModel, b: GeminiListedModel): number {
+  const extractVersion = (model: GeminiListedModel) => {
+    const match = `${model.name || ""} ${model.version || ""}`.match(/gemini[-/ ](\d+(?:\.\d+){0,3})/i);
+    return match ? match[1].split(".").map(Number) : [];
+  };
+  const av = extractVersion(a); const bv = extractVersion(b);
+  for (let i = 0; i < Math.max(av.length, bv.length); i += 1) {
+    const difference = (bv[i] || 0) - (av[i] || 0);
+    if (difference) return difference;
+  }
+  const releaseDate = (model: GeminiListedModel) => {
+    const match = `${model.name || ""} ${model.version || ""}`.match(/(20\d{2})[-_.]?(\d{2})[-_.]?(\d{2})/);
+    return match ? Number(`${match[1]}${match[2]}${match[3]}`) : 0;
+  };
+  const dateDifference = releaseDate(b) - releaseDate(a);
+  if (dateDifference) return dateDifference;
+  return String(b.version || "").localeCompare(String(a.version || ""), undefined, { numeric: true });
+}
+
+async function findNewestGeminiFlashModel(apiKey: string, unavailableModel: string): Promise<string> {
+  const models: GeminiListedModel[] = [];
+  let pageToken = "";
+  for (let page = 0; page < 10; page += 1) {
+    const url = new URL("https://generativelanguage.googleapis.com/v1beta/models");
+    url.searchParams.set("key", apiKey);
+    url.searchParams.set("pageSize", "100");
+    if (pageToken) url.searchParams.set("pageToken", pageToken);
+    const response = await fetch(url.toString());
+    const raw = await response.text();
+    let result: { models?: GeminiListedModel[]; nextPageToken?: string; error?: { message?: string } } = {};
+    try { result = JSON.parse(raw) as typeof result; } catch { /* يعرض الخطأ المقروء أدناه */ }
+    if (!response.ok) throw new Error(`ListModels ${response.status}: ${result.error?.message || raw.slice(0, 300)}`);
+    models.push(...(result.models || []));
+    if (!result.nextPageToken) break;
+    pageToken = result.nextPageToken;
+  }
+  const failedName = unavailableModel.replace(/^models\//i, "").toLocaleLowerCase();
+  const eligible = models.filter(model => {
+    const name = (model.name || "").replace(/^models\//i, "");
+    return name && name.toLocaleLowerCase() !== failedName &&
+      /flash/i.test(`${name} ${model.displayName || ""}`) &&
+      model.supportedGenerationMethods?.includes("generateContent");
+  });
+  const fullFlashModels = eligible.filter(model => !/flash[- ]?lite/i.test(`${model.name} ${model.displayName || ""}`));
+  const candidate = [...(fullFlashModels.length ? fullFlashModels : eligible)].sort(compareGeminiModelFreshness)[0];
+  if (!candidate?.name) throw new Error("لم يُعثر في ListModels على موديل Flash بديل يدعم generateContent.");
+  return candidate.name.replace(/^models\//i, "");
+}
+
 function extractInvoiceItems(responseText: string): Array<Record<string, unknown>> {
   const cleaned = responseText.replace(/```json/gi, "").replace(/```/gi, "").trim();
   const start = cleaned.indexOf("[");
@@ -198,29 +249,36 @@ export default function InvoiceOCR() {
       }
       const compressedDataUrl = await compressInvoiceForOcr(dataUrl);
       const base64 = compressedDataUrl.split(",")[1] || "";
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
-      const response = await fetch(endpoint, {
+      const requestBody = {
+        contents: [{ role: "user", parts: [
+          { text: `اقرأ الصورة كاملة سطراً سطراً؛ سواء كانت فاتورة أو قائمة أسعار، مطبوعة أو بخط اليد، بالعربية أو الإنجليزية. المورد: ${supplier || "غير معروف"}. التاريخ: ${invoiceDate || "غير معروف"}. استخرج جميع البنود الظاهرة ولا تتجاهل أي صف. إذا كانت الصفحة مقسمة إلى عمودين، اقرأ كل عمود كاملاً على حدة ولا تخلط صفوف العمودين، ثم أخرج البنود بترتيب القراءة من اليمين إلى اليسار للعربية ومن اليسار إلى اليمين للإنجليزية. حوّل الأرقام العربية إلى أرقام عادية. استخرج اسم الصنف والباركود إن ظهر والكمية وسعر الشراء للوحدة وإجمالي البند وسعر البيع إن ظهر. إذا غابت الكمية فاستخدم 1؛ وإذا ظهر إجمالي البند فقط فاستنتج سعر الوحدة من الكمية. لا تخمّن القيم غير المقروءة واجعلها 0 أو null. أعد مصفوفة JSON فقط بلا Markdown ولا مقدمة، وكل صف بهذا الشكل: [{"item_name":"اسم الصنف","barcode":"","quantity":1,"unit_price":10,"total_price":10,"selling_price":null,"confidence":0.9}]` },
+          { inline_data: { mime_type: "image/jpeg", data: base64 } },
+        ] }],
+        generationConfig: {
+          temperature: 0.1,
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "ARRAY",
+            items: { type: "OBJECT", properties: {
+              item_name: { type: "STRING" }, barcode: { type: "STRING" }, quantity: { type: "NUMBER" },
+              unit_price: { type: "NUMBER" }, total_price: { type: "NUMBER" }, selling_price: { type: "NUMBER", nullable: true }, confidence: { type: "NUMBER" },
+            }, required: ["item_name", "quantity", "unit_price", "total_price"] },
+          },
+          maxOutputTokens: 8192,
+        },
+      };
+      const requestModel = (model: string) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts: [
-            { text: `اقرأ الصورة كاملة سطراً سطراً؛ سواء كانت فاتورة أو قائمة أسعار، مطبوعة أو بخط اليد، بالعربية أو الإنجليزية. المورد: ${supplier || "غير معروف"}. التاريخ: ${invoiceDate || "غير معروف"}. استخرج جميع البنود الظاهرة ولا تتجاهل أي صف. إذا كانت الصفحة مقسمة إلى عمودين، اقرأ كل عمود كاملاً على حدة ولا تخلط صفوف العمودين، ثم أخرج البنود بترتيب القراءة من اليمين إلى اليسار للعربية ومن اليسار إلى اليمين للإنجليزية. حوّل الأرقام العربية إلى أرقام عادية. استخرج اسم الصنف والباركود إن ظهر والكمية وسعر الشراء للوحدة وإجمالي البند وسعر البيع إن ظهر. إذا غابت الكمية فاستخدم 1؛ وإذا ظهر إجمالي البند فقط فاستنتج سعر الوحدة من الكمية. لا تخمّن القيم غير المقروءة واجعلها 0 أو null. أعد مصفوفة JSON فقط بلا Markdown ولا مقدمة، وكل صف بهذا الشكل: [{"item_name":"اسم الصنف","barcode":"","quantity":1,"unit_price":10,"total_price":10,"selling_price":null,"confidence":0.9}]` },
-            { inline_data: { mime_type: "image/jpeg", data: base64 } },
-          ] }],
-          generationConfig: {
-            temperature: 0.1,
-            responseMimeType: "application/json",
-            responseSchema: {
-              type: "ARRAY",
-              items: { type: "OBJECT", properties: {
-                item_name: { type: "STRING" }, barcode: { type: "STRING" }, quantity: { type: "NUMBER" },
-                unit_price: { type: "NUMBER" }, total_price: { type: "NUMBER" }, selling_price: { type: "NUMBER", nullable: true }, confidence: { type: "NUMBER" },
-              }, required: ["item_name", "quantity", "unit_price", "total_price"] },
-            },
-            maxOutputTokens: 8192,
-          },
-        }),
+        body: JSON.stringify(requestBody),
       });
+      let response = await requestModel("gemini-3.8-flash");
+      if (response.status === 404) {
+        const unavailableResponse = await response.text();
+        const fallbackModel = await findNewestGeminiFlashModel(apiKey, "gemini-3.8-flash");
+        response = await requestModel(fallbackModel);
+        if (response.status === 404) throw new Error(`الموديل البديل ${fallbackModel} غير متاح أيضاً: ${(await response.text()).slice(0, 300) || unavailableResponse.slice(0, 300)}`);
+      }
       const raw = await response.text();
       let payload: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } } = {};
       try { payload = JSON.parse(raw) as typeof payload; } catch { /* نعرض الرد الخام بالأسفل */ }
