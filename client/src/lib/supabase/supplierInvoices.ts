@@ -13,12 +13,15 @@ export type SupplierInvoiceDraftItem = {
   barcode?: string;
   quantity: number;
   unitCost: number;
+  salePrice?: number | null;
   totalCost?: number;
 };
 export type SupplierPriceComparison = {
   itemName: string;
   supplierName: string;
   unitCost: number;
+  totalCost: number;
+  salePrice: number | null;
   invoiceDate: string;
   invoiceId: string;
   isCheapest: boolean;
@@ -30,6 +33,7 @@ export type SupplierPriceInsight = {
   cheapestUnitCost: number | null;
   cheapestSupplierName: string | null;
   savingVsCheapest: number | null;
+  sellingPrice: number | null;
 };
 
 function normalizeItem(item: SupplierInvoiceDraftItem) {
@@ -41,6 +45,7 @@ function normalizeItem(item: SupplierInvoiceDraftItem) {
     barcode: item.barcode?.trim() || null,
     quantity,
     unit_cost: unitCost,
+    sale_price: item.salePrice == null || !Number.isFinite(Number(item.salePrice)) ? null : Math.max(0, Number(item.salePrice)),
     total_cost: Math.round(totalCost * 100) / 100,
   };
 }
@@ -79,6 +84,13 @@ export async function createInvoiceCategory(name: string, icon = "📁"): Promis
   return row;
 }
 
+export async function deleteInvoiceCategory(categoryId: string): Promise<void> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف التصنيفات متاح للإدارة أو المشرف فقط.");
+  requireCloudResult(await getSupabaseClient().rpc("delete_invoice_category_v1", { p_store_id: shopId, p_category_id: categoryId }));
+}
+
 export async function listInvoiceSuppliers(): Promise<InvoiceSupplier[]> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
@@ -92,6 +104,19 @@ export async function createInvoiceSupplier(categoryId: string, name: string): P
   const { shopId, role } = await getActiveShopContext(true);
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("إضافة الأسماء متاحة للإدارة أو المشرف فقط.");
   return requireCloudResult(await getSupabaseClient().from("suppliers").insert({ store_id: shopId, category_id: categoryId, name: normalized }).select("*").single()) as InvoiceSupplier;
+}
+
+export async function deleteInvoiceSupplier(supplierId: string): Promise<void> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف الأسماء متاح للإدارة أو المشرف فقط.");
+  const removed = requireCloudResult(await getSupabaseClient().from("suppliers").delete().eq("id", supplierId).eq("store_id", shopId).select("id").maybeSingle());
+  if (!removed) throw new Error("الاسم غير موجود أو لا يتبع المتجر النشط.");
+}
+
+async function getProductSalePriceMap(shopId: string): Promise<Map<string, number>> {
+  const rows = requireCloudResult(await getSupabaseClient().from("products").select("name,retail_price").eq("shop_id", shopId).is("deleted_at", null).limit(10000)) || [];
+  return new Map(rows.filter(row => Number(row.retail_price) > 0).map(row => [row.name.trim().toLocaleLowerCase(), Number(row.retail_price)]));
 }
 
 export async function listSupplierInvoiceCategories(): Promise<SupplierInvoiceCategory[]> {
@@ -121,27 +146,30 @@ async function getPreviousCost(shopId: string, item: { item_name: string; barcod
   return byName.data?.unit_cost == null ? null : Number(byName.data.unit_cost);
 }
 
-export async function saveSupplierInvoice(input: { supplierId: string; supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+export async function saveSupplierInvoice(input: { supplierId: string; supplierName: string; invoiceDate: string; imageUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[]; totalAmount: number }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حذف صور فواتير الموردين متاح للمدير أو المشرف فقط.");
   const client = getSupabaseClient();
   const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
-  if (!input.supplierId || !input.supplierName.trim() || !normalized.length) throw new Error("أدخل المورد وبنداً واحداً على الأقل.");
+  if (!input.supplierId || !input.supplierName.trim()) throw new Error("اختر المورد قبل حفظ الفاتورة.");
+  if (!Number.isFinite(input.totalAmount) || input.totalAmount < 0) throw new Error("إجمالي الفاتورة غير صالح.");
   const previousCosts = await Promise.all(normalized.map(item => getPreviousCost(shopId, item)));
   const rows = normalized.map((item, index) => {
     const previous = previousCosts[index];
     const diff = previous == null ? null : Math.round((item.unit_cost - previous) * 10000) / 10000;
     return { ...item, previous_cost: previous, price_diff: diff, price_direction: diff == null || Math.abs(diff) < 0.0001 ? "stable" : diff > 0 ? "up" : "down" as "up" | "down" | "stable" };
   });
-  const result = requireCloudResult(await client.rpc("save_supplier_invoice_v1", {
+  const result = requireCloudResult(await client.rpc("save_supplier_invoice_v3", {
     p_store_id: shopId,
     p_category_id: input.categoryId || null,
     p_supplier_name: input.supplierName.trim(),
     p_invoice_date: input.invoiceDate || new Date().toISOString().slice(0, 10),
     p_image_url: input.imageUrl,
+    p_telegram_file_id: "",
     p_notes: input.notes?.trim() || "",
     p_items: rows as unknown as Database["public"]["Functions"]["save_supplier_invoice_v1"]["Args"]["p_items"],
+    p_total_amount: input.totalAmount,
   }));
   if (!result || typeof result !== "object" || !("invoice" in result) || !("items" in result)) throw new Error("لم يؤكد الخادم حفظ الفاتورة وبنودها.");
   const saved = result as { invoice: Database["public"]["Tables"]["supplier_invoices"]["Row"]; items: SupplierInvoiceItem[] };
@@ -150,14 +178,15 @@ export async function saveSupplierInvoice(input: { supplierId: string; supplierN
   return { ...invoice, items: saved.items || [] };
 }
 
-export async function saveSupplierInvoiceToTelegram(input: { supplierId: string; supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId: string; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+export async function saveSupplierInvoiceToTelegram(input: { supplierId: string; supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId: string; notes?: string; items: SupplierInvoiceDraftItem[]; totalAmount: number }): Promise<SupplierInvoice> {
   assertCloudOnline();
   const { shopId, role } = await getActiveShopContext(true);
   if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حفظ فواتير الموردين متاح للمدير أو المشرف فقط.");
   if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(input.imageDataUrl) || input.imageDataUrl.length > 2_500_000) throw new Error("صورة فاتورة المورد غير صالحة أو كبيرة جداً.");
   const client = getSupabaseClient();
   const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
-  if (!input.supplierName.trim() || !normalized.length) throw new Error("أدخل اسم المورد وبنداً واحداً على الأقل.");
+  if (!input.supplierId || !input.supplierName.trim()) throw new Error("اختر المورد قبل حفظ الفاتورة.");
+  if (!Number.isFinite(input.totalAmount) || input.totalAmount < 0) throw new Error("إجمالي الفاتورة غير صالح.");
   const previousCosts = await Promise.all(normalized.map(item => getPreviousCost(shopId, item)));
   const rows = normalized.map((item, index) => {
     const previous = previousCosts[index];
@@ -169,7 +198,7 @@ export async function saveSupplierInvoiceToTelegram(input: { supplierId: string;
   const response = await fetch("/api/telegram-archive/supplier-invoice", {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionData.session.access_token}` },
-    body: JSON.stringify({ shopId, supplierId: input.supplierId, supplierName: input.supplierName.trim(), invoiceDate: input.invoiceDate, categoryId: input.categoryId, notes: input.notes?.trim() || "", items: rows, totalAmount: rows.reduce((sum, row) => sum + Number(row.total_cost || 0), 0), imageDataUrl: input.imageDataUrl }),
+    body: JSON.stringify({ shopId, supplierId: input.supplierId, supplierName: input.supplierName.trim(), invoiceDate: input.invoiceDate, categoryId: input.categoryId, notes: input.notes?.trim() || "", items: rows, totalAmount: input.totalAmount, imageDataUrl: input.imageDataUrl }),
   });
   const result = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(result.error || "تعذر إرسال الفاتورة إلى قناة الأرشيف.");
@@ -199,7 +228,8 @@ export async function listSupplierInvoices(limit = 100): Promise<SupplierInvoice
   const invoices = requireCloudResult(await client.from("supplier_invoices").select("*").eq("store_id", shopId).order("invoice_date", { ascending: false }).order("created_at", { ascending: false }).limit(limit));
   if (!invoices?.length) return [];
   const items = requireCloudResult(await client.from("supplier_invoice_items").select("*").in("invoice_id", invoices.map(invoice => invoice.id)).order("created_at")).map(row => row as SupplierInvoiceItem);
-  return invoices.map(invoice => ({ ...invoice, items: items.filter(item => item.invoice_id === invoice.id) }));
+  const salePrices = await getProductSalePriceMap(shopId);
+  return invoices.map(invoice => ({ ...invoice, items: items.filter(item => item.invoice_id === invoice.id).map(item => ({ ...item, sale_price: item.sale_price ?? salePrices.get(item.item_name.trim().toLocaleLowerCase()) ?? null })) }));
 }
 
 function storagePathFromPublicUrl(url: string): string | null {
@@ -260,48 +290,59 @@ export async function listSupplierPriceHistory(itemName: string, barcode?: strin
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
   const client = getSupabaseClient();
-  const invoiceRows = requireCloudResult(await client.from("supplier_invoices").select("id,supplier_name,invoice_date").eq("store_id", shopId).order("invoice_date", { ascending: false }).limit(1000));
+  const invoiceRows = requireCloudResult(await client.from("supplier_invoices").select("id,supplier_name,supplier_id,invoice_date").eq("store_id", shopId).order("invoice_date", { ascending: false }).limit(1000));
   if (!invoiceRows?.length) return [];
-  const itemResult = await client.from("supplier_invoice_items").select("invoice_id,item_name,barcode,unit_cost").in("invoice_id", invoiceRows.map(row => row.id)).ilike("item_name", itemName.trim()).limit(1000);
+  const supplierIds = Array.from(new Set(invoiceRows.map(row => row.supplier_id).filter((id): id is string => Boolean(id))));
+  const supplierRows = supplierIds.length ? requireCloudResult(await client.from("suppliers").select("id,name").eq("store_id", shopId).in("id", supplierIds).limit(1000)) || [] : [];
+  const supplierNames = new Map(supplierRows.map(row => [row.id, row.name]));
+  const salePrices = await getProductSalePriceMap(shopId);
+  const itemResult = await client.from("supplier_invoice_items").select("invoice_id,item_name,barcode,unit_cost,total_cost,sale_price").in("invoice_id", invoiceRows.map(row => row.id)).ilike("item_name", itemName.trim()).limit(1000);
   const items = requireCloudResult(itemResult) || [];
   const matching = barcode?.trim() ? items.filter(item => item.barcode === barcode.trim() || item.item_name.toLocaleLowerCase() === itemName.trim().toLocaleLowerCase()) : items;
   const cheapest = Math.min(...matching.map(row => Number(row.unit_cost)));
   return matching.map(row => {
     const invoice = invoiceRows.find(candidate => candidate.id === row.invoice_id);
-    return { itemName: row.item_name, supplierName: invoice?.supplier_name || "", unitCost: Number(row.unit_cost), invoiceDate: invoice?.invoice_date || "", invoiceId: row.invoice_id, isCheapest: Number(row.unit_cost) === cheapest };
+    return { itemName: row.item_name, supplierName: (invoice?.supplier_id && supplierNames.get(invoice.supplier_id)) || invoice?.supplier_name || "", unitCost: Number(row.unit_cost), totalCost: Number(row.total_cost) || 0, salePrice: row.sale_price == null ? salePrices.get(row.item_name.trim().toLocaleLowerCase()) ?? null : Number(row.sale_price), invoiceDate: invoice?.invoice_date || "", invoiceId: row.invoice_id, isCheapest: Number(row.unit_cost) === cheapest };
   });
 }
 
-export async function getSupplierPriceInsights(items: Array<{ itemName: string; barcode?: string; unitCost: number }>): Promise<SupplierPriceInsight[]> {
+export async function getSupplierPriceInsights(items: Array<{ itemName: string; barcode?: string; unitCost: number; salePrice?: number | null }>): Promise<SupplierPriceInsight[]> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();
   const client = getSupabaseClient();
-  const requested = items.map(item => ({ name: item.itemName.trim().toLocaleLowerCase(), barcode: item.barcode?.trim() || "", unitCost: Number(item.unitCost) || 0 }));
-  const empty = (): SupplierPriceInsight => ({ previousUnitCost: null, previousSupplierName: null, priceDiff: null, cheapestUnitCost: null, cheapestSupplierName: null, savingVsCheapest: null });
+  const requested = items.map(item => ({ name: item.itemName.trim().toLocaleLowerCase(), barcode: item.barcode?.trim() || "", unitCost: Number(item.unitCost) || 0, salePrice: item.salePrice }));
+  const empty = (): SupplierPriceInsight => ({ previousUnitCost: null, previousSupplierName: null, priceDiff: null, cheapestUnitCost: null, cheapestSupplierName: null, savingVsCheapest: null, sellingPrice: null });
   if (!requested.some(item => item.name)) return requested.map(empty);
-  const invoices = requireCloudResult(await client.from("supplier_invoices").select("id,supplier_name,created_at").eq("store_id", shopId).order("created_at", { ascending: false }).limit(2000)) || [];
-  if (!invoices.length) return requested.map(empty);
-  const itemRows: Array<{ invoice_id: string; item_name: string; barcode: string | null; unit_cost: number; created_at?: string }> = [];
+  const [invoices, salePrices] = await Promise.all([
+    client.from("supplier_invoices").select("id,supplier_name,supplier_id,created_at,invoice_date").eq("store_id", shopId).order("created_at", { ascending: false }).limit(2000),
+    getProductSalePriceMap(shopId),
+  ]).then(([invoiceResult, productPrices]) => [requireCloudResult(invoiceResult) || [], productPrices] as const);
+  if (!invoices.length) return requested.map(item => ({ ...empty(), sellingPrice: item.salePrice == null ? salePrices.get(item.name) ?? null : item.salePrice }));
+  const supplierIds = Array.from(new Set(invoices.map(invoice => invoice.supplier_id).filter((id): id is string => Boolean(id))));
+  const supplierRows = supplierIds.length ? requireCloudResult(await client.from("suppliers").select("id,name").eq("store_id", shopId).in("id", supplierIds).limit(2000)) || [] : [];
+  const supplierNames = new Map(supplierRows.map(row => [row.id, row.name]));
+  const itemRows: Array<{ invoice_id: string; item_name: string; barcode: string | null; unit_cost: number; total_cost: number; sale_price: number | null; created_at?: string }> = [];
   const invoiceIds = invoices.map(invoice => invoice.id);
   for (let offset = 0; offset < invoiceIds.length; offset += 200) {
-    const rows = requireCloudResult(await client.from("supplier_invoice_items").select("invoice_id,item_name,barcode,unit_cost,created_at").in("invoice_id", invoiceIds.slice(offset, offset + 200)).order("created_at", { ascending: false }).limit(10000)) || [];
+    const rows = requireCloudResult(await client.from("supplier_invoice_items").select("invoice_id,item_name,barcode,unit_cost,total_cost,sale_price,created_at").in("invoice_id", invoiceIds.slice(offset, offset + 200)).order("created_at", { ascending: false }).limit(10000)) || [];
     itemRows.push(...(rows as typeof itemRows));
   }
   const invoiceMap = new Map(invoices.map(invoice => [invoice.id, invoice]));
   return requested.map(request => {
     if (!request.name) return empty();
-    const matches = itemRows.filter(row => row.item_name.trim().toLocaleLowerCase() === request.name && (!request.barcode || !row.barcode || row.barcode === request.barcode));
+    const matches = itemRows.filter(row => row.item_name.trim().toLocaleLowerCase() === request.name && (!request.barcode || !row.barcode || row.barcode === request.barcode)).sort((a, b) => (invoiceMap.get(b.invoice_id)?.created_at || "").localeCompare(invoiceMap.get(a.invoice_id)?.created_at || ""));
     const previous = matches[0];
     const cheapest = matches.reduce<typeof matches[number] | null>((best, row) => !best || Number(row.unit_cost) < Number(best.unit_cost) ? row : best, null);
     const previousUnitCost = previous ? Number(previous.unit_cost) : null;
     const cheapestUnitCost = cheapest ? Number(cheapest.unit_cost) : null;
     return {
       previousUnitCost,
-      previousSupplierName: previous ? invoiceMap.get(previous.invoice_id)?.supplier_name || null : null,
+      previousSupplierName: previous ? (invoiceMap.get(previous.invoice_id)?.supplier_id && supplierNames.get(invoiceMap.get(previous.invoice_id)!.supplier_id!)) || invoiceMap.get(previous.invoice_id)?.supplier_name || null : null,
       priceDiff: previousUnitCost == null ? null : Math.round((request.unitCost - previousUnitCost) * 100) / 100,
       cheapestUnitCost,
-      cheapestSupplierName: cheapest ? invoiceMap.get(cheapest.invoice_id)?.supplier_name || null : null,
+      cheapestSupplierName: cheapest ? (invoiceMap.get(cheapest.invoice_id)?.supplier_id && supplierNames.get(invoiceMap.get(cheapest.invoice_id)!.supplier_id!)) || invoiceMap.get(cheapest.invoice_id)?.supplier_name || null : null,
       savingVsCheapest: cheapestUnitCost == null ? null : Math.round((request.unitCost - cheapestUnitCost) * 100) / 100,
+      sellingPrice: request.salePrice == null ? salePrices.get(request.name) ?? null : request.salePrice,
     };
   });
 }

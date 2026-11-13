@@ -385,6 +385,8 @@ export async function archiveSupplierInvoice(req: Request, res: Response) {
     if (!match) throw new Error("INVALID_INVOICE_IMAGE");
     const bytes = Buffer.from(match[2], "base64");
     if (!bytes.length || bytes.length > 1_800_000) throw new Error("INVOICE_IMAGE_TOO_LARGE");
+    const totalAmount = Number(input.totalAmount);
+    if (!Number.isFinite(totalAmount) || totalAmount < 0) throw new Error("INVALID_INVOICE_TOTAL");
     const token = await getBotToken(ctx.client, ctx.shopId);
     let threadId = supplier.telegram_topic_id == null ? null : Number(supplier.telegram_topic_id);
     if (threadId !== null && (!Number.isSafeInteger(threadId) || threadId < 1)) threadId = null;
@@ -422,11 +424,12 @@ export async function archiveSupplierInvoice(req: Request, res: Response) {
     const sent = await sendPhoto(token, INVOICE_ARCHIVE_GROUP_ID, bytes, caption, threadId);
     const fileId = sent.photo?.at(-1)?.file_id;
     if (!fileId) throw new Error("TELEGRAM_FILE_ID_MISSING");
-    const rpc = await ctx.client.rpc("save_supplier_invoice_v2", {
+    const rpc = await ctx.client.rpc("save_supplier_invoice_v3", {
       p_store_id: ctx.shopId, p_category_id: null,
       p_supplier_name: supplier.name, p_invoice_date: String(input.invoiceDate || ""),
       p_image_url: "", p_telegram_file_id: fileId, p_notes: String(input.notes || ""),
       p_items: input.items,
+      p_total_amount: totalAmount,
     });
     if (rpc.error) throw new Error(rpc.error.message);
     if (!rpc.data || typeof rpc.data !== "object" || !("invoice" in rpc.data)) throw new Error("SUPPLIER_INVOICE_SAVE_FAILED");
@@ -496,13 +499,16 @@ async function telegramInvoiceFile(req: Request, res: Response) {
     const { url } = supabaseConfig();
     const download = await fetch(`${TELEGRAM_API}/file/bot${token}/${file.file_path}`, { signal: AbortSignal.timeout(25_000) });
     if (!download.ok) return res.status(502).json({ error: "TELEGRAM_FILE_DOWNLOAD_FAILED" });
-    const contentType = download.headers.get("content-type") || "image/jpeg";
-    if (!contentType.startsWith("image/")) return res.status(415).json({ error: "ARCHIVE_FILE_NOT_IMAGE" });
-    res.setHeader("Content-Type", contentType);
-    res.setHeader("Cache-Control", "private, no-store, max-age=0");
-    res.setHeader("X-Content-Type-Options", "nosniff");
+    const contentType = (download.headers.get("content-type") || "application/octet-stream").split(";")[0].trim().toLowerCase();
     const bytes = Buffer.from(await download.arrayBuffer());
     if (bytes.byteLength > 20 * 1024 * 1024) return res.status(413).json({ error: "ARCHIVE_FILE_TOO_LARGE" });
+    const isJpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    if ((!contentType.startsWith("image/") && contentType !== "application/octet-stream") || !isJpeg) {
+      return res.status(415).json({ error: "ARCHIVE_FILE_NOT_IMAGE" });
+    }
+    res.setHeader("Content-Type", "image/jpeg");
+    res.setHeader("Cache-Control", "private, no-store, max-age=0");
+    res.setHeader("X-Content-Type-Options", "nosniff");
     return res.status(200).send(bytes);
   } catch (error) {
     const status = safeStatus(error);

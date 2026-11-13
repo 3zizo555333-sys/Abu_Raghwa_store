@@ -8,11 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { getActiveShopContext } from "@/lib/supabase/products";
 import { getSupabaseClient } from "@/lib/supabase/client";
-import { createInvoiceCategory, createInvoiceSupplier, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listInvoiceCategories, listInvoiceSuppliers, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type InvoiceCategory, type InvoiceSupplier, type SupplierInvoice, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
+import { createInvoiceCategory, createInvoiceSupplier, deleteInvoiceCategory, deleteInvoiceSupplier, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listInvoiceCategories, listInvoiceSuppliers, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type InvoiceCategory, type InvoiceSupplier, type SupplierInvoice, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
 import { fileToDataUrl, prepareSupplierInvoiceImage } from "@/lib/supabase/prepareSupplierInvoiceImage";
 
-interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; totalCost: number; confidence: number; }
-const emptyInsight: SupplierPriceInsight = { previousUnitCost: null, previousSupplierName: null, priceDiff: null, cheapestUnitCost: null, cheapestSupplierName: null, savingVsCheapest: null };
+interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; salePrice: number | null; totalCost: number; confidence: number; }
+const emptyInsight: SupplierPriceInsight = { previousUnitCost: null, previousSupplierName: null, priceDiff: null, cheapestUnitCost: null, cheapestSupplierName: null, savingVsCheapest: null, sellingPrice: null };
 function playTone(kind: "up" | "down") {
   try {
     const Ctx = window.AudioContext || (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
@@ -31,7 +31,7 @@ async function compressInvoiceForOcr(dataUrl: string): Promise<string> {
     element.onerror = () => reject(new Error("تعذر فتح صورة الفاتورة لضغطها قبل القراءة."));
     element.src = dataUrl;
   });
-  const scale = Math.min(1, 1280 / Math.max(image.naturalWidth, image.naturalHeight));
+  const scale = Math.min(1, 2048 / Math.max(image.naturalWidth, image.naturalHeight));
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -40,7 +40,14 @@ async function compressInvoiceForOcr(dataUrl: string): Promise<string> {
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.75);
+  return canvas.toDataURL("image/jpeg", 0.88);
+}
+
+function numericOcrValue(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const normalized = String(value ?? "").replace(/[٠-٩]/g, digit => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit))).replace(/٫/g, ".").replace(/٬/g, "").replace(/[^0-9.-]/g, "");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
 }
 
 function extractInvoiceItems(responseText: string): Array<Record<string, unknown>> {
@@ -56,6 +63,8 @@ function extractInvoiceItems(responseText: string): Array<Record<string, unknown
 export default function InvoiceOCR() {
   const [, navigate] = useLocation();
   const [invoiceImage, setInvoiceImage] = useState<string | null>(null);
+  const [manualEntry, setManualEntry] = useState(false);
+  const [manualTotal, setManualTotal] = useState("");
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
   const [telegramArchiveReady, setTelegramArchiveReady] = useState(false);
@@ -156,7 +165,7 @@ export default function InvoiceOCR() {
     if (!valid.length) { setPriceInsights(items.map(() => emptyInsight)); return; }
     setIsCheckingPrices(true);
     try {
-      const result = await getSupplierPriceInsights(valid.map(item => ({ itemName: item.name, barcode: item.barcode, unitCost: item.unitCost })));
+      const result = await getSupplierPriceInsights(valid.map(item => ({ itemName: item.name, barcode: item.barcode, unitCost: item.unitCost, salePrice: item.salePrice })));
       let validIndex = 0;
       const aligned = items.map(item => item.name.trim() ? result[validIndex++] || emptyInsight : emptyInsight);
       setPriceInsights(aligned);
@@ -189,16 +198,27 @@ export default function InvoiceOCR() {
       }
       const compressedDataUrl = await compressInvoiceForOcr(dataUrl);
       const base64 = compressedDataUrl.split(",")[1] || "";
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${encodeURIComponent(apiKey)}`;
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           contents: [{ role: "user", parts: [
-            { text: `اقرأ هذه الفاتورة المطبوعة أو المكتوبة بخط اليد بدقة. المورد: ${supplier || "غير معروف"}. التاريخ: ${invoiceDate || "غير معروف"}. استخرج اسم الصنف والكمية وسعر الوحدة والإجمالي لكل بند. أعد مصفوفة JSON صافية فقط دون أي مقدمة أو Markdown وبالشكل الحرفي: [{"item_name":"اسم الصنف","quantity":1,"unit_price":10,"total_price":10}]` },
+            { text: `اقرأ الصورة كاملة سطراً سطراً؛ سواء كانت فاتورة أو قائمة أسعار، مطبوعة أو بخط اليد، بالعربية أو الإنجليزية. المورد: ${supplier || "غير معروف"}. التاريخ: ${invoiceDate || "غير معروف"}. استخرج جميع البنود الظاهرة ولا تتجاهل أي صف. إذا كانت الصفحة مقسمة إلى عمودين، اقرأ كل عمود كاملاً على حدة ولا تخلط صفوف العمودين، ثم أخرج البنود بترتيب القراءة من اليمين إلى اليسار للعربية ومن اليسار إلى اليمين للإنجليزية. حوّل الأرقام العربية إلى أرقام عادية. استخرج اسم الصنف والباركود إن ظهر والكمية وسعر الشراء للوحدة وإجمالي البند وسعر البيع إن ظهر. إذا غابت الكمية فاستخدم 1؛ وإذا ظهر إجمالي البند فقط فاستنتج سعر الوحدة من الكمية. لا تخمّن القيم غير المقروءة واجعلها 0 أو null. أعد مصفوفة JSON فقط بلا Markdown ولا مقدمة، وكل صف بهذا الشكل: [{"item_name":"اسم الصنف","barcode":"","quantity":1,"unit_price":10,"total_price":10,"selling_price":null,"confidence":0.9}]` },
             { inline_data: { mime_type: "image/jpeg", data: base64 } },
           ] }],
-          generationConfig: { temperature: 0.1, responseMimeType: "application/json" },
+          generationConfig: {
+            temperature: 0.1,
+            responseMimeType: "application/json",
+            responseSchema: {
+              type: "ARRAY",
+              items: { type: "OBJECT", properties: {
+                item_name: { type: "STRING" }, barcode: { type: "STRING" }, quantity: { type: "NUMBER" },
+                unit_price: { type: "NUMBER" }, total_price: { type: "NUMBER" }, selling_price: { type: "NUMBER", nullable: true }, confidence: { type: "NUMBER" },
+              }, required: ["item_name", "quantity", "unit_price", "total_price"] },
+            },
+            maxOutputTokens: 8192,
+          },
         }),
       });
       const raw = await response.text();
@@ -209,10 +229,13 @@ export default function InvoiceOCR() {
       const parsedItems = extractInvoiceItems(responseText);
       const items = parsedItems.map(item => {
         const name = String(item.item_name || item.name || "").trim();
-        const quantity = Math.max(0, Number(item.quantity) || 0);
-        const unitCost = Math.max(0, Number(item.unit_price ?? item.unitCost) || 0);
-        const totalCost = Math.round((Number(item.total_price ?? item.totalCost) || quantity * unitCost) * 100) / 100;
-        return { name, barcode: String(item.barcode || "").trim(), quantity, unitCost, totalCost, confidence: Number(item.confidence) || 0 };
+        const quantity = Math.max(0.001, numericOcrValue(item.quantity) || 1);
+        const extractedTotal = Math.max(0, numericOcrValue(item.total_price ?? item.totalCost));
+        const extractedUnit = Math.max(0, numericOcrValue(item.unit_price ?? item.unitCost));
+        const unitCost = extractedUnit || (extractedTotal ? extractedTotal / quantity : 0);
+        const totalCost = Math.round((extractedTotal || quantity * unitCost) * 100) / 100;
+        const saleValue = item.selling_price == null ? null : Math.max(0, numericOcrValue(item.selling_price));
+        return { name, barcode: String(item.barcode || "").trim(), quantity, unitCost, salePrice: saleValue, totalCost, confidence: numericOcrValue(item.confidence) };
       }).filter(item => item.name);
       if (!items.length) throw new Error("لم تُستخرج بنود مقروءة من هذه الصورة. أعد التصوير بإضاءة أوضح.");
       setParsedItems(items);
@@ -243,7 +266,7 @@ export default function InvoiceOCR() {
   const handleImageUpload = async (file?: File) => {
     if (!file) return;
     try {
-      setOcrError(""); setParsedItems([]); setPriceInsights([]); setUploadedImageUrl("");
+      setManualEntry(false); setManualTotal(""); setOcrError(""); setParsedItems([]); setPriceInsights([]); setUploadedImageUrl("");
       setIsCompressing(true);
       const compressed = await prepareSupplierInvoiceImage(file);
       const dataUrl = await fileToDataUrl(compressed);
@@ -279,7 +302,7 @@ export default function InvoiceOCR() {
       const original = new File([blob], filename, { type: blob.type || "image/webp" });
       const compressed = await prepareSupplierInvoiceImage(original);
       const dataUrl = await fileToDataUrl(compressed);
-      setImageDataUrl(dataUrl); setUploadedImageUrl(telegramArchiveReady ? "telegram-archive-pending" : image.imageUrl); setInvoiceDate(""); setSupplier(""); setSupplierId("");
+      setManualEntry(false); setImageDataUrl(dataUrl); setUploadedImageUrl(telegramArchiveReady ? "telegram-archive-pending" : image.imageUrl); setInvoiceDate(""); setSupplier(""); setSupplierId("");
       setNotes("صورة قديمة محفوظة في Storage؛ أدخل بيانات المورد والتاريخ الصحيحين قبل الحفظ.");
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       const previewUrl = URL.createObjectURL(blob); previewUrlRef.current = previewUrl; setInvoiceImage(previewUrl);
@@ -294,7 +317,7 @@ export default function InvoiceOCR() {
   const resetDraft = () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
     previewUrlRef.current = null;
-    setInvoiceImage(null); setImageDataUrl(""); setUploadedImageUrl(""); setParsedItems([]); setPriceInsights([]); setSupplier(""); setSupplierId(""); setInvoiceDate(new Date().toISOString().split("T")[0]); setNotes(""); setCategoryId(""); setNewCategoryName(""); setNewSupplierName(""); setOcrError(""); setHistory([]); setHistoryName(""); previousTrendRef.current = {};
+    setInvoiceImage(null); setManualEntry(false); setManualTotal(""); setImageDataUrl(""); setUploadedImageUrl(""); setParsedItems([]); setPriceInsights([]); setSupplier(""); setSupplierId(""); setInvoiceDate(new Date().toISOString().split("T")[0]); setNotes(""); setCategoryId(""); setNewCategoryName(""); setNewSupplierName(""); setOcrError(""); setHistory([]); setHistoryName(""); previousTrendRef.current = {};
   };
 
   const deleteUnlinkedImage = async (image: UnlinkedSupplierInvoiceImage) => {
@@ -314,7 +337,7 @@ export default function InvoiceOCR() {
   const updateItem = (index: number, field: keyof ParsedItem, value: string) => setParsedItems(rows => rows.map((row, rowIndex) => {
     if (rowIndex !== index) return row;
     const numericNext = Number(value) || 0;
-    const updated = { ...row, [field]: field === "name" || field === "barcode" ? value : numericNext };
+    const updated = { ...row, [field]: field === "name" || field === "barcode" ? value : field === "salePrice" && !value.trim() ? null : numericNext };
     if (field === "quantity" || field === "unitCost") updated.totalCost = Math.round(((field === "quantity" ? numericNext : row.quantity) * (field === "unitCost" ? numericNext : row.unitCost)) * 100) / 100;
     return updated;
   }));
@@ -336,6 +359,29 @@ export default function InvoiceOCR() {
       setSupplierOptions(rows => [...rows, row].sort((a, b) => a.name.localeCompare(b.name, "ar")));
       setSupplierId(row.id); setSupplier(row.name); setNewSupplierName(""); toast.success("تم حفظ الاسم تحت التصنيف فوراً.");
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الاسم."); }
+  };
+
+  const removeCategory = async () => {
+    const selected = categories.find(row => row.id === categoryId);
+    if (!selected || !confirm(`حذف التصنيف «${selected.icon} ${selected.name}» وجميع الموردين تحته؟ ستبقى سجلات الفواتير السابقة.`)) return;
+    try {
+      await deleteInvoiceCategory(selected.id);
+      setCategories(rows => rows.filter(row => row.id !== selected.id));
+      setSupplierOptions(rows => rows.filter(row => row.category_id !== selected.id));
+      setCategoryId(""); setSupplierId(""); setSupplier("");
+      toast.success("تم حذف التصنيف والأسماء التابعة له.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف التصنيف."); }
+  };
+
+  const removeSupplier = async () => {
+    const selected = supplierOptions.find(row => row.id === supplierId);
+    if (!selected || !confirm(`حذف المورد «${selected.name}»؟ ستظل الفواتير السابقة محفوظة.`)) return;
+    try {
+      await deleteInvoiceSupplier(selected.id);
+      setSupplierOptions(rows => rows.filter(row => row.id !== selected.id));
+      setSupplierId(""); setSupplier("");
+      toast.success("تم حذف المورد.");
+    } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف المورد."); }
   };
 
   const openInvoicePreview = async (invoice: SupplierInvoice) => {
@@ -367,10 +413,13 @@ export default function InvoiceOCR() {
     if (!categoryId) { toast.error("اختر تصنيف الفاتورة."); return; }
     if (!supplierId || !supplier.trim()) { toast.error("اختر التاجر أو المندوب قبل حفظ الفاتورة."); return; }
     if (!invoiceDate) { toast.error("أدخل تاريخ الفاتورة الصحيح قبل حفظها."); return; }
-    if (!parsedItems.some(item => item.name.trim())) { toast.error("أضف بنداً واحداً على الأقل."); return; }
+    const hasNamedItems = parsedItems.some(item => item.name.trim());
+    const hasManualTotal = manualTotal.trim() !== "" && Number.isFinite(Number(manualTotal)) && Number(manualTotal) >= 0;
+    if (manualTotal.trim() !== "" && !hasManualTotal) { toast.error("أدخل إجمالياً يدوياً صحيحاً يساوي صفراً أو أكثر."); return; }
+    if (!imageDataUrl && !uploadedImageUrl && !hasManualTotal && !hasNamedItems) { toast.error("أرفق صورة أو أدخل إجمالي الفاتورة يدوياً."); return; }
     try {
       setIsSaving(true);
-      const invoiceDraft = { supplierId, supplierName: supplier, invoiceDate, categoryId, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) };
+      const invoiceDraft = { supplierId, supplierName: supplier, invoiceDate, categoryId, notes, totalAmount: totalDraft, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, salePrice: item.salePrice, totalCost: item.totalCost })) };
       if (telegramArchiveReady && imageDataUrl) await saveSupplierInvoiceToTelegram({ ...invoiceDraft, imageDataUrl });
       else await saveSupplierInvoice({ ...invoiceDraft, imageUrl: uploadedImageUrl || "" });
       toast.success(telegramArchiveReady && imageDataUrl ? "تم حفظ الفاتورة وإيداع صورتها في قناة أرشيف Telegram." : !imageDataUrl ? "تم حفظ الفاتورة سحابياً بدون صورة." : "تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
@@ -383,7 +432,9 @@ export default function InvoiceOCR() {
     try { setHistoryName(item.name); setHistory(await listSupplierPriceHistory(item.name, item.barcode)); }
     catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تحميل سجل السعر."); }
   };
-  const totalDraft = parsedItems.reduce((sum, item) => sum + item.totalCost, 0);
+  const calculatedTotal = parsedItems.reduce((sum, item) => sum + item.totalCost, 0);
+  const totalDraft = manualTotal.trim() ? Math.max(0, Number(manualTotal) || 0) : calculatedTotal;
+  const manualTotalInvalid = manualTotal.trim() !== "" && (!Number.isFinite(Number(manualTotal)) || Number(manualTotal) < 0);
   const trendFor = (insight: SupplierPriceInsight) => insight.priceDiff == null ? "stable" : insight.priceDiff > 0 ? "up" : insight.priceDiff < 0 ? "down" : "stable";
   const percentFor = (insight: SupplierPriceInsight) => {
     if (insight.previousUnitCost == null || insight.previousUnitCost === 0) return null;
@@ -397,13 +448,14 @@ export default function InvoiceOCR() {
       <Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-2 h-4 w-4" />العودة</Button>
     </header>
     <main className="mx-auto max-w-7xl space-y-6">
-      {!invoiceImage ? <Card>
+      {!invoiceImage && !manualEntry ? <Card>
         <CardHeader><CardTitle>إضافة فاتورة مورد</CardTitle><CardDescription>التقط صورة واضحة أو ارفعها من المعرض؛ ستُضغط الصورة وتُقرأ البنود تلقائياً ثم تحفظ في الأرشيف السحابي.</CardDescription></CardHeader>
         <CardContent>
           <div className="grid gap-4 md:grid-cols-2">
             <Button onClick={() => cameraInputRef.current?.click()} disabled={processing} className="h-28 bg-blue-600"><Camera className="ml-2" />التقاط بالكاميرا</Button>
             <Button onClick={() => fileInputRef.current?.click()} disabled={processing} className="h-28 bg-green-600"><Upload className="ml-2" />رفع من المعرض</Button>
           </div>
+          <Button type="button" variant="outline" className="mt-3 w-full" onClick={() => setManualEntry(true)}><Plus className="ml-2 h-4 w-4" />إدخال فاتورة يدوياً بدون صورة</Button>
           <input ref={cameraInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; void handleImageUpload(file); }} />
           <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={event => { const file = event.target.files?.[0]; event.target.value = ""; void handleImageUpload(file); }} />
           {isCompressing && <p className="mt-4 flex items-center gap-2 text-sm text-blue-700" role="status"><Loader2 className="h-4 w-4 animate-spin" />جارٍ ضغط صورة الفاتورة قبل الرفع...</p>}
@@ -417,23 +469,23 @@ export default function InvoiceOCR() {
           {processing && <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800" role="status" aria-live="polite"><Loader2 className="h-5 w-5 animate-spin" />{isCompressing ? "جارٍ ضغط صورة الفاتورة قبل الرفع..." : isUploading ? "جارٍ رفع صورة الفاتورة المضغوطة إلى Supabase Storage..." : "جارٍ قراءة الفاتورة واستخراج الأصناف بالذكاء الاصطناعي..."}</div>}
           {ocrError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"><span>{ocrError}</span>{uploadedImageUrl && imageDataUrl && <Button size="sm" variant="outline" disabled={processing} onClick={() => void runInvoiceOcr(imageDataUrl)}>إعادة القراءة بالذكاء الاصطناعي</Button>}</div>}
           <div className="grid gap-6 lg:grid-cols-2">
-            <div><img src={invoiceImage} alt="صورة فاتورة المورد بعد ضغطها" className="max-h-[620px] w-full rounded-xl border object-contain" /><p className="mt-2 text-xs text-green-700">أرشفة الصورة: {telegramArchiveReady ? (uploadedImageUrl ? "ستُرسل إلى قناة Telegram عند الحفظ" : "بانتظار اختيار الصورة") : isUploading ? "جارية الآن..." : uploadedImageUrl ? "تم الرفع؛ ستحفظ مع الفاتورة" : "لم تبدأ"}</p></div>
+            <div>{invoiceImage ? <img src={invoiceImage} alt="صورة فاتورة المورد بعد ضغطها" className="max-h-[620px] w-full rounded-xl border object-contain" /> : <div className="flex min-h-56 items-center justify-center rounded-xl border border-dashed bg-gray-50 p-6 text-center text-gray-500">إدخال يدوي؛ لا توجد صورة مرفقة.</div>}<p className="mt-2 text-xs text-green-700">أرشفة الصورة: {invoiceImage ? telegramArchiveReady ? (uploadedImageUrl ? "ستُرسل إلى مجموعة Telegram عند الحفظ" : "بانتظار اختيار الصورة") : isUploading ? "جارية الآن..." : uploadedImageUrl ? "تم الرفع؛ ستحفظ مع الفاتورة" : "لم تبدأ" : "غير مرفقة"}</p></div>
             <div className="space-y-3">
               <div className="space-y-2">
                 <label className="text-sm font-bold">التصنيف</label>
-                <select value={categoryId} onChange={event => { setCategoryId(event.target.value); setSupplierId(""); setSupplier(""); }} className="w-full rounded-md border bg-white px-3 py-2"><option value="">اختر التصنيف</option>{categories.map(category => <option key={category.id} value={category.id}>{category.icon} {category.name}</option>)}</select>
+                <div className="flex gap-2"><select value={categoryId} onChange={event => { setCategoryId(event.target.value); setSupplierId(""); setSupplier(""); }} className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2"><option value="">اختر التصنيف</option>{categories.map(category => <option key={category.id} value={category.id}>{category.icon} {category.name}</option>)}</select><Button type="button" variant="outline" size="icon" aria-label="حذف التصنيف المحدد" title="حذف التصنيف المحدد" disabled={!categoryId} onClick={() => void removeCategory()}><Trash2 className="h-4 w-4 text-red-600" /></Button></div>
                 <div className="flex gap-2"><Input value={newCategoryName} onChange={event => setNewCategoryName(event.target.value)} placeholder="اسم تصنيف جديد" /><Button type="button" variant="outline" onClick={() => void addCategory()} className="shrink-0">(+ تصنيف جديد)</Button></div>
               </div>
               <div className="space-y-2">
                 <label className="text-sm font-bold">التاجر/المندوب</label>
-                <select value={supplierId} onChange={event => { const chosen = supplierOptions.find(row => row.id === event.target.value); setSupplierId(event.target.value); setSupplier(chosen?.name || ""); }} disabled={!categoryId} className="w-full rounded-md border bg-white px-3 py-2 disabled:bg-gray-100"><option value="">اختر التاجر أو المندوب</option>{supplierOptions.filter(row => row.category_id === categoryId).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select>
+                <div className="flex gap-2"><select value={supplierId} onChange={event => { const chosen = supplierOptions.find(row => row.id === event.target.value); setSupplierId(event.target.value); setSupplier(chosen?.name || ""); }} disabled={!categoryId} className="min-w-0 flex-1 rounded-md border bg-white px-3 py-2 disabled:bg-gray-100"><option value="">اختر التاجر أو المندوب</option>{supplierOptions.filter(row => row.category_id === categoryId).map(row => <option key={row.id} value={row.id}>{row.name}</option>)}</select><Button type="button" variant="outline" size="icon" aria-label="حذف المورد المحدد" title="حذف المورد المحدد" disabled={!supplierId} onClick={() => void removeSupplier()}><Trash2 className="h-4 w-4 text-red-600" /></Button></div>
                 <div className="flex gap-2"><Input value={newSupplierName} onChange={event => setNewSupplierName(event.target.value)} placeholder="اسم تاجر أو مندوب جديد" disabled={!categoryId} /><Button type="button" variant="outline" onClick={() => void addSupplier()} disabled={!categoryId} className="shrink-0">(+ اسم جديد)</Button></div>
               </div>
               <label className="text-sm font-bold">تاريخ الفاتورة</label><Input type="date" value={invoiceDate} onChange={event => setInvoiceDate(event.target.value)} />
               <label className="text-sm font-bold">ملاحظات</label><Textarea value={notes} onChange={event => setNotes(event.target.value)} placeholder="ملاحظات اختيارية" />
             </div>
           </div>
-          <div className="overflow-x-auto"><table className="w-full min-w-[1050px] text-sm"><thead className="bg-gray-100"><tr><th className="p-2 text-right">الصنف</th><th className="p-2 text-right">الباركود</th><th className="p-2 text-right">الكمية</th><th className="p-2 text-right">سعر الوحدة</th><th className="p-2 text-right">الإجمالي</th><th className="p-2 text-right">مقارنة آخر شراء</th><th className="p-2 text-right">أفضل مورد</th><th className="p-2">ثقة القراءة</th><th /></tr></thead>
+          <div className="overflow-x-auto"><table className="w-full min-w-[1200px] text-sm"><thead className="bg-gray-100"><tr><th className="p-2 text-right">الصنف</th><th className="p-2 text-right">الباركود</th><th className="p-2 text-right">الكمية</th><th className="p-2 text-right">سعر الشراء</th><th className="p-2 text-right">سعر البيع</th><th className="p-2 text-right">إجمالي البند</th><th className="p-2 text-right">مقارنة آخر شراء</th><th className="p-2 text-right">أفضل مورد</th><th className="p-2">ثقة القراءة</th><th /></tr></thead>
             <tbody>{parsedItems.map((item, index) => {
               const insight = priceInsights[index] || emptyInsight; const trend = trendFor(insight); const percent = percentFor(insight);
               return <tr key={index} className="border-b align-top">
@@ -441,6 +493,7 @@ export default function InvoiceOCR() {
                 <td className="p-2"><Input value={item.barcode} onChange={event => updateItem(index, "barcode", event.target.value)} /></td>
                 <td className="p-2"><Input type="number" min="0" value={item.quantity} onChange={event => updateItem(index, "quantity", event.target.value)} /></td>
                 <td className="p-2"><Input type="number" min="0" step="0.01" value={item.unitCost} onChange={event => updateItem(index, "unitCost", event.target.value)} /></td>
+                <td className="p-2"><Input type="number" min="0" step="0.01" value={item.salePrice ?? insight.sellingPrice ?? ""} placeholder="غير مسجل" onChange={event => updateItem(index, "salePrice", event.target.value)} /></td>
                 <td className="p-2 font-bold">{item.totalCost.toFixed(2)} ج.م</td>
                 <td className="p-2">
                   <div className={`rounded-lg px-2 py-1 text-xs font-bold ${trend === "up" ? "bg-red-100 text-red-700" : trend === "down" ? "bg-green-100 text-green-700" : "bg-gray-100 text-gray-600"}`}>
@@ -453,19 +506,20 @@ export default function InvoiceOCR() {
                 <td className="p-2"><Button variant="ghost" size="icon" onClick={() => setParsedItems(rows => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4 text-red-600" /></Button></td>
               </tr>;
             })}</tbody></table></div>
-          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><strong>الإجمالي العام: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
+          <div className="grid gap-2 rounded-xl border bg-gray-50 p-3 sm:grid-cols-3 sm:items-end"><label className="text-sm font-bold">إجمالي الفاتورة يدوياً (اختياري)<Input type="number" min="0" step="0.01" value={manualTotal} onChange={event => setManualTotal(event.target.value)} placeholder={`افتراضي: ${calculatedTotal.toFixed(2)} ج.م`} /></label><p className="text-sm text-gray-600">إجمالي البنود: {calculatedTotal.toFixed(2)} ج.م</p><strong className="text-sm">الإجمالي المعتمد: {totalDraft.toFixed(2)} ج.م</strong></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, salePrice: null, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || manualTotalInvalid || !categoryId || !supplierId || !invoiceDate || (!imageDataUrl && !uploadedImageUrl && !manualTotal.trim() && !parsedItems.some(item => item.name.trim()))} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
         </CardContent>
       </Card>}
 
       {parsedItems.length > 0 && !processing && <Card><CardHeader><CardTitle>رادار حركة الأسعار والمقارنة بين الموردين</CardTitle></CardHeader><CardContent className="space-y-2">{parsedItems.map((item, index) => {
         const insight = priceInsights[index] || emptyInsight; const trend = trendFor(insight); const percent = percentFor(insight);
-        return <div key={`${item.name}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"><div><strong>{item.name || "صنف بدون اسم"}</strong><span className="mr-3 text-sm text-gray-600">سعر الشراء: {item.unitCost.toFixed(2)} ج.م</span>{trend === "up" && <span className="mr-2 text-sm font-bold text-red-600">⚠️ تنبيه: ارتفع {percent == null ? "من سعر سابق صفري" : `${percent.toFixed(1)}%`} مقارنة بآخر شراء</span>}{trend === "down" && <span className="mr-2 text-sm font-bold text-green-600"><TrendingDown className="ml-1 inline h-4 w-4" />انخفض السعر{percent == null ? "" : ` (${Math.abs(percent).toFixed(1)}%)`}</span>}{trend === "stable" && insight.previousUnitCost != null && <span className="mr-2 text-sm font-bold text-gray-500">السعر ثابت</span>}{insight.cheapestSupplierName && insight.savingVsCheapest != null && insight.savingVsCheapest > 0 && <span className="mr-2 text-sm font-bold text-amber-700">⚠️ الأرخص: {insight.cheapestSupplierName}</span>}</div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void showHistory(item)}><History className="ml-1 h-4 w-4" />تفاصيل المقارنة</Button><Button size="sm" variant="outline" onClick={() => navigate(`/products?search=${encodeURIComponent(item.name)}`)}>تحديث سعر البيع</Button><Button size="sm" variant="outline" onClick={() => navigate(`/smart-offers?item=${encodeURIComponent(item.name)}`)}>توليد عرض</Button></div></div>;
+        return <div key={`${item.name}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"><div><strong>{item.name || "صنف بدون اسم"}</strong><span className="mr-3 text-sm text-gray-600">شراء: {item.unitCost.toFixed(2)} ج.م · إجمالي: {item.totalCost.toFixed(2)} ج.م · بيع: {(item.salePrice ?? insight.sellingPrice)?.toFixed(2) || "غير مسجل"} ج.م</span>{trend === "up" && <span className="mr-2 text-sm font-bold text-red-600">⚠️ تنبيه: ارتفع {percent == null ? "من سعر سابق صفري" : `${percent.toFixed(1)}%`} مقارنة بآخر شراء</span>}{trend === "down" && <span className="mr-2 text-sm font-bold text-green-600"><TrendingDown className="ml-1 inline h-4 w-4" />انخفض السعر{percent == null ? "" : ` (${Math.abs(percent).toFixed(1)}%)`}</span>}{trend === "stable" && insight.previousUnitCost != null && <span className="mr-2 text-sm font-bold text-gray-500">السعر ثابت</span>}{insight.cheapestSupplierName && insight.savingVsCheapest != null && insight.savingVsCheapest > 0 && <span className="mr-2 text-sm font-bold text-amber-700">⚠️ الأرخص: {insight.cheapestSupplierName}</span>}</div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void showHistory(item)}><History className="ml-1 h-4 w-4" />تفاصيل المقارنة</Button><Button size="sm" variant="outline" onClick={() => navigate(`/products?search=${encodeURIComponent(item.name)}`)}>تحديث سعر البيع</Button><Button size="sm" variant="outline" onClick={() => navigate(`/smart-offers?item=${encodeURIComponent(item.name)}`)}>توليد عرض</Button></div></div>;
       })}</CardContent></Card>}
 
       <Card><CardHeader><CardTitle>الفواتير المحفوظة سحابياً{invoicesLoaded && !invoiceListError ? savedInvoices.length ? ` (${savedInvoices.length})` : unlinkedImagesLoading ? "" : unlinkedImages.length ? ` (${unlinkedImages.length} صور تحتاج ربطاً)` : " (لا توجد سجلات بعد)" : ""}</CardTitle><CardDescription>الأرشيف ومرفقات الفواتير تتم مزامنتها مع Supabase بين أجهزة المشرفين والمديرين.</CardDescription></CardHeader><CardContent className="space-y-3">
         {!invoicesLoaded && !invoiceListError ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل الأرشيف السحابي...</p> : invoiceListError ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p>تعذر تحميل الأرشيف؛ لم تُعرض القائمة كأنها فارغة. {invoiceListError}</p><Button size="sm" variant="outline" className="mt-2" onClick={() => void refreshInvoices()}>إعادة التحميل</Button></div> : savedInvoices.length === 0 ? <p className="text-sm text-gray-500">{unlinkedImagesLoading ? "جارٍ التحقق من صور الفواتير المرفوعة سابقاً..." : unlinkedImages.length ? `توجد ${unlinkedImages.length} صور قديمة في Storage بانتظار ربطها بسجلات فواتير؛ يمكن استعادتها من القسم أدناه.` : "لا توجد فواتير محفوظة بعد."}</p> : savedInvoices.map(invoice => <div key={invoice.id} className="rounded-xl border bg-white p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={loadingInvoicePreview} onClick={() => void openInvoicePreview(invoice)}>{loadingInvoicePreview ? "جارٍ التحميل…" : "عرض صورة الفاتورة"}</Button><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف سجل الفاتورة؟ ستبقى الصورة في Storage قابلة للاستعادة.")) { try { await deleteSupplierInvoice(invoice.id); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الفاتورة."); } } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>
-          {expandedInvoice === invoice.id && <div className="mt-3 grid gap-2 md:grid-cols-2">{invoice.items.map(item => <div key={item.id} className={`rounded-lg p-3 ${item.price_direction === "up" ? "bg-red-50" : item.price_direction === "down" ? "bg-green-50" : "bg-gray-50"}`}><div className="flex items-center justify-between"><strong>{item.item_name}</strong><span>{item.price_direction === "up" ? "↗️" : item.price_direction === "down" ? "↘️" : "➡️"} {Number(item.unit_cost).toFixed(2)} ج.م</span></div><p className="text-xs text-gray-600">الكمية {item.quantity} · الإجمالي {item.total_cost} · {item.previous_cost == null ? "أول سعر مسجل" : `الفرق ${Number(item.price_diff).toFixed(2)} ج.م`}</p></div>)}</div>}
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={loadingInvoicePreview || (!invoice.image_url && !invoice.telegram_file_id)} onClick={() => void openInvoicePreview(invoice)}>{loadingInvoicePreview ? "جارٍ التحميل…" : invoice.image_url || invoice.telegram_file_id ? "عرض صورة الفاتورة" : "لا توجد صورة"}</Button><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف سجل الفاتورة؟ ستبقى الصورة في Storage قابلة للاستعادة.")) { try { await deleteSupplierInvoice(invoice.id); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الفاتورة."); } } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>
+          {expandedInvoice === invoice.id && <div className="mt-3 grid gap-2 md:grid-cols-2">{invoice.items.map(item => <div key={item.id} className={`rounded-lg p-3 ${item.price_direction === "up" ? "bg-red-50" : item.price_direction === "down" ? "bg-green-50" : "bg-gray-50"}`}><div className="flex items-center justify-between"><strong>{item.item_name}</strong><span>{item.price_direction === "up" ? "↗️" : item.price_direction === "down" ? "↘️" : "➡️"} شراء {Number(item.unit_cost).toFixed(2)} ج.م</span></div><p className="text-xs text-gray-600">الكمية {item.quantity} · إجمالي البند {Number(item.total_cost).toFixed(2)} ج.م · سعر البيع {item.sale_price == null ? "غير مسجل" : `${Number(item.sale_price).toFixed(2)} ج.م`} · {item.previous_cost == null ? "أول سعر مسجل" : `الفرق ${Number(item.price_diff).toFixed(2)} ج.م`}</p></div>)}</div>}
         </div>)}
       </CardContent></Card>
 
@@ -474,7 +528,7 @@ export default function InvoiceOCR() {
       {unlinkedImages.length > 0 && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>صور قديمة غير مرتبطة بسجل فاتورة ({unlinkedImages.length})</CardTitle><CardDescription>هذه الصور موجودة سحابياً لكنها لم تُسجل كفواتير. أعد قراءتها، ثم أدخل اسم المورد وتاريخ الفاتورة الصحيحين واحفظها لربط الصورة بالأرشيف.</CardDescription></div><Button variant="destructive" size="sm" disabled={isDeletingAllUnlinked || Boolean(deletingImagePath)} onClick={() => void deleteAllUnlinkedImages()}>{isDeletingAllUnlinked ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}مسح جميع الصور المعلقة دفعة واحدة</Button></div></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">{unlinkedImages.map(image => <div key={image.path} className="rounded-xl border bg-white p-3"><a href={image.imageUrl} target="_blank" rel="noopener noreferrer"><img src={image.imageUrl} alt="صورة فاتورة قديمة غير مرتبطة" className="h-44 w-full rounded-lg bg-gray-50 object-contain" /></a><p className="mt-2 truncate text-xs text-gray-500">{image.path.split("/").pop()}</p>{image.createdAt && <p className="text-xs text-gray-500">وقت الرفع: {new Date(image.createdAt).toLocaleString("ar-EG")}</p>}<div className="mt-3 grid gap-2"><Button variant="outline" disabled={processing || Boolean(adoptingImagePath) || Boolean(deletingImagePath) || isDeletingAllUnlinked} onClick={() => void adoptStoredImage(image)}>{adoptingImagePath === image.path ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />جارٍ الاستعادة والقراءة...</> : "إعادة القراءة وربطها بالأرشيف"}</Button><Button variant="ghost" className="text-red-700 hover:bg-red-50 hover:text-red-800" disabled={processing || Boolean(adoptingImagePath) || isDeletingAllUnlinked} onClick={() => void deleteUnlinkedImage(image)}>{deletingImagePath === image.path ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}حذف الصورة نهائياً</Button></div></div>)}</CardContent></Card>}
 
       {invoicePreviewUrl && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" onClick={closeInvoicePreview}><Card className="max-h-[90vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>صورة فاتورة المورد</CardTitle></CardHeader><CardContent><img src={invoicePreviewUrl} alt="صورة فاتورة المورد المؤرشفة" className="max-h-[70vh] w-full rounded-lg object-contain" /><Button className="mt-4 w-full" onClick={closeInvoicePreview}>إغلاق</Button></CardContent></Card></div>}
-      {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">السعر</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
+      {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">سعر الشراء</th><th className="p-2 text-right">إجمالي البند</th><th className="p-2 text-right">سعر البيع</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.totalCost.toFixed(2)} ج.م</td><td className="p-2">{row.salePrice == null ? "غير مسجل" : `${row.salePrice.toFixed(2)} ج.م`}</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
       {isApiKeyModalOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-blue-600" />إعداد قراءة الفواتير بالذكاء الاصطناعي</CardTitle><CardDescription>أدخل مفتاح Gemini API المجاني مرة واحدة. سيُحفظ محلياً على هذا الجهاز ويُرسل فقط لطلب قراءة الفاتورة.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="password" dir="ltr" autoFocus value={ocrApiKey} onChange={event => setOcrApiKey(event.target.value)} placeholder="AIza..." onKeyDown={event => { if (event.key === "Enter") saveOcrApiKey(); }} /><p className="text-xs text-slate-500">يمكنك الحصول على المفتاح من Google AI Studio. لا يحفظ التطبيق المفتاح في قاعدة بيانات المتجر.</p><div className="flex gap-2"><Button className="flex-1" onClick={saveOcrApiKey}>حفظ وإعادة القراءة</Button><Button variant="outline" onClick={() => { setIsApiKeyModalOpen(false); setPendingOcrDataUrl(""); }}>لاحقاً</Button></div></CardContent></Card></div>}
     </main>
   </div>;
