@@ -27,15 +27,15 @@ export async function uploadCatalogOfferImage(offerId: string, file: File, optio
 
   let image: Blob;
   try {
-    image = options.preserveTransparency ? file : await prepareCloudProductImage(file, { allowJpegFallback: true });
+    image = await prepareCloudProductImage(file, { catalogWebp: true });
   } catch (error) {
     throw new Error(explainUploadError(error));
   }
-  if (!["image/jpeg", "image/png", "image/webp"].includes(image.type)) {
-    throw new Error("تعذر تجهيز الصورة بصيغة JPEG أو PNG أو WebP. اختر صورة أخرى.");
+  if (image.type !== "image/webp" || image.size > 80_000) {
+    throw new Error("تعذر تجهيز الصورة بصيغة WebP ضمن حد 80KB. اختر صورة أخرى.");
   }
 
-  const extension = image.type === "image/webp" ? "webp" : image.type === "image/png" ? "png" : "jpg";
+  const extension = "webp";
   const storagePath = `${shopId}/offers/${offerId}/${crypto.randomUUID()}.${extension}`;
   const supabase = getSupabaseClient();
   const bucket = supabase.storage.from("catalog-images");
@@ -109,4 +109,34 @@ export async function removeCatalogOfferImage(storagePath: string) {
   if (!storagePath.startsWith(`${shopId}/offers/`)) throw new Error("لا يمكن حذف صورة من متجر آخر.");
   const removed = await getSupabaseClient().storage.from("catalog-images").remove([storagePath]);
   if (removed.error) throw new Error(explainUploadError(removed.error));
+}
+
+export function getCatalogOfferStoragePath(imageUrl?: string | null): string | null {
+  if (!imageUrl) return null;
+  try {
+    const pathname = new URL(imageUrl).pathname;
+    const marker = "/storage/v1/object/public/catalog-images/";
+    const index = pathname.indexOf(marker);
+    return index < 0 ? null : decodeURIComponent(pathname.slice(index + marker.length));
+  } catch {
+    return null;
+  }
+}
+
+/** Delete only after DB mutation succeeded and no other currently-active offer references this exact object. */
+export async function removeCatalogOfferImageIfUnreferenced(storagePath: string): Promise<boolean> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext();
+  if (role !== "manager" && role !== "admin") throw new Error("حذف صور العروض متاح للمدير أو المسؤول فقط.");
+  if (!storagePath.startsWith(`${shopId}/offers/`)) throw new Error("لا يمكن حذف صورة من متجر آخر.");
+  const publicUrl = getSupabaseClient().storage.from("catalog-images").getPublicUrl(storagePath).data.publicUrl;
+  const result = await getSupabaseClient().from("store_offers")
+    .select("id,image_url,banner_custom_image")
+    .eq("store_id", shopId).eq("is_active", true).eq("status", "active").is("deleted_at", null)
+    .or(`image_url.eq.${publicUrl},banner_custom_image.eq.${publicUrl}`).limit(1);
+  if (result.error) throw new Error(explainUploadError(result.error));
+  const referenced = (result.data || []).length > 0;
+  if (referenced) return false;
+  await removeCatalogOfferImage(storagePath);
+  return true;
 }

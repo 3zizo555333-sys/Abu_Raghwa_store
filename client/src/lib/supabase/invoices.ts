@@ -252,7 +252,18 @@ export async function completeInvoiceIntent(intentId: string): Promise<CreatedIn
   const supabase = getSupabaseClient();
   const { shopId } = await getActiveShopContext();
   const result = await supabase.rpc("complete_invoice_intent", { p_shop_id: shopId, p_intent_id: intentId });
-  return parseCreatedInvoice(requireCloudResult(result));
+  const invoice = parseCreatedInvoice(requireCloudResult(result));
+  void supabase.auth.getSession().then(({ data }) => {
+    const accessToken = data.session?.access_token;
+    if (!accessToken) return;
+    return fetch("/api/telegram-archive/dispatch", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({ shopId }),
+      keepalive: true,
+    }).catch(() => undefined);
+  }).catch(() => undefined);
+  return invoice;
 }
 
 export async function acknowledgeInvoiceIntent(intentId: string): Promise<CreatedInvoice> {

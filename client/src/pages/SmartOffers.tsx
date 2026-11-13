@@ -21,7 +21,7 @@ import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { listStoreOfferOrders, saveStoreOffer, updateStoreOfferOrderStatus, type CloudOfferOrder } from "@/lib/supabase/storeOffers";
 import { createLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, updateLoyaltyMilestone, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow } from "@/lib/supabase/loyaltyExperience";
 import { OfferVideoScriptButton } from "@/components/OfferVideoScript";
-import { generateCatalogOfferBanner, removeCatalogOfferImage, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
+import { generateCatalogOfferBanner, getCatalogOfferStoragePath, removeCatalogOfferImageIfUnreferenced, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
 import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
 interface Product {
@@ -763,9 +763,9 @@ export default function SmartOffers() {
     setBannerImageUploading(true);
     try {
       const uploaded = await uploadCatalogOfferImage(currentOffer.id, file, { preserveTransparency });
-      const previousPath = currentOffer.bannerImageStoragePath;
+      const previousPath = currentOffer.bannerImageStoragePath || getCatalogOfferStoragePath(currentOffer.bannerImageUrl);
       setCurrentOffer(previous => previous ? { ...previous, bannerImageUrl: uploaded.publicUrl, bannerImageStoragePath: uploaded.storagePath } : previous);
-      if (previousPath) void removeCatalogOfferImage(previousPath).catch(() => undefined);
+      if (previousPath && previousPath !== uploaded.storagePath) void removeCatalogOfferImageIfUnreferenced(previousPath).catch(() => undefined);
       toast.success("تم رفع صورة العرض وحفظ رابطها في Storage.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر رفع صورة العرض.");
@@ -779,7 +779,9 @@ export default function SmartOffers() {
     try {
       const persisted = currentOffer.isActivated || savedOffersList.some(offer => offer.id === currentOffer.id);
       const generated = await generateCatalogOfferBanner(currentOffer.id, { persistToOffer: persisted });
+      const previousPath = currentOffer.bannerCustomImageStoragePath || getCatalogOfferStoragePath(currentOffer.bannerCustomImage);
       setCurrentOffer(previous => previous ? { ...previous, bannerCustomImage: generated.publicUrl, bannerCustomImageStoragePath: generated.storagePath } : previous);
+      if (persisted && previousPath && previousPath !== generated.storagePath) void removeCatalogOfferImageIfUnreferenced(previousPath).catch(() => undefined);
       toast.success(generated.savedToExistingOffer ? "تم توليد خلفية البانر وحفظها للعرض." : "تم توليد الخلفية؛ ستُحفظ مع العرض عند تأكيده.");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر توليد البانر. أعد المحاولة.");
@@ -789,9 +791,7 @@ export default function SmartOffers() {
   };
   const clearBannerImage = async () => {
     if (!currentOffer) return;
-    const paths = [currentOffer.bannerImageStoragePath, currentOffer.bannerCustomImageStoragePath].filter((path): path is string => Boolean(path));
     setCurrentOffer(previous => previous ? { ...previous, bannerImageUrl: undefined, bannerImageStoragePath: undefined, bannerCustomImage: undefined, bannerCustomImageStoragePath: undefined } : previous);
-    await Promise.all(paths.map(path => removeCatalogOfferImage(path).catch(() => undefined)));
   };
   const updateCurrentOfferItemPrice = (index: number, value: string) => {
     const price = Number(value);

@@ -12,6 +12,7 @@ import { DEFAULT_DISPLAY_SETTINGS, normalizeDisplaySettings, type DisplaySetting
 import QRCode from "qrcode";
 import { DEFAULT_SCALE_SETTINGS, normalizeScaleSettings, type ScaleSettings } from "@/lib/scaleSettings";
 import { toast } from "sonner";
+import TelegramArchiveSettings from "@/components/TelegramArchiveSettings";
 
 type DisplayProductOption = { id: string; name: string; catalogVisible?: boolean };
 type DisplayOfferOption = { id?: string; title?: string; name?: string; isActivated?: boolean; active?: boolean };
@@ -306,6 +307,7 @@ export default function Settings() {
               </CardContent>
             </Card>
 
+            <TelegramArchiveSettings />
             {/* Save Button */}
             <Button
               onClick={handleSaveSettings}

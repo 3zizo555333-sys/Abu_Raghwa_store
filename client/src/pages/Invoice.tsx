@@ -3,6 +3,7 @@ import type { CSSProperties } from "react";
 import { useLocation } from "wouter";
 import { ArrowLeft, Download, Printer, Share2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import SalesInvoiceShare from "@/components/SalesInvoiceShare";
 import { toast } from "sonner";
 import { buildInvoiceImageFilename, captureInvoicePng, downloadImageBlob, shareInvoicePng, withInvoicePrintFallback } from "@/lib/invoiceImage";
 import { getCloudInvoice, type CloudInvoice } from "@/lib/supabase/invoices";
@@ -118,6 +119,19 @@ export default function Invoice() {
           <Button size="sm" variant="outline" disabled={isExporting} onClick={() => void handleDownload()}><Download className="ml-1 h-4 w-4" />{isExporting ? "جاري التجهيز..." : "تنزيل صورة"}</Button>
           <Button size="sm" variant="outline" disabled={isExporting} onClick={() => void handleShare()}><Share2 className="ml-1 h-4 w-4" />مشاركة الصورة</Button>
           <Button size="sm" onClick={handlePrint} className="bg-orange-600 text-white"><Printer className="ml-1 h-4 w-4" />طباعة</Button>
+        </div>
+        <div className="mb-3 rounded-xl bg-white p-3 print:hidden">
+          <SalesInvoiceShare invoice={{
+            id: sale.id,
+            date: sale.date,
+            customerName: sale.customerName,
+            customerPhone: sale.customerPhone,
+            items: sale.items.map(item => ({ productName: item.productName, quantity: item.quantity, unitPrice: item.unitPrice, total: item.total })),
+            subTotal: sale.subTotal,
+            discountAmount: sale.discountAmount,
+            total: sale.total,
+            paymentMethod: sale.paymentMethod,
+          }} />
         </div>
 
         <article

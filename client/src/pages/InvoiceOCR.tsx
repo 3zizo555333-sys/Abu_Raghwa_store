@@ -7,7 +7,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { getActiveShopContext } from "@/lib/supabase/products";
-import { createSupplierInvoiceCategory, deleteSupplierInvoice, getSupplierPriceInsights, listSupplierInvoiceCategories, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type SupplierInvoice, type SupplierInvoiceCategory, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import { createSupplierInvoiceCategory, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listSupplierInvoiceCategories, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type SupplierInvoice, type SupplierInvoiceCategory, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
 import { fileToDataUrl, prepareSupplierInvoiceImage } from "@/lib/supabase/prepareSupplierInvoiceImage";
 
 interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; totalCost: number; confidence: number; }
@@ -57,6 +58,10 @@ export default function InvoiceOCR() {
   const [invoiceImage, setInvoiceImage] = useState<string | null>(null);
   const [imageDataUrl, setImageDataUrl] = useState("");
   const [uploadedImageUrl, setUploadedImageUrl] = useState("");
+  const [telegramArchiveReady, setTelegramArchiveReady] = useState(false);
+  const [invoicePreviewUrl, setInvoicePreviewUrl] = useState("");
+  const [loadingInvoicePreview, setLoadingInvoicePreview] = useState(false);
+  const invoicePreviewUrlRef = useRef("");
   const [parsedItems, setParsedItems] = useState<ParsedItem[]>([]);
   const [priceInsights, setPriceInsights] = useState<SupplierPriceInsight[]>([]);
   const [supplier, setSupplier] = useState("");
@@ -125,6 +130,10 @@ export default function InvoiceOCR() {
       await Promise.all([refreshInvoices(), refreshCategories(), refreshUnlinkedImages()]);
       try {
         const { shopId } = await getActiveShopContext();
+        const { data: archiveSettings } = await getSupabaseClient().rpc("get_telegram_archive_settings_v1", { p_shop_id: shopId });
+        const settings = Array.isArray(archiveSettings) ? archiveSettings[0] : archiveSettings;
+        const safeSettings = settings as { is_enabled?: boolean; has_bot_token?: boolean } | null;
+        if (active) setTelegramArchiveReady(Boolean(safeSettings?.is_enabled && safeSettings?.has_bot_token));
         if (active) stop = subscribeToSupplierInvoiceRealtime(shopId, () => { void refreshInvoices(); void refreshUnlinkedImages(); });
       } catch { /* يظهر الخطأ عند العملية */ }
     })();
@@ -133,6 +142,7 @@ export default function InvoiceOCR() {
 
   useEffect(() => () => {
     if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
+    if (invoicePreviewUrlRef.current.startsWith("blob:")) URL.revokeObjectURL(invoicePreviewUrlRef.current);
   }, []);
 
   const refreshPriceInsights = async (items: ParsedItem[]) => {
@@ -237,10 +247,14 @@ export default function InvoiceOCR() {
       previewUrlRef.current = previewUrl;
       setInvoiceImage(previewUrl);
       setIsCompressing(false);
-      setIsUploading(true);
-      const publicUrl = await uploadSupplierInvoiceImage(compressed);
-      setUploadedImageUrl(publicUrl);
-      setIsUploading(false);
+      if (telegramArchiveReady) {
+        setUploadedImageUrl("telegram-archive-pending");
+      } else {
+        setIsUploading(true);
+        const publicUrl = await uploadSupplierInvoiceImage(compressed);
+        setUploadedImageUrl(publicUrl);
+        setIsUploading(false);
+      }
       await runInvoiceOcr(dataUrl);
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذر تجهيز أو رفع صورة الفاتورة.";
@@ -259,7 +273,7 @@ export default function InvoiceOCR() {
       const original = new File([blob], filename, { type: blob.type || "image/webp" });
       const compressed = await prepareSupplierInvoiceImage(original);
       const dataUrl = await fileToDataUrl(compressed);
-      setImageDataUrl(dataUrl); setUploadedImageUrl(image.imageUrl); setInvoiceDate(""); setSupplier("");
+      setImageDataUrl(dataUrl); setUploadedImageUrl(telegramArchiveReady ? "telegram-archive-pending" : image.imageUrl); setInvoiceDate(""); setSupplier("");
       setNotes("صورة قديمة محفوظة في Storage؛ أدخل بيانات المورد والتاريخ الصحيحين قبل الحفظ.");
       if (previewUrlRef.current) URL.revokeObjectURL(previewUrlRef.current);
       const previewUrl = URL.createObjectURL(blob); previewUrlRef.current = previewUrl; setInvoiceImage(previewUrl);
@@ -308,15 +322,42 @@ export default function InvoiceOCR() {
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الفئة سحابياً."); }
   };
 
+  const openInvoicePreview = async (invoice: SupplierInvoice) => {
+    if (invoicePreviewUrlRef.current.startsWith("blob:")) URL.revokeObjectURL(invoicePreviewUrlRef.current);
+    setInvoicePreviewUrl("");
+    if (invoice.image_url) {
+      invoicePreviewUrlRef.current = invoice.image_url;
+      setInvoicePreviewUrl(invoice.image_url);
+      return;
+    }
+    setLoadingInvoicePreview(true);
+    try {
+      const url = await fetchSupplierInvoiceArchiveImage(invoice.id);
+      invoicePreviewUrlRef.current = url;
+      setInvoicePreviewUrl(url);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "تعذر تحميل صورة الفاتورة.");
+    } finally { setLoadingInvoicePreview(false); }
+  };
+
+  const closeInvoicePreview = () => {
+    if (invoicePreviewUrlRef.current.startsWith("blob:")) URL.revokeObjectURL(invoicePreviewUrlRef.current);
+    invoicePreviewUrlRef.current = "";
+    setInvoicePreviewUrl("");
+  };
+
   const saveInvoice = async () => {
-    if (!uploadedImageUrl) { toast.error("ارفع صورة الفاتورة إلى الأرشيف أولاً."); return; }
+    if (!telegramArchiveReady && !uploadedImageUrl) { toast.error("ارفع صورة الفاتورة إلى الأرشيف أولاً."); return; }
+    if (telegramArchiveReady && !imageDataUrl) { toast.error("التقط صورة الفاتورة قبل حفظها في قناة الأرشيف."); return; }
     if (!supplier.trim()) { toast.error("أدخل اسم المورد قبل حفظ الفاتورة."); return; }
     if (!invoiceDate) { toast.error("أدخل تاريخ الفاتورة الصحيح قبل حفظها."); return; }
     if (!parsedItems.some(item => item.name.trim())) { toast.error("أضف بنداً واحداً على الأقل."); return; }
     try {
       setIsSaving(true);
-      await saveSupplierInvoice({ supplierName: supplier, invoiceDate, categoryId: categoryId || null, imageUrl: uploadedImageUrl, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) });
-      toast.success("تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
+      const invoiceDraft = { supplierName: supplier, invoiceDate, categoryId: categoryId || null, notes, items: parsedItems.map(item => ({ itemName: item.name, barcode: item.barcode, quantity: item.quantity, unitCost: item.unitCost, totalCost: item.totalCost })) };
+      if (telegramArchiveReady) await saveSupplierInvoiceToTelegram({ ...invoiceDraft, imageDataUrl });
+      else await saveSupplierInvoice({ ...invoiceDraft, imageUrl: uploadedImageUrl });
+      toast.success(telegramArchiveReady ? "تم حفظ الفاتورة وإيداع صورتها في قناة أرشيف Telegram." : "تم حفظ الفاتورة وبنودها سحابياً وتحديث رادار الأسعار.");
       resetDraft(); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]);
     } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حفظ الفاتورة سحابياً."); }
     finally { setIsSaving(false); }
@@ -365,7 +406,7 @@ export default function InvoiceOCR() {
           {processing && <div className="flex items-center gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 text-sm font-semibold text-blue-800" role="status" aria-live="polite"><Loader2 className="h-5 w-5 animate-spin" />{isCompressing ? "جارٍ ضغط صورة الفاتورة قبل الرفع..." : isUploading ? "جارٍ رفع صورة الفاتورة المضغوطة إلى Supabase Storage..." : "جارٍ قراءة الفاتورة واستخراج الأصناف بالذكاء الاصطناعي..."}</div>}
           {ocrError && <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900"><span>{ocrError}</span>{uploadedImageUrl && imageDataUrl && <Button size="sm" variant="outline" disabled={processing} onClick={() => void runInvoiceOcr(imageDataUrl)}>إعادة القراءة بالذكاء الاصطناعي</Button>}</div>}
           <div className="grid gap-6 lg:grid-cols-2">
-            <div><img src={invoiceImage} alt="صورة فاتورة المورد بعد ضغطها" className="max-h-[620px] w-full rounded-xl border object-contain" /><p className="mt-2 text-xs text-green-700">أرشفة الصورة السحابية: {isUploading ? "جارية الآن..." : uploadedImageUrl ? "تم الرفع؛ ستحفظ مع الفاتورة" : "لم تبدأ"}</p></div>
+            <div><img src={invoiceImage} alt="صورة فاتورة المورد بعد ضغطها" className="max-h-[620px] w-full rounded-xl border object-contain" /><p className="mt-2 text-xs text-green-700">أرشفة الصورة: {telegramArchiveReady ? (uploadedImageUrl ? "ستُرسل إلى قناة Telegram عند الحفظ" : "بانتظار اختيار الصورة") : isUploading ? "جارية الآن..." : uploadedImageUrl ? "تم الرفع؛ ستحفظ مع الفاتورة" : "لم تبدأ"}</p></div>
             <div className="space-y-3">
               <label className="text-sm font-bold">الفئة</label><select value={categoryId} onChange={event => setCategoryId(event.target.value)} className="rounded-md border bg-white px-3 py-2"><option value="">بدون فئة</option>{categories.map(category => <option key={category.id} value={category.id}>{category.name}</option>)}</select>
               <label className="text-sm font-bold">اسم المورد</label><Input value={supplier} onChange={event => setSupplier(event.target.value)} placeholder="اسم المورد" />
@@ -393,7 +434,7 @@ export default function InvoiceOCR() {
                 <td className="p-2"><Button variant="ghost" size="icon" onClick={() => setParsedItems(rows => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4 text-red-600" /></Button></td>
               </tr>;
             })}</tbody></table></div>
-          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><strong>الإجمالي العام: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || !uploadedImageUrl || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><strong>الإجمالي العام: {totalDraft.toFixed(2)} ج.م</strong><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || !(uploadedImageUrl || (telegramArchiveReady && imageDataUrl)) || !parsedItems.length} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
         </CardContent>
       </Card>}
 
@@ -404,7 +445,7 @@ export default function InvoiceOCR() {
 
       <Card><CardHeader><CardTitle>الفواتير المحفوظة سحابياً{invoicesLoaded && !invoiceListError ? savedInvoices.length ? ` (${savedInvoices.length})` : unlinkedImagesLoading ? "" : unlinkedImages.length ? ` (${unlinkedImages.length} صور تحتاج ربطاً)` : " (لا توجد سجلات بعد)" : ""}</CardTitle><CardDescription>الأرشيف ومرفقات الفواتير تتم مزامنتها مع Supabase بين أجهزة المشرفين والمديرين.</CardDescription></CardHeader><CardContent className="space-y-3">
         {!invoicesLoaded && !invoiceListError ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل الأرشيف السحابي...</p> : invoiceListError ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p>تعذر تحميل الأرشيف؛ لم تُعرض القائمة كأنها فارغة. {invoiceListError}</p><Button size="sm" variant="outline" className="mt-2" onClick={() => void refreshInvoices()}>إعادة التحميل</Button></div> : savedInvoices.length === 0 ? <p className="text-sm text-gray-500">{unlinkedImagesLoading ? "جارٍ التحقق من صور الفواتير المرفوعة سابقاً..." : unlinkedImages.length ? `توجد ${unlinkedImages.length} صور قديمة في Storage بانتظار ربطها بسجلات فواتير؛ يمكن استعادتها من القسم أدناه.` : "لا توجد فواتير محفوظة بعد."}</p> : savedInvoices.map(invoice => <div key={invoice.id} className="rounded-xl border bg-white p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><a href={invoice.image_url} target="_blank" rel="noopener noreferrer" className="inline-flex h-9 items-center rounded-md border px-3 text-sm font-medium hover:bg-gray-50">عرض صورة الفاتورة</a><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف سجل الفاتورة؟ ستبقى الصورة في Storage قابلة للاستعادة.")) { try { await deleteSupplierInvoice(invoice.id); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الفاتورة."); } } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={loadingInvoicePreview} onClick={() => void openInvoicePreview(invoice)}>{loadingInvoicePreview ? "جارٍ التحميل…" : "عرض صورة الفاتورة"}</Button><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف سجل الفاتورة؟ ستبقى الصورة في Storage قابلة للاستعادة.")) { try { await deleteSupplierInvoice(invoice.id); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الفاتورة."); } } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>
           {expandedInvoice === invoice.id && <div className="mt-3 grid gap-2 md:grid-cols-2">{invoice.items.map(item => <div key={item.id} className={`rounded-lg p-3 ${item.price_direction === "up" ? "bg-red-50" : item.price_direction === "down" ? "bg-green-50" : "bg-gray-50"}`}><div className="flex items-center justify-between"><strong>{item.item_name}</strong><span>{item.price_direction === "up" ? "↗️" : item.price_direction === "down" ? "↘️" : "➡️"} {Number(item.unit_cost).toFixed(2)} ج.م</span></div><p className="text-xs text-gray-600">الكمية {item.quantity} · الإجمالي {item.total_cost} · {item.previous_cost == null ? "أول سعر مسجل" : `الفرق ${Number(item.price_diff).toFixed(2)} ج.م`}</p></div>)}</div>}
         </div>)}
       </CardContent></Card>
@@ -413,6 +454,7 @@ export default function InvoiceOCR() {
       {!unlinkedImagesError && unlinkedImagesLoading && <Card><CardContent className="pt-5"><p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحقق من صور Storage غير المرتبطة...</p></CardContent></Card>}
       {unlinkedImages.length > 0 && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>صور قديمة غير مرتبطة بسجل فاتورة ({unlinkedImages.length})</CardTitle><CardDescription>هذه الصور موجودة سحابياً لكنها لم تُسجل كفواتير. أعد قراءتها، ثم أدخل اسم المورد وتاريخ الفاتورة الصحيحين واحفظها لربط الصورة بالأرشيف.</CardDescription></div><Button variant="destructive" size="sm" disabled={isDeletingAllUnlinked || Boolean(deletingImagePath)} onClick={() => void deleteAllUnlinkedImages()}>{isDeletingAllUnlinked ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}مسح جميع الصور المعلقة دفعة واحدة</Button></div></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">{unlinkedImages.map(image => <div key={image.path} className="rounded-xl border bg-white p-3"><a href={image.imageUrl} target="_blank" rel="noopener noreferrer"><img src={image.imageUrl} alt="صورة فاتورة قديمة غير مرتبطة" className="h-44 w-full rounded-lg bg-gray-50 object-contain" /></a><p className="mt-2 truncate text-xs text-gray-500">{image.path.split("/").pop()}</p>{image.createdAt && <p className="text-xs text-gray-500">وقت الرفع: {new Date(image.createdAt).toLocaleString("ar-EG")}</p>}<div className="mt-3 grid gap-2"><Button variant="outline" disabled={processing || Boolean(adoptingImagePath) || Boolean(deletingImagePath) || isDeletingAllUnlinked} onClick={() => void adoptStoredImage(image)}>{adoptingImagePath === image.path ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />جارٍ الاستعادة والقراءة...</> : "إعادة القراءة وربطها بالأرشيف"}</Button><Button variant="ghost" className="text-red-700 hover:bg-red-50 hover:text-red-800" disabled={processing || Boolean(adoptingImagePath) || isDeletingAllUnlinked} onClick={() => void deleteUnlinkedImage(image)}>{deletingImagePath === image.path ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}حذف الصورة نهائياً</Button></div></div>)}</CardContent></Card>}
 
+      {invoicePreviewUrl && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" onClick={closeInvoicePreview}><Card className="max-h-[90vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>صورة فاتورة المورد</CardTitle></CardHeader><CardContent><img src={invoicePreviewUrl} alt="صورة فاتورة المورد المؤرشفة" className="max-h-[70vh] w-full rounded-lg object-contain" /><Button className="mt-4 w-full" onClick={closeInvoicePreview}>إغلاق</Button></CardContent></Card></div>}
       {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">السعر</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
       {isApiKeyModalOpen && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-slate-950/70 p-4" role="dialog" aria-modal="true"><Card className="w-full max-w-md"><CardHeader><CardTitle className="flex items-center gap-2"><KeyRound className="h-5 w-5 text-blue-600" />إعداد قراءة الفواتير بالذكاء الاصطناعي</CardTitle><CardDescription>أدخل مفتاح Gemini API المجاني مرة واحدة. سيُحفظ محلياً على هذا الجهاز ويُرسل فقط لطلب قراءة الفاتورة.</CardDescription></CardHeader><CardContent className="space-y-3"><Input type="password" dir="ltr" autoFocus value={ocrApiKey} onChange={event => setOcrApiKey(event.target.value)} placeholder="AIza..." onKeyDown={event => { if (event.key === "Enter") saveOcrApiKey(); }} /><p className="text-xs text-slate-500">يمكنك الحصول على المفتاح من Google AI Studio. لا يحفظ التطبيق المفتاح في قاعدة بيانات المتجر.</p><div className="flex gap-2"><Button className="flex-1" onClick={saveOcrApiKey}>حفظ وإعادة القراءة</Button><Button variant="outline" onClick={() => { setIsApiKeyModalOpen(false); setPendingOcrDataUrl(""); }}>لاحقاً</Button></div></CardContent></Card></div>}
     </main>

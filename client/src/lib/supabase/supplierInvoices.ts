@@ -115,6 +115,48 @@ export async function saveSupplierInvoice(input: { supplierName: string; invoice
   return { ...saved.invoice, items: saved.items || [] };
 }
 
+export async function saveSupplierInvoiceToTelegram(input: { supplierName: string; invoiceDate: string; imageDataUrl: string; categoryId?: string | null; notes?: string; items: SupplierInvoiceDraftItem[] }): Promise<SupplierInvoice> {
+  assertCloudOnline();
+  const { shopId, role } = await getActiveShopContext(true);
+  if (!["manager", "admin", "supervisor"].includes(role)) throw new Error("حفظ فواتير الموردين متاح للمدير أو المشرف فقط.");
+  if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(input.imageDataUrl) || input.imageDataUrl.length > 2_500_000) throw new Error("صورة فاتورة المورد غير صالحة أو كبيرة جداً.");
+  const client = getSupabaseClient();
+  const normalized = input.items.filter(item => item.itemName.trim()).map(normalizeItem);
+  if (!input.supplierName.trim() || !normalized.length) throw new Error("أدخل اسم المورد وبنداً واحداً على الأقل.");
+  const previousCosts = await Promise.all(normalized.map(item => getPreviousCost(shopId, item)));
+  const rows = normalized.map((item, index) => {
+    const previous = previousCosts[index];
+    const diff = previous == null ? null : Math.round((item.unit_cost - previous) * 10000) / 10000;
+    return { ...item, previous_cost: previous, price_diff: diff, price_direction: diff == null || Math.abs(diff) < 0.0001 ? "stable" : diff > 0 ? "up" : "down" };
+  });
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+  if (sessionError || !sessionData.session?.access_token) throw new Error("انتهت الجلسة؛ سجّل الدخول مجدداً.");
+  const response = await fetch("/api/telegram-archive/supplier-invoice", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${sessionData.session.access_token}` },
+    body: JSON.stringify({ shopId, supplierName: input.supplierName.trim(), invoiceDate: input.invoiceDate, categoryId: input.categoryId || null, notes: input.notes?.trim() || "", items: rows, totalAmount: rows.reduce((sum, row) => sum + Number(row.total_cost || 0), 0), imageDataUrl: input.imageDataUrl }),
+  });
+  const result = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(result.error || "تعذر إرسال الفاتورة إلى قناة الأرشيف.");
+  if (!result || typeof result !== "object" || !result.invoice || !Array.isArray(result.items)) throw new Error("لم يؤكد الخادم حفظ فاتورة المورد.");
+  return { ...result.invoice, items: result.items } as SupplierInvoice;
+}
+
+export async function fetchSupplierInvoiceArchiveImage(invoiceId: string): Promise<string> {
+  assertCloudOnline();
+  const { shopId } = await getActiveShopContext();
+  const client = getSupabaseClient();
+  const { data, error } = await client.auth.getSession();
+  if (error || !data.session?.access_token) throw new Error("انتهت الجلسة؛ سجّل الدخول مجدداً.");
+  const query = new URLSearchParams({ shopId, invoiceId });
+  const response = await fetch(`/api/telegram-archive/file?${query.toString()}`, { headers: { Authorization: `Bearer ${data.session.access_token}` } });
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(result.error || "تعذر تحميل صورة الفاتورة المؤرشفة.");
+  }
+  return URL.createObjectURL(await response.blob());
+}
+
 export async function listSupplierInvoices(limit = 100): Promise<SupplierInvoice[]> {
   assertCloudOnline();
   const { shopId } = await getActiveShopContext();

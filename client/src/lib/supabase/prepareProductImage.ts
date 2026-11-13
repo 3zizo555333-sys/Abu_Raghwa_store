@@ -1,5 +1,6 @@
 const MAX_SOURCE_BYTES = 20 * 1024 * 1024;
 const MAX_OUTPUT_BYTES = 300_000;
+const CATALOG_IMAGE_MAX_BYTES = 80_000;
 const ACCEPTED_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 type PrepareCloudProductImageOptions = {
@@ -7,6 +8,8 @@ type PrepareCloudProductImageOptions = {
   allowJpegFallback?: boolean;
   /** Force JPEG output for upload flows that require a .jpg object. */
   jpegOnly?: boolean;
+  /** Keep alpha and target a compact catalog WebP (best effort, at most 80 KB). */
+  catalogWebp?: boolean;
 };
 
 export async function prepareCloudProductImage(
@@ -23,6 +26,19 @@ export async function prepareCloudProductImage(
     const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
     let width = Math.max(1, Math.round(bitmap.width * scale));
     let height = Math.max(1, Math.round(bitmap.height * scale));
+    if (options.catalogWebp) {
+      for (let dimensionAttempt = 0; dimensionAttempt < 12; dimensionAttempt += 1) {
+        for (let qualityStep = 0; qualityStep <= 12; qualityStep += 1) {
+          const quality = Math.max(0.28, 0.92 - qualityStep * 0.055);
+          const webp = await renderImage(bitmap, width, height, quality, "image/webp");
+          if (webp.type !== "image/webp") throw new Error("تعذر ضغط الصورة إلى WebP في هذا المتصفح.");
+          if (webp.size > 0 && webp.size <= CATALOG_IMAGE_MAX_BYTES) return webp;
+        }
+        width = Math.max(1, Math.floor(width * 0.78));
+        height = Math.max(1, Math.floor(height * 0.78));
+      }
+      throw new Error("تعذر ضغط الصورة إلى WebP ضمن حد 80KB. اختر صورة أصغر.");
+    }
     for (let attempt = 0; attempt < 12; attempt += 1) {
       const quality = Math.max(0.3, 0.84 - attempt * 0.05);
       let blob: Blob | null = null;

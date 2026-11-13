@@ -56,4 +56,31 @@ describe("prepareCloudProductImage", () => {
     expect(result.size).toBeLessThan(300_000);
     expect(close).toHaveBeenCalledTimes(1);
   });
+
+  it("uses alpha-enabled WebP and stops at the catalog 80 KB limit without JPEG fallback", async () => {
+    const close = vi.fn();
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue({ width: 1200, height: 800, close }));
+    const alphaOptions: boolean[] = [];
+    const requestedTypes: string[] = [];
+    class FakeOffscreenCanvas {
+      constructor(_width: number, _height: number) {}
+      getContext(_kind: string, options: { alpha: boolean }) {
+        alphaOptions.push(options.alpha);
+        return { drawImage: vi.fn() } as unknown as OffscreenCanvasRenderingContext2D;
+      }
+      async convertToBlob(options: { type: string; quality: number }) {
+        requestedTypes.push(options.type);
+        const size = options.quality > 0.8 ? 90_000 : 79_999;
+        return new Blob([new Uint8Array(size)], { type: options.type });
+      }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    const file = new File([new Uint8Array([1])], "transparent.png", { type: "image/png" });
+    const result = await prepareCloudProductImage(file, { catalogWebp: true, allowJpegFallback: true });
+    expect(result.type).toBe("image/webp");
+    expect(result.size).toBeLessThanOrEqual(80_000);
+    expect(alphaOptions.every(Boolean)).toBe(true);
+    expect(requestedTypes.every(type => type === "image/webp")).toBe(true);
+    expect(close).toHaveBeenCalledOnce();
+  });
 });

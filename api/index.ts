@@ -25,6 +25,22 @@ api.all("/catalog/upload-media", async (req, res, next) => {
     return next(error);
   }
 });
+api.all("/api/telegram-archive/:action", express.json({ limit: "3mb" }), async (req, res, next) => {
+  try {
+    const { telegramArchiveApi } = await import("../server/services/telegramArchive");
+    return telegramArchiveApi(req, res);
+  } catch (error) {
+    return next(error);
+  }
+});
+api.all("/api/cron/daily-backup", async (req, res, next) => {
+  try {
+    const { dailyBackupApi } = await import("../server/services/telegramArchive");
+    return dailyBackupApi(req, res);
+  } catch (error) {
+    return next(error);
+  }
+});
 api.use(createApiApp());
 api.use((_req, res) => {
   res.status(404).json({ error: "Not found" });

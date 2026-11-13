@@ -10,7 +10,7 @@ import { toast } from "sonner";
 import { trpc } from "@/lib/trpc";
 import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry";
 import { deleteStoreOffer, getPublishedOfferImage, listStoreOffers, type CloudStoreOffer } from "@/lib/supabase/storeOffers";
-import { generateCatalogOfferBanner, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
+import { generateCatalogOfferBanner, getCatalogOfferStoragePath, removeCatalogOfferImageIfUnreferenced, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
 import { OfferProductStager, OfferProductStagerBoundary } from "@/components/OfferProductStager";
 
 interface SmartOffer {
@@ -213,7 +213,9 @@ export default function SmartOffersList() {
     if (!confirmed) return;
 
     try {
+      const candidatePaths = Array.from(new Set([getCatalogOfferStoragePath(offer.bannerImageUrl), getCatalogOfferStoragePath(offer.bannerCustomImage)].filter((path): path is string => Boolean(path))));
       await deleteStoreOffer(offer.id);
+      await Promise.all(candidatePaths.map(path => removeCatalogOfferImageIfUnreferenced(path).catch(() => false)));
       try { await deleteOfferMutation.mutateAsync({ id: offer.id }); } catch { toast.warning("تم حذف العرض السحابي، لكن تعذر حذف النسخة القديمة."); }
       setSavedOffers(previous => previous.filter((item) => item.id !== offer.id));
       await trpcUtils.offers.list.invalidate();

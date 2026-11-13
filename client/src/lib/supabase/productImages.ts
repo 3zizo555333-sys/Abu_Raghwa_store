@@ -8,8 +8,8 @@ export async function uploadCloudProductImage(input: { productId: string; expect
   const { shopId, role } = await getActiveShopContext();
   if (!(["manager", "admin", "supervisor"] as string[]).includes(role)) throw new Error("رفع صور المنتجات متاح للإدارة فقط.");
   const imageId = globalThis.crypto.randomUUID();
-  const image = await prepareCloudProductImage(input.file, { allowJpegFallback: true });
-  const extension = image.type === "image/webp" ? "webp" : "jpg";
+  const image = await prepareCloudProductImage(input.file, { catalogWebp: true });
+  const extension = "webp";
   const storagePath = `${shopId}/products/${input.productId}/${imageId}.${extension}`;
   const bucket = supabase.storage.from("product-images");
   const uploaded = await bucket.upload(storagePath, image, { contentType: image.type, cacheControl: "3600", upsert: false });
