@@ -31,7 +31,7 @@ async function compressInvoiceForOcr(dataUrl: string): Promise<string> {
     element.onerror = () => reject(new Error("تعذر فتح صورة الفاتورة لضغطها قبل القراءة."));
     element.src = dataUrl;
   });
-  const scale = Math.min(1, 2048 / Math.max(image.naturalWidth, image.naturalHeight));
+  const scale = Math.min(1, 1200 / image.naturalWidth);
   const canvas = document.createElement("canvas");
   canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
   canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
@@ -40,7 +40,7 @@ async function compressInvoiceForOcr(dataUrl: string): Promise<string> {
   context.fillStyle = "#ffffff";
   context.fillRect(0, 0, canvas.width, canvas.height);
   context.drawImage(image, 0, 0, canvas.width, canvas.height);
-  return canvas.toDataURL("image/jpeg", 0.88);
+  return canvas.toDataURL("image/jpeg", 0.8);
 }
 
 function numericOcrValue(value: unknown): number {
@@ -51,6 +51,7 @@ function numericOcrValue(value: unknown): number {
 }
 
 type GeminiListedModel = { name?: string; displayName?: string; version?: string; supportedGenerationMethods?: string[] };
+type GeminiAttempt = { status: number | null; raw: string; timedOut: boolean; networkError?: string };
 
 function compareGeminiModelFreshness(a: GeminiListedModel, b: GeminiListedModel): number {
   const extractVersion = (model: GeminiListedModel) => {
@@ -71,7 +72,7 @@ function compareGeminiModelFreshness(a: GeminiListedModel, b: GeminiListedModel)
   return String(b.version || "").localeCompare(String(a.version || ""), undefined, { numeric: true });
 }
 
-async function findNewestGeminiFlashModel(apiKey: string, unavailableModel: string): Promise<string> {
+async function listNewestGeminiFlashModels(apiKey: string, excludedModels: string[]): Promise<string[]> {
   const models: GeminiListedModel[] = [];
   let pageToken = "";
   for (let page = 0; page < 10; page += 1) {
@@ -79,8 +80,15 @@ async function findNewestGeminiFlashModel(apiKey: string, unavailableModel: stri
     url.searchParams.set("key", apiKey);
     url.searchParams.set("pageSize", "100");
     if (pageToken) url.searchParams.set("pageToken", pageToken);
-    const response = await fetch(url.toString());
-    const raw = await response.text();
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
+    let response: Response;
+    let raw = "";
+    try {
+      response = await fetch(url.toString(), { signal: controller.signal });
+      raw = await response.text();
+    }
+    finally { window.clearTimeout(timeout); }
     let result: { models?: GeminiListedModel[]; nextPageToken?: string; error?: { message?: string } } = {};
     try { result = JSON.parse(raw) as typeof result; } catch { /* يعرض الخطأ المقروء أدناه */ }
     if (!response.ok) throw new Error(`ListModels ${response.status}: ${result.error?.message || raw.slice(0, 300)}`);
@@ -88,17 +96,14 @@ async function findNewestGeminiFlashModel(apiKey: string, unavailableModel: stri
     if (!result.nextPageToken) break;
     pageToken = result.nextPageToken;
   }
-  const failedName = unavailableModel.replace(/^models\//i, "").toLocaleLowerCase();
+  const excluded = new Set(excludedModels.map(name => name.replace(/^models\//i, "").toLocaleLowerCase()));
   const eligible = models.filter(model => {
     const name = (model.name || "").replace(/^models\//i, "");
-    return name && name.toLocaleLowerCase() !== failedName &&
+    return name && !excluded.has(name.toLocaleLowerCase()) &&
       /flash/i.test(`${name} ${model.displayName || ""}`) &&
       model.supportedGenerationMethods?.includes("generateContent");
   });
-  const fullFlashModels = eligible.filter(model => !/flash[- ]?lite/i.test(`${model.name} ${model.displayName || ""}`));
-  const candidate = [...(fullFlashModels.length ? fullFlashModels : eligible)].sort(compareGeminiModelFreshness)[0];
-  if (!candidate?.name) throw new Error("لم يُعثر في ListModels على موديل Flash بديل يدعم generateContent.");
-  return candidate.name.replace(/^models\//i, "");
+  return [...eligible].sort(compareGeminiModelFreshness).map(model => model.name!.replace(/^models\//i, ""));
 }
 
 function extractInvoiceItems(responseText: string): Array<Record<string, unknown>> {
@@ -267,22 +272,70 @@ export default function InvoiceOCR() {
           maxOutputTokens: 8192,
         },
       };
-      const requestModel = (model: string) => fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody),
-      });
-      let response = await requestModel("gemini-3.8-flash");
-      if (response.status === 404) {
-        const unavailableResponse = await response.text();
-        const fallbackModel = await findNewestGeminiFlashModel(apiKey, "gemini-3.8-flash");
-        response = await requestModel(fallbackModel);
-        if (response.status === 404) throw new Error(`الموديل البديل ${fallbackModel} غير متاح أيضاً: ${(await response.text()).slice(0, 300) || unavailableResponse.slice(0, 300)}`);
+      const requestModel = async (model: string): Promise<GeminiAttempt> => {
+        const send = async (includeThinking: boolean): Promise<GeminiAttempt> => {
+          const controller = new AbortController();
+          let timedOut = false;
+          const timeout = window.setTimeout(() => { timedOut = true; controller.abort(); }, 8000);
+          try {
+            const generationConfig = includeThinking
+              ? { ...requestBody.generationConfig, thinkingConfig: { thinkingBudget: 0 } }
+              : requestBody.generationConfig;
+            const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              signal: controller.signal,
+              body: JSON.stringify({ ...requestBody, generationConfig }),
+            });
+            return { status: response.status, raw: await response.text(), timedOut: false };
+          } catch (error) {
+            return { status: null, raw: "", timedOut, networkError: error instanceof Error ? error.message : String(error) };
+          } finally { window.clearTimeout(timeout); }
+        };
+        let attempt = await send(true);
+        if (attempt.status === 400 && /thinking[\s_-]?(?:config|budget)|unsupported.*thinking|unknown.*thinking/i.test(attempt.raw)) {
+          attempt = await send(false);
+        }
+        return attempt;
+      };
+      const describeAttempt = (model: string, attempt: GeminiAttempt) => {
+        if (attempt.timedOut) return `${model}: انتهت مهلة Gemini بعد 8 ثوانٍ`;
+        if (attempt.status === null) return `${model}: ${attempt.networkError || "فشل الاتصال"}`;
+        let apiMessage = "";
+        try { apiMessage = (JSON.parse(attempt.raw) as { error?: { message?: string } }).error?.message || ""; } catch { /* يستخدم الرد الخام */ }
+        return `${model}: Gemini API ${attempt.status}: ${apiMessage || attempt.raw.slice(0, 300)}`;
+      };
+      const attemptedModels = new Set<string>();
+      const failures: string[] = [];
+      const successfulAttempts: Array<{ model: string; attempt: GeminiAttempt }> = [];
+      const tryModel = async (model: string) => {
+        attemptedModels.add(model);
+        const attempt = await requestModel(model);
+        if (attempt.status !== null && attempt.status >= 200 && attempt.status < 300) {
+          successfulAttempts.push({ model, attempt });
+        } else failures.push(describeAttempt(model, attempt));
+        return attempt;
+      };
+
+      const primaryAttempt = await tryModel("gemini-3.8-flash");
+      const primaryOverloaded = primaryAttempt.timedOut || primaryAttempt.status === 429 || primaryAttempt.status === 503;
+      if (!successfulAttempts.length && primaryOverloaded) await tryModel("gemini-3.8-flash-lite");
+      if (!successfulAttempts.length && (primaryOverloaded || primaryAttempt.status === 404)) {
+        try {
+          const fallbackModels = await listNewestGeminiFlashModels(apiKey, Array.from(attemptedModels));
+          for (const model of fallbackModels) {
+            await tryModel(model);
+            if (successfulAttempts.length) break;
+          }
+        } catch (error) {
+          failures.push(`ListModels: ${error instanceof Error ? error.message : String(error)}`);
+        }
       }
-      const raw = await response.text();
+      if (!successfulAttempts.length) throw new Error(failures.join(" | ") || "لم يتوفر موديل Gemini Flash لقراءة الفاتورة.");
+      const { attempt: selectedAttempt } = successfulAttempts[0];
+      const raw = selectedAttempt.raw;
       let payload: { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>; error?: { message?: string } } = {};
       try { payload = JSON.parse(raw) as typeof payload; } catch { /* نعرض الرد الخام بالأسفل */ }
-      if (!response.ok) throw new Error(`Gemini API ${response.status}: ${payload.error?.message || raw.slice(0, 500)}`);
       const responseText = payload.candidates?.[0]?.content?.parts?.map(part => part.text || "").join("\n") || raw;
       const parsedItems = extractInvoiceItems(responseText);
       const items = parsedItems.map(item => {
