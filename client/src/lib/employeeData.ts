@@ -4,7 +4,7 @@ export interface EmployeeRecord {
   phone: string;
   authEmail?: string;
   position: string;
-  role?: "supervisor" | "cashier" | "seller";
+  role?: "manager" | "supervisor" | "cashier" | "seller";
   salary: number;
   joinDate: string;
 }
@@ -36,7 +36,7 @@ export const normalizeEmployees = (value: unknown): EmployeeRecord[] => {
       phone: text(source.phone),
       ...(text(source.authEmail || source.auth_email) ? { authEmail: text(source.authEmail || source.auth_email) } : {}),
       position: text(source.position),
-      role: source.role === "supervisor" || source.role === "cashier" ? source.role : "seller",
+      role: source.role === "manager" || source.role === "supervisor" || source.role === "cashier" ? source.role : "seller",
       salary: Math.max(0, number(source.salary)),
       joinDate: text(source.joinDate) || "غير مسجل",
     };

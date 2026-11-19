@@ -10,4 +10,8 @@ describe("بيانات إدارة الموظفين", () => {
   it("يتجاهل سجل الحضور التالف بدل أن يعطل الصفحة", () => {
     expect(normalizeAttendance({ broken: true })).toEqual([]);
   });
+
+  it("يحافظ على دور المدير في بطاقة الموظف الشخصية", () => {
+    expect(normalizeEmployees([{ id: "m1", name: "مدير", role: "manager" }])[0]?.role).toBe("manager");
+  });
 });

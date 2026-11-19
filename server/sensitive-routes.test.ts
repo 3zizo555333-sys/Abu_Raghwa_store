@@ -58,8 +58,12 @@ describe("حماية المسارات المالية والحساسة", () => {
     expect(appSource).toContain('path={"/my-withdrawals"} component={StaffWithdrawals}');
     expect(withdrawalsPageSource).toContain("verifyStaffPinAccess");
     expect(withdrawalsPageSource).toContain("PIN الموظف المكوّن من 4 أرقام");
-    expect(withdrawalsPageSource).toContain("const requiresPin = true");
-    expect(withdrawalsPageSource).toContain("canDelete = canManageTeam");
+    expect(withdrawalsPageSource).toContain("normalizeEmployeePin(event.target.value)");
+    expect(withdrawalsPageSource).toContain("setPinEmployee(employee)");
+    expect(withdrawalsPageSource).toContain("listOwnStaffWithdrawals(access.shopId, pinEmployee.id)");
+    expect(withdrawalsPageSource).toContain("employeeId: pinEmployee.id");
+    expect(withdrawalsPageSource).toContain("requestedAt: requestedAtForDate(date)");
+    expect(withdrawalsPageSource).not.toContain("canDelete =");
   });
 
   it("يعرض المستخدم والدور من عضوية Supabase لا من Web Storage", () => {

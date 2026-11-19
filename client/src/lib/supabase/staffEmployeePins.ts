@@ -6,7 +6,7 @@ export type StaffPinEmployee = {
   name: string;
   phone: string;
   position: string;
-  role: "supervisor" | "cashier" | "seller";
+  role: "manager" | "supervisor" | "cashier" | "seller";
   salary: number;
   join_date: string;
   hire_date: string;
@@ -16,9 +16,31 @@ export type StaffPinEmployee = {
 export type StaffPinStatus = { employee_id: string; pin_configured: boolean; pin_enabled: boolean };
 
 export function normalizeEmployeePin(value: string): string {
-  return value.replace(/[٠-٩]/g, digit => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
+  return value
+    .replace(/[٠-٩]/g, digit => String("٠١٢٣٤٥٦٧٨٩".indexOf(digit)))
     .replace(/[۰-۹]/g, digit => String("۰۱۲۳۴۵۶۷۸۹".indexOf(digit)))
-    .replace(/\D/g, "").slice(0, 4);
+    .replace(/\s/g, "")
+    .replace(/\D/g, "");
+}
+
+/** Remove only legacy PIN-attempt/lock keys; no active app code stores PINs locally. */
+export function clearEmployeePinLockStorage() {
+  if (typeof window === "undefined") return;
+  try {
+    const knownKeys = [
+      "abu_employee_pin_attempts",
+      "abu_employee_pin_locked_until",
+      "staff_employee_pin_attempts",
+      "staff_employee_pin_locked_until",
+      "employee_withdrawal_pin_lock",
+    ];
+    const legacyKeys = Object.keys(window.localStorage).filter(key =>
+      /(?:staff|employee)[_.:-]*pin.*(?:attempt|lock)|pin.*(?:attempt|lock).*(?:staff|employee)/i.test(key),
+    );
+    Array.from(new Set([...knownKeys, ...legacyKeys])).forEach(key => window.localStorage.removeItem(key));
+  } catch {
+    // Storage can be unavailable in restricted browser contexts; the server lock is authoritative.
+  }
 }
 
 export async function adminSetStaffEmployeePin(employeeId: string, pin: string) {
@@ -27,6 +49,13 @@ export async function adminSetStaffEmployeePin(employeeId: string, pin: string) 
   const result = await getSupabaseClient().rpc("admin_set_employee_pin", {
     p_employee_id: employeeId,
     p_pin: normalizedPin,
+  });
+  return requireCloudResult(result);
+}
+
+export async function resetStaffEmployeePinAttempts(employeeId: string) {
+  const result = await getSupabaseClient().rpc("admin_reset_employee_pin_attempts", {
+    p_employee_id: employeeId,
   });
   return requireCloudResult(result);
 }
@@ -68,7 +97,7 @@ export async function verifyStaffPinAccess(shopId: string, pin: string): Promise
   });
   const response = requireCloudResult(result) as { success?: boolean; locked?: boolean; employee?: StaffPinEmployee };
   if (!response.success || !response.employee) {
-    throw new Error(response.locked ? "تم قفل محاولات PIN مؤقتاً؛ أعد المحاولة بعد 15 دقيقة." : "رمز PIN غير صحيح أو لا يوجد سجل موظف نشط مرتبط بهذا الحساب.");
+    throw new Error(response.locked ? "تم قفل محاولات PIN مؤقتاً؛ أعد المحاولة بعد 15 دقيقة." : "رمز PIN غير صحيح أو غير فريد أو لا يوجد موظف نشط مرتبط به.");
   }
   return response.employee;
 }
