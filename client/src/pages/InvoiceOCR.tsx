@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { AlertTriangle, ArrowLeft, Camera, ChevronDown, ChevronUp, History, KeyRound, Loader2, Plus, Save, Trash2, TrendingDown, TrendingUp, Upload } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { getActiveShopContext } from "@/lib/supabase/products";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import { createInvoiceCategory, createInvoiceSupplier, deleteInvoiceCategory, deleteInvoiceSupplier, deleteSupplierInvoice, fetchSupplierInvoiceArchiveImage, getSupplierPriceInsights, listInvoiceCategories, listInvoiceSuppliers, listSupplierInvoices, listSupplierPriceHistory, listUnlinkedSupplierInvoiceImages, deleteUnlinkedSupplierInvoiceImage, deleteAllUnlinkedSupplierInvoiceImages, saveSupplierInvoice, saveSupplierInvoiceToTelegram, subscribeToSupplierInvoiceRealtime, uploadSupplierInvoiceImage, type InvoiceCategory, type InvoiceSupplier, type SupplierInvoice, type SupplierPriceComparison, type SupplierPriceInsight, type UnlinkedSupplierInvoiceImage } from "@/lib/supabase/supplierInvoices";
+import { buildArchivedItemGroups, findArchivedItemGroup, getPriceIncreaseAlert, getSavingsOpportunities, latestPricePerSupplier, normalizeSupplierItemName, supplierItemNameSimilarity } from "@/lib/supabase/supplierInvoiceAdvisor";
 import { fileToDataUrl, prepareSupplierInvoiceImage } from "@/lib/supabase/prepareSupplierInvoiceImage";
 
 interface ParsedItem { name: string; barcode: string; quantity: number; unitCost: number; salePrice: number | null; totalCost: number; confidence: number; }
@@ -159,6 +160,7 @@ export default function InvoiceOCR() {
   const [historyName, setHistoryName] = useState("");
   const [radarSearch, setRadarSearch] = useState("");
   const [radarSelectedItem, setRadarSelectedItem] = useState("");
+  const [advisorSelectedInvoiceId, setAdvisorSelectedInvoiceId] = useState("");
   const [ocrApiKey, setOcrApiKey] = useState(() => {
     if (typeof window !== "undefined") return window.localStorage.getItem("abu_raghwa_gemini_api_key") || import.meta.env.VITE_GEMINI_API_KEY || "";
     return "";
@@ -554,50 +556,52 @@ export default function InvoiceOCR() {
     if (insight.previousUnitCost == null || insight.previousUnitCost === 0) return null;
     return ((insight.priceDiff || 0) / insight.previousUnitCost) * 100;
   };
-  const savedItemNames = Array.from(new Set(savedInvoices.flatMap(invoice => invoice.items.map(item => item.item_name.trim()).filter(Boolean))))
-    .sort((a, b) => a.localeCompare(b, "ar"));
-  const normalizedRadarSearch = radarSearch.trim().toLocaleLowerCase();
-  const radarSelectableItems = savedItemNames.filter(name => !normalizedRadarSearch || name.toLocaleLowerCase().includes(normalizedRadarSearch));
-  const normalizedSelectedRadarItem = radarSelectedItem.trim().toLocaleLowerCase();
-  const radarHistoryRows = savedInvoices.flatMap(invoice => invoice.items
-    .filter(item => normalizedSelectedRadarItem && item.item_name.trim().toLocaleLowerCase() === normalizedSelectedRadarItem)
-    .map(item => ({
-      supplierKey: invoice.supplier_id || invoice.supplier_name.trim().toLocaleLowerCase(),
-      supplierName: invoice.supplier_name || "مورد غير معروف",
-      unitCost: Number(item.unit_cost),
-      invoiceDate: invoice.invoice_date,
-      createdAt: invoice.created_at || invoice.invoice_date,
-    })))
-    .filter(row => Number.isFinite(row.unitCost))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.invoiceDate.localeCompare(a.invoiceDate));
-  const latestSupplierPrices = new Map<string, typeof radarHistoryRows[number]>();
-  radarHistoryRows.forEach(row => { if (!latestSupplierPrices.has(row.supplierKey)) latestSupplierPrices.set(row.supplierKey, row); });
-  const supplierPriceRows = Array.from(latestSupplierPrices.values());
+  const savedSmartItemGroups = useMemo(() => buildArchivedItemGroups(savedInvoices), [savedInvoices]);
+  const savedItemNames = savedSmartItemGroups.map(group => group.itemName);
+  const normalizedRadarSearch = normalizeSupplierItemName(radarSearch);
+  const radarSelectableItems = savedItemNames.filter(name => !normalizedRadarSearch || normalizeSupplierItemName(name).includes(normalizedRadarSearch) || supplierItemNameSimilarity(name, radarSearch) >= 0.75);
+  const selectedRadarGroup = findArchivedItemGroup(radarSelectedItem, savedSmartItemGroups);
+  const supplierPriceRows = selectedRadarGroup ? latestPricePerSupplier(selectedRadarGroup) : [];
   const cheapestSavedPrice = supplierPriceRows.length ? Math.min(...supplierPriceRows.map(row => row.unitCost)) : null;
-  const priceHistoryByItem = new Map<string, Array<{ itemName: string; unitCost: number; invoiceId: string; invoiceDate: string; createdAt: string; supplierName: string }>>();
-  savedInvoices.forEach(invoice => invoice.items.forEach(item => {
-    const itemName = item.item_name.trim();
-    const unitCost = Number(item.unit_cost);
-    if (!itemName || !Number.isFinite(unitCost)) return;
-    const key = itemName.toLocaleLowerCase();
-    const rows = priceHistoryByItem.get(key) || [];
-    rows.push({ itemName, unitCost, invoiceId: invoice.id, invoiceDate: invoice.invoice_date, createdAt: invoice.created_at || invoice.invoice_date, supplierName: invoice.supplier_name || "مورد غير معروف" });
-    priceHistoryByItem.set(key, rows);
-  }));
-  const priceIncreaseAlerts = Array.from(priceHistoryByItem.values()).flatMap(rows => {
-    const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.invoiceDate.localeCompare(a.invoiceDate));
-    const seenInvoices = new Set<string>();
-    const distinctInvoices = sorted.filter(row => {
-      if (seenInvoices.has(row.invoiceId)) return false;
-      seenInvoices.add(row.invoiceId);
-      return true;
+  const priceIncreaseAlerts = useMemo(() => savedSmartItemGroups.flatMap(group => {
+    const alert = getPriceIncreaseAlert(group);
+    return alert ? [alert] : [];
+  }).sort((a, b) => b.latest.createdAt.localeCompare(a.latest.createdAt)), [savedSmartItemGroups]);
+  const globalSavingsOpportunities = useMemo(() => getSavingsOpportunities(savedSmartItemGroups), [savedSmartItemGroups]);
+  const draftAdvisorItems = useMemo(() => parsedItems.filter(item => item.name.trim()).map(item => {
+    const group = findArchivedItemGroup(item.name, savedSmartItemGroups);
+    const latestHistory = group?.rows.find(row => row.unitCost > 0);
+    const prices = group ? latestPricePerSupplier(group) : [];
+    const normalizedSupplier = normalizeSupplierItemName(supplier);
+    const currentSupplierKey = supplierId ? `id:${supplierId}` : normalizedSupplier ? `name:${normalizedSupplier}` : "";
+    const alternative = prices.filter(row => {
+      const sameSupplier = Boolean(currentSupplierKey && row.supplierKey === currentSupplierKey) || Boolean(normalizedSupplier && normalizeSupplierItemName(row.supplierName) === normalizedSupplier);
+      return !sameSupplier && row.unitCost < item.unitCost;
+    }).sort((a, b) => a.unitCost - b.unitCost || b.createdAt.localeCompare(a.createdAt))[0];
+    const increase = latestHistory && item.unitCost > latestHistory.unitCost ? item.unitCost - latestHistory.unitCost : 0;
+    const quantity = Math.max(0, Number(item.quantity) || 0);
+    return { item, latestHistory, increase, alternative, saving: alternative ? (item.unitCost - alternative.unitCost) * quantity : 0 };
+  }), [parsedItems, savedSmartItemGroups, supplier, supplierId]);
+  const draftTotalSavings = draftAdvisorItems.reduce((sum, row) => sum + Math.max(0, row.saving), 0);
+  const savingsOpportunities = globalSavingsOpportunities;
+  const selectedAdvisorInvoice = savedInvoices.find(invoice => invoice.id === advisorSelectedInvoiceId) || null;
+  const selectedInvoiceComparison = useMemo(() => {
+    if (!selectedAdvisorInvoice) return [];
+    return selectedAdvisorInvoice.items.map(item => {
+      const group = findArchivedItemGroup(item.item_name, savedSmartItemGroups);
+      const currentCost = Number(item.unit_cost) || 0;
+      const currentSupplierName = selectedAdvisorInvoice.supplier_name || "مورد غير معروف";
+      const currentSupplierKey = selectedAdvisorInvoice.supplier_id ? `id:${selectedAdvisorInvoice.supplier_id}` : `name:${normalizeSupplierItemName(currentSupplierName)}`;
+      const currentSupplierNormalized = normalizeSupplierItemName(currentSupplierName);
+      const alternative = group ? latestPricePerSupplier(group).filter(row => {
+        const sameSupplier = row.supplierKey === currentSupplierKey || normalizeSupplierItemName(row.supplierName) === currentSupplierNormalized;
+        return !sameSupplier && row.unitCost < currentCost;
+      }).sort((a, b) => a.unitCost - b.unitCost || b.createdAt.localeCompare(a.createdAt))[0] : undefined;
+      const quantity = Math.max(0, Number(item.quantity) || 0);
+      return { itemName: item.item_name, currentCost, quantity, currentSupplierName, alternative, saving: alternative ? (currentCost - alternative.unitCost) * quantity : 0 };
     });
-    if (distinctInvoices.length < 2) return [];
-    const newest = distinctInvoices[0];
-    const previous = distinctInvoices[1];
-    const increase = newest.unitCost - previous.unitCost;
-    return increase > 0 ? [{ ...newest, previousCost: previous.unitCost, increase, percent: previous.unitCost > 0 ? increase / previous.unitCost * 100 : null }] : [];
-  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }, [selectedAdvisorInvoice, savedSmartItemGroups]);
+  const selectedInvoiceTotalSavings = selectedInvoiceComparison.reduce((sum, row) => sum + Math.max(0, row.saving), 0);
   const processing = isCompressing || isUploading || isProcessing;
 
   return <div className="min-h-screen bg-gray-50 p-4" dir="rtl">
@@ -671,6 +675,22 @@ export default function InvoiceOCR() {
                 <td className="p-2"><Button variant="ghost" size="icon" onClick={() => setParsedItems(rows => rows.filter((_, rowIndex) => rowIndex !== index))}><Trash2 className="h-4 w-4 text-red-600" /></Button></td>
               </tr>;
             })}</tbody></table></div>
+          {parsedItems.some(item => item.name.trim()) && <Card className="border-blue-200 shadow-md">
+            <CardHeader className="bg-blue-50/70"><CardTitle>تنبيهات المستشار الذكي للفاتورة</CardTitle><CardDescription>مقارنة فورية لكل بند مع الفواتير المحفوظة في Supabase؛ تتحدث تلقائياً عند قراءة البنود أو تعديلها.</CardDescription></CardHeader>
+            <CardContent className="space-y-3 pt-4">
+              {invoiceListError ? <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">تعذر فحص سجل الأسعار المحفوظ. {invoiceListError}</p>
+                : !invoicesLoaded ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل الأرشيف لفحص الفاتورة كاملة...</p>
+                  : <>
+                    {draftAdvisorItems.map(({ item, latestHistory, increase, alternative, saving }, index) => <div key={`${item.name}-${index}`} className="rounded-xl border bg-white p-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2"><strong>{item.name}</strong><span className="text-sm text-gray-600">السعر الحالي: {item.unitCost.toFixed(2)} ج.م · الكمية: {item.quantity}</span></div>
+                      {increase > 0 && latestHistory && <p className="mt-2 rounded-lg border border-red-200 bg-red-50 p-2 text-sm font-semibold text-red-800"><TrendingUp className="ml-1 inline h-4 w-4" />زيادة عن آخر فاتورة محفوظة: السابق {latestHistory.unitCost.toFixed(2)} ج.م، الجديد {item.unitCost.toFixed(2)} ج.م، مقدار الزيادة +{increase.toFixed(2)} ج.م{latestHistory.supplierName ? ` (آخر مورد: ${latestHistory.supplierName})` : ""}.</p>}
+                      {alternative && <p className="mt-2 rounded-lg border border-green-200 bg-green-50 p-2 text-sm font-semibold text-green-800"><TrendingDown className="ml-1 inline h-4 w-4" />فرصة توفير: {alternative.supplierName} بسعر {alternative.unitCost.toFixed(2)} ج.م للوحدة؛ توفير {Math.max(0, item.unitCost - alternative.unitCost).toFixed(2)} ج.م للوحدة و{Math.max(0, saving).toFixed(2)} ج.م لهذه الكمية.</p>}
+                      {!increase && !alternative && <p className="mt-2 text-sm text-gray-500">{latestHistory ? "لا توجد زيادة أو فرصة بسعر أقل من المورد الحالي في السجل." : "لا يوجد سجل سابق مطابق لهذا الصنف حتى الآن."}</p>}
+                    </div>)}
+                    <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-green-300 bg-green-50 p-4"><strong className="text-green-900">إجمالي التوفير المحتمل من أرخص الموردين المسجلين</strong><strong className="text-lg text-green-800">{draftTotalSavings.toFixed(2)} ج.م</strong></div>
+                  </>}
+            </CardContent>
+          </Card>}
           <div className="grid gap-2 rounded-xl border bg-gray-50 p-3 sm:grid-cols-3 sm:items-end"><label className="text-sm font-bold">إجمالي الفاتورة يدوياً (اختياري)<Input type="number" min="0" step="0.01" value={manualTotal} onChange={event => setManualTotal(event.target.value)} placeholder={`افتراضي: ${calculatedTotal.toFixed(2)} ج.م`} /></label><p className="text-sm text-gray-600">إجمالي البنود: {calculatedTotal.toFixed(2)} ج.م</p><strong className="text-sm">الإجمالي المعتمد: {totalDraft.toFixed(2)} ج.م</strong></div>
           <div className="flex flex-wrap items-center justify-between gap-3"><Button variant="outline" onClick={() => setParsedItems(rows => [...rows, { name: "", barcode: "", quantity: 1, unitCost: 0, salePrice: null, totalCost: 0, confidence: 0 }])}><Plus className="ml-2 h-4 w-4" />إضافة سطر عند الحاجة</Button><div className="flex gap-2"><Button variant="outline" className="border-red-200 bg-red-50 text-red-700 hover:bg-red-100" onClick={resetDraft}>إلغاء الفاتورة / مسح المسودة</Button><Button onClick={() => void saveInvoice()} disabled={isSaving || processing || manualTotalInvalid || !categoryId || !supplierId || !invoiceDate || (!imageDataUrl && !uploadedImageUrl && !manualTotal.trim() && !parsedItems.some(item => item.name.trim()))} className="bg-green-600"><Save className="ml-2 h-4 w-4" />حفظ سحابياً</Button></div></div>
         </CardContent>
@@ -682,8 +702,39 @@ export default function InvoiceOCR() {
       })}</CardContent></Card>}
         </TabsContent>
         <TabsContent value="radar" className="mt-2 space-y-6">
+          <Card className="border-indigo-200 shadow-md">
+            <CardHeader className="bg-indigo-50/70"><CardTitle>تنبيهات الذكاء الاصطناعي وفرص التوفير</CardTitle><CardDescription>مطابقة ذكية للأسماء مع أرشيف Supabase؛ تعرض تلقائياً أصنافاً لها مورد آخر أرخص، ثم تتيح مقارنة فاتورة محفوظة بكامل بنودها.</CardDescription></CardHeader>
+            <CardContent className="space-y-4 pt-4">
+              {invoiceListError ? <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">تعذر تحميل فرص التوفير. {invoiceListError}</p>
+                : !invoicesLoaded ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحليل فواتير Supabase المحفوظة...</p>
+                  : !savingsOpportunities.length ? <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">لا توجد حالياً أسعار أقل لدى مورد آخر مقارنة بأحدث مورد تم الشراء منه.</p>
+                    : <div className="grid gap-3 md:grid-cols-2">{savingsOpportunities.map(opportunity => <div key={opportunity.itemName} className="rounded-xl border border-green-200 bg-green-50 p-3">
+                      <strong>{opportunity.itemName}</strong>
+                      <div className="mt-2 grid gap-1 text-sm text-gray-700"><span>المورد الحالي: {opportunity.current.supplierName} · {opportunity.current.unitCost.toFixed(2)} ج.م</span><span className="font-semibold text-green-800">الأرخص: {opportunity.alternative.supplierName} · {opportunity.alternative.unitCost.toFixed(2)} ج.م</span><span className="font-bold text-green-800">توفير {opportunity.savingPerUnit.toFixed(2)} ج.م لكل وحدة · آخر شراء {opportunity.current.invoiceDate || "غير مؤرخ"}</span></div>
+                    </div>)}</div>}
+              <div className="space-y-3 rounded-xl border bg-white p-3">
+                <label className="block space-y-1 text-sm font-semibold">اختر فاتورة محفوظة لمقارنة كامل بنودها
+                  <select value={advisorSelectedInvoiceId} onChange={event => setAdvisorSelectedInvoiceId(event.target.value)} className="w-full rounded-md border bg-white px-3 py-2" disabled={!savedInvoices.length}>
+                    <option value="">اختر فاتورة من الأرشيف</option>
+                    {savedInvoices.map(invoice => <option key={invoice.id} value={invoice.id}>{invoice.supplier_name} · {invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</option>)}
+                  </select>
+                </label>
+                {selectedAdvisorInvoice && <>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><strong>مقارنة فاتورة {selectedAdvisorInvoice.supplier_name} · {selectedAdvisorInvoice.invoice_date}</strong><span className="rounded-full bg-green-100 px-3 py-1 text-sm font-bold text-green-900">التوفير المحتمل: {selectedInvoiceTotalSavings.toFixed(2)} ج.م</span></div>
+                  {!selectedInvoiceComparison.length ? <p className="text-sm text-gray-500">لا تحتوي هذه الفاتورة على بنود محفوظة قابلة للمقارنة.</p>
+                    : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[760px] text-sm">
+                      <thead className="bg-gray-100"><tr><th className="p-3 text-right">الصنف</th><th className="p-3 text-right">المورد الحالي والسعر</th><th className="p-3 text-right">أرخص مورد مسجل</th><th className="p-3 text-right">التوفير للكمية</th></tr></thead>
+                      <tbody>{selectedInvoiceComparison.map((row, index) => <tr key={`${row.itemName}-${index}`} className="border-t">
+                        <td className="p-3 font-semibold">{row.itemName} · {row.quantity}</td><td className="p-3">{row.currentSupplierName} · {row.currentCost.toFixed(2)} ج.م</td><td className="p-3">{row.alternative ? <span className="font-semibold text-green-800">{row.alternative.supplierName} · {row.alternative.unitCost.toFixed(2)} ج.م</span> : <span className="text-gray-500">لا يوجد مورد آخر أرخص</span>}</td><td className="p-3 font-bold">{row.alternative ? `${Math.max(0, row.saving).toFixed(2)} ج.م` : "—"}</td>
+                      </tr>)}</tbody>
+                    </table></div>}
+                </>}
+              </div>
+            </CardContent>
+          </Card>
+
           <Card>
-            <CardHeader><CardTitle>مقارنة أسعار الصنف بين الموردين</CardTitle><CardDescription>تعرض أحدث سعر شراء مسجل لكل مورد وتاريخ آخر فاتورة للصنف من أرشيف Supabase.</CardDescription></CardHeader>
+            <CardHeader><CardTitle>مقارنة أسعار الصنف الفردي بين الموردين</CardTitle><CardDescription>تعرض أحدث سعر شراء مسجل لكل مورد وتاريخ آخر فاتورة للصنف من أرشيف Supabase مع مطابقة الأسماء المتشابهة.</CardDescription></CardHeader>
             <CardContent className="space-y-4">
               {invoiceListError ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">تعذر تحميل الأسعار المحفوظة. {invoiceListError}<Button size="sm" variant="outline" className="mr-3" onClick={() => void refreshInvoices()}>إعادة التحميل</Button></div>
                 : !invoicesLoaded ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل بيانات الأسعار من Supabase...</p>
@@ -723,8 +774,8 @@ export default function InvoiceOCR() {
                   : !priceIncreaseAlerts.length ? <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">لا توجد زيادات سعرية بين أحدث فاتورة والفاتورة السابقة للأصناف المحفوظة.</p>
                     : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-sm">
                       <thead className="bg-gray-100"><tr><th className="p-3 text-right">الصنف</th><th className="p-3 text-right">السعر السابق</th><th className="p-3 text-right">السعر الجديد</th><th className="p-3 text-right">قيمة الزيادة</th><th className="p-3 text-right">نسبة الزيادة</th><th className="p-3 text-right">المورد</th><th className="p-3 text-right">تاريخ الفاتورة</th></tr></thead>
-                      <tbody>{priceIncreaseAlerts.map(alert => <tr key={`${alert.itemName}-${alert.invoiceId}`} className="border-t bg-red-50/70">
-                        <td className="p-3 font-bold">{alert.itemName}</td><td className="p-3">{alert.previousCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">{alert.unitCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">+{alert.increase.toFixed(2)} ج.م</td><td className="p-3">{alert.percent == null ? "غير متاحة (السابق صفر)" : `${alert.percent.toFixed(1)}%`}</td><td className="p-3">{alert.supplierName}</td><td className="p-3">{alert.invoiceDate || "غير مسجل"}</td>
+                      <tbody>{priceIncreaseAlerts.map(alert => <tr key={`${alert.itemName}-${alert.latest.invoiceId}`} className="border-t bg-red-50/70">
+                        <td className="p-3 font-bold">{alert.itemName}</td><td className="p-3">{alert.previous.unitCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">{alert.latest.unitCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">+{alert.increase.toFixed(2)} ج.م</td><td className="p-3">{alert.percent == null ? "غير متاحة (السابق صفر)" : `${alert.percent.toFixed(1)}%`}</td><td className="p-3">{alert.latest.supplierName}</td><td className="p-3">{alert.latest.invoiceDate || "غير مسجل"}</td>
                       </tr>)}</tbody>
                     </table></div>}
             </CardContent>
