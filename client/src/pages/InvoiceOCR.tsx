@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
 import { getActiveShopContext } from "@/lib/supabase/products";
 import { getSupabaseClient } from "@/lib/supabase/client";
@@ -156,6 +157,8 @@ export default function InvoiceOCR() {
   const [expandedInvoice, setExpandedInvoice] = useState<string | null>(null);
   const [history, setHistory] = useState<SupplierPriceComparison[]>([]);
   const [historyName, setHistoryName] = useState("");
+  const [radarSearch, setRadarSearch] = useState("");
+  const [radarSelectedItem, setRadarSelectedItem] = useState("");
   const [ocrApiKey, setOcrApiKey] = useState(() => {
     if (typeof window !== "undefined") return window.localStorage.getItem("abu_raghwa_gemini_api_key") || import.meta.env.VITE_GEMINI_API_KEY || "";
     return "";
@@ -170,7 +173,7 @@ export default function InvoiceOCR() {
   const refreshInvoices = async () => {
     try {
       setInvoiceListError("");
-      setSavedInvoices(await listSupplierInvoices());
+      setSavedInvoices(await listSupplierInvoices(1000));
       setInvoicesLoaded(true);
     } catch (error) {
       const message = error instanceof Error ? error.message : "تعذر تحميل أرشيف فواتير الموردين.";
@@ -551,6 +554,50 @@ export default function InvoiceOCR() {
     if (insight.previousUnitCost == null || insight.previousUnitCost === 0) return null;
     return ((insight.priceDiff || 0) / insight.previousUnitCost) * 100;
   };
+  const savedItemNames = Array.from(new Set(savedInvoices.flatMap(invoice => invoice.items.map(item => item.item_name.trim()).filter(Boolean))))
+    .sort((a, b) => a.localeCompare(b, "ar"));
+  const normalizedRadarSearch = radarSearch.trim().toLocaleLowerCase();
+  const radarSelectableItems = savedItemNames.filter(name => !normalizedRadarSearch || name.toLocaleLowerCase().includes(normalizedRadarSearch));
+  const normalizedSelectedRadarItem = radarSelectedItem.trim().toLocaleLowerCase();
+  const radarHistoryRows = savedInvoices.flatMap(invoice => invoice.items
+    .filter(item => normalizedSelectedRadarItem && item.item_name.trim().toLocaleLowerCase() === normalizedSelectedRadarItem)
+    .map(item => ({
+      supplierKey: invoice.supplier_id || invoice.supplier_name.trim().toLocaleLowerCase(),
+      supplierName: invoice.supplier_name || "مورد غير معروف",
+      unitCost: Number(item.unit_cost),
+      invoiceDate: invoice.invoice_date,
+      createdAt: invoice.created_at || invoice.invoice_date,
+    })))
+    .filter(row => Number.isFinite(row.unitCost))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.invoiceDate.localeCompare(a.invoiceDate));
+  const latestSupplierPrices = new Map<string, typeof radarHistoryRows[number]>();
+  radarHistoryRows.forEach(row => { if (!latestSupplierPrices.has(row.supplierKey)) latestSupplierPrices.set(row.supplierKey, row); });
+  const supplierPriceRows = Array.from(latestSupplierPrices.values());
+  const cheapestSavedPrice = supplierPriceRows.length ? Math.min(...supplierPriceRows.map(row => row.unitCost)) : null;
+  const priceHistoryByItem = new Map<string, Array<{ itemName: string; unitCost: number; invoiceId: string; invoiceDate: string; createdAt: string; supplierName: string }>>();
+  savedInvoices.forEach(invoice => invoice.items.forEach(item => {
+    const itemName = item.item_name.trim();
+    const unitCost = Number(item.unit_cost);
+    if (!itemName || !Number.isFinite(unitCost)) return;
+    const key = itemName.toLocaleLowerCase();
+    const rows = priceHistoryByItem.get(key) || [];
+    rows.push({ itemName, unitCost, invoiceId: invoice.id, invoiceDate: invoice.invoice_date, createdAt: invoice.created_at || invoice.invoice_date, supplierName: invoice.supplier_name || "مورد غير معروف" });
+    priceHistoryByItem.set(key, rows);
+  }));
+  const priceIncreaseAlerts = Array.from(priceHistoryByItem.values()).flatMap(rows => {
+    const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.invoiceDate.localeCompare(a.invoiceDate));
+    const seenInvoices = new Set<string>();
+    const distinctInvoices = sorted.filter(row => {
+      if (seenInvoices.has(row.invoiceId)) return false;
+      seenInvoices.add(row.invoiceId);
+      return true;
+    });
+    if (distinctInvoices.length < 2) return [];
+    const newest = distinctInvoices[0];
+    const previous = distinctInvoices[1];
+    const increase = newest.unitCost - previous.unitCost;
+    return increase > 0 ? [{ ...newest, previousCost: previous.unitCost, increase, percent: previous.unitCost > 0 ? increase / previous.unitCost * 100 : null }] : [];
+  }).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const processing = isCompressing || isUploading || isProcessing;
 
   return <div className="min-h-screen bg-gray-50 p-4" dir="rtl">
@@ -559,6 +606,13 @@ export default function InvoiceOCR() {
       <Button variant="outline" onClick={() => navigate("/dashboard")}><ArrowLeft className="ml-2 h-4 w-4" />العودة</Button>
     </header>
     <main className="mx-auto max-w-7xl space-y-6">
+      <Tabs defaultValue="add" dir="rtl" className="w-full">
+        <TabsList className="sticky top-0 z-40 grid h-auto w-full grid-cols-3 rounded-xl border bg-white/95 p-1 shadow-sm backdrop-blur">
+          <TabsTrigger value="add" className="min-h-11 whitespace-normal px-2 text-xs sm:text-sm"><Plus className="h-4 w-4" />إضافة فاتورة</TabsTrigger>
+          <TabsTrigger value="radar" className="min-h-11 whitespace-normal px-2 text-xs sm:text-sm"><TrendingUp className="h-4 w-4" />رادار الأسعار والمقارنة</TabsTrigger>
+          <TabsTrigger value="saved" className="min-h-11 whitespace-normal px-2 text-xs sm:text-sm"><History className="h-4 w-4" />سجل الفواتير المحفوظة</TabsTrigger>
+        </TabsList>
+        <TabsContent value="add" className="mt-2 space-y-6">
       {!invoiceImage && !manualEntry ? <Card>
         <CardHeader><CardTitle>إضافة فاتورة مورد</CardTitle><CardDescription>التقط صورة واضحة أو ارفعها من المعرض؛ ستُضغط الصورة وتُقرأ البنود تلقائياً ثم تحفظ في الأرشيف السحابي.</CardDescription></CardHeader>
         <CardContent>
@@ -626,7 +680,58 @@ export default function InvoiceOCR() {
         const insight = priceInsights[index] || emptyInsight; const trend = trendFor(insight); const percent = percentFor(insight);
         return <div key={`${item.name}-${index}`} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border p-3"><div><strong>{item.name || "صنف بدون اسم"}</strong><span className="mr-3 text-sm text-gray-600">شراء: {item.unitCost.toFixed(2)} ج.م · إجمالي: {item.totalCost.toFixed(2)} ج.م · بيع: {(item.salePrice ?? insight.sellingPrice)?.toFixed(2) || "غير مسجل"} ج.م</span>{trend === "up" && <span className="mr-2 text-sm font-bold text-red-600">⚠️ تنبيه: ارتفع {percent == null ? "من سعر سابق صفري" : `${percent.toFixed(1)}%`} مقارنة بآخر شراء</span>}{trend === "down" && <span className="mr-2 text-sm font-bold text-green-600"><TrendingDown className="ml-1 inline h-4 w-4" />انخفض السعر{percent == null ? "" : ` (${Math.abs(percent).toFixed(1)}%)`}</span>}{trend === "stable" && insight.previousUnitCost != null && <span className="mr-2 text-sm font-bold text-gray-500">السعر ثابت</span>}{insight.cheapestSupplierName && insight.savingVsCheapest != null && insight.savingVsCheapest > 0 && <span className="mr-2 text-sm font-bold text-amber-700">⚠️ الأرخص: {insight.cheapestSupplierName}</span>}</div><div className="flex gap-2"><Button size="sm" variant="outline" onClick={() => void showHistory(item)}><History className="ml-1 h-4 w-4" />تفاصيل المقارنة</Button><Button size="sm" variant="outline" onClick={() => navigate(`/products?search=${encodeURIComponent(item.name)}`)}>تحديث سعر البيع</Button><Button size="sm" variant="outline" onClick={() => navigate(`/smart-offers?item=${encodeURIComponent(item.name)}`)}>توليد عرض</Button></div></div>;
       })}</CardContent></Card>}
+        </TabsContent>
+        <TabsContent value="radar" className="mt-2 space-y-6">
+          <Card>
+            <CardHeader><CardTitle>مقارنة أسعار الصنف بين الموردين</CardTitle><CardDescription>تعرض أحدث سعر شراء مسجل لكل مورد وتاريخ آخر فاتورة للصنف من أرشيف Supabase.</CardDescription></CardHeader>
+            <CardContent className="space-y-4">
+              {invoiceListError ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">تعذر تحميل الأسعار المحفوظة. {invoiceListError}<Button size="sm" variant="outline" className="mr-3" onClick={() => void refreshInvoices()}>إعادة التحميل</Button></div>
+                : !invoicesLoaded ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل بيانات الأسعار من Supabase...</p>
+                  : !savedItemNames.length ? <p className="text-sm text-gray-500">لا توجد بنود محفوظة يمكن مقارنتها بعد.</p>
+                    : <>
+                      <div className="grid gap-3 md:grid-cols-2">
+                        <label className="space-y-1 text-sm font-semibold">بحث عن صنف محفوظ
+                          <Input value={radarSearch} onChange={event => { setRadarSearch(event.target.value); setRadarSelectedItem(""); }} placeholder="اكتب اسم الصنف لتصفية القائمة" />
+                        </label>
+                        <label className="space-y-1 text-sm font-semibold">اختيار الصنف
+                          <select value={radarSelectedItem} onChange={event => { setRadarSelectedItem(event.target.value); setRadarSearch(event.target.value); }} className="w-full rounded-md border bg-white px-3 py-2 text-sm" disabled={!radarSelectableItems.length}>
+                            <option value="">اختر صنفاً من الفواتير المحفوظة</option>
+                            {radarSelectableItems.map(name => <option key={name} value={name}>{name}</option>)}
+                          </select>
+                        </label>
+                      </div>
+                      {!radarSelectedItem ? <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">اختر الصنف لعرض أحدث سعر لدى كل مورد.</p>
+                        : !supplierPriceRows.length ? <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">لا توجد أسعار محفوظة لهذا الصنف.</p>
+                          : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[640px] text-sm">
+                            <thead className="bg-gray-100"><tr><th className="p-3 text-right">المورد</th><th className="p-3 text-right">سعر الشراء للوحدة</th><th className="p-3 text-right">تاريخ آخر فاتورة</th><th className="p-3 text-right">المقارنة</th></tr></thead>
+                            <tbody>{supplierPriceRows.map(row => {
+                              const isCheapest = cheapestSavedPrice != null && row.unitCost === cheapestSavedPrice;
+                              return <tr key={row.supplierKey} className={`border-t ${isCheapest ? "bg-green-50 text-green-900" : "bg-white"}`}>
+                                <td className="p-3 font-semibold">{row.supplierName}</td><td className="p-3 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-3">{row.invoiceDate || "غير مسجل"}</td><td className="p-3">{isCheapest ? <span className="rounded-full bg-green-200 px-3 py-1 text-xs font-bold text-green-900">الأرخص</span> : <span className="text-gray-500">—</span>}</td>
+                              </tr>;
+                            })}</tbody>
+                          </table></div>}
+                    </>}
+            </CardContent>
+          </Card>
 
+          <Card>
+            <CardHeader><CardTitle>رادار الزيادات التلقائي</CardTitle><CardDescription>يراجع أحدث فاتورة محفوظة لكل صنف ويقارنها بالفاتورة السابقة للصنف نفسه.</CardDescription></CardHeader>
+            <CardContent className="space-y-3">
+              {invoiceListError ? <p className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800">تعذر تحميل تنبيهات الأسعار. {invoiceListError}</p>
+                : !invoicesLoaded ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحليل سجل الأسعار...</p>
+                  : !priceIncreaseAlerts.length ? <p className="rounded-lg bg-gray-50 p-3 text-sm text-gray-600">لا توجد زيادات سعرية بين أحدث فاتورة والفاتورة السابقة للأصناف المحفوظة.</p>
+                    : <div className="overflow-x-auto rounded-lg border"><table className="w-full min-w-[900px] text-sm">
+                      <thead className="bg-gray-100"><tr><th className="p-3 text-right">الصنف</th><th className="p-3 text-right">السعر السابق</th><th className="p-3 text-right">السعر الجديد</th><th className="p-3 text-right">قيمة الزيادة</th><th className="p-3 text-right">نسبة الزيادة</th><th className="p-3 text-right">المورد</th><th className="p-3 text-right">تاريخ الفاتورة</th></tr></thead>
+                      <tbody>{priceIncreaseAlerts.map(alert => <tr key={`${alert.itemName}-${alert.invoiceId}`} className="border-t bg-red-50/70">
+                        <td className="p-3 font-bold">{alert.itemName}</td><td className="p-3">{alert.previousCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">{alert.unitCost.toFixed(2)} ج.م</td><td className="p-3 font-bold text-red-700">+{alert.increase.toFixed(2)} ج.م</td><td className="p-3">{alert.percent == null ? "غير متاحة (السابق صفر)" : `${alert.percent.toFixed(1)}%`}</td><td className="p-3">{alert.supplierName}</td><td className="p-3">{alert.invoiceDate || "غير مسجل"}</td>
+                      </tr>)}</tbody>
+                    </table></div>}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="saved" className="mt-2 space-y-6">
       <Card><CardHeader><CardTitle>الفواتير المحفوظة سحابياً{invoicesLoaded && !invoiceListError ? savedInvoices.length ? ` (${savedInvoices.length})` : unlinkedImagesLoading ? "" : unlinkedImages.length ? ` (${unlinkedImages.length} صور تحتاج ربطاً)` : " (لا توجد سجلات بعد)" : ""}</CardTitle><CardDescription>الأرشيف ومرفقات الفواتير تتم مزامنتها مع Supabase بين أجهزة المشرفين والمديرين.</CardDescription></CardHeader><CardContent className="space-y-3">
         {!invoicesLoaded && !invoiceListError ? <p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ تحميل الأرشيف السحابي...</p> : invoiceListError ? <div className="rounded-lg border border-red-200 bg-red-50 p-3 text-sm text-red-800"><p>تعذر تحميل الأرشيف؛ لم تُعرض القائمة كأنها فارغة. {invoiceListError}</p><Button size="sm" variant="outline" className="mt-2" onClick={() => void refreshInvoices()}>إعادة التحميل</Button></div> : savedInvoices.length === 0 ? <p className="text-sm text-gray-500">{unlinkedImagesLoading ? "جارٍ التحقق من صور الفواتير المرفوعة سابقاً..." : unlinkedImages.length ? `توجد ${unlinkedImages.length} صور قديمة في Storage بانتظار ربطها بسجلات فواتير؛ يمكن استعادتها من القسم أدناه.` : "لا توجد فواتير محفوظة بعد."}</p> : savedInvoices.map(invoice => <div key={invoice.id} className="rounded-xl border bg-white p-3">
           <div className="flex flex-wrap items-center justify-between gap-2"><div><strong>{invoice.supplier_name}</strong><span className="mr-3 text-sm text-gray-500">{invoice.invoice_date} · {Number(invoice.total_amount).toFixed(2)} ج.م</span></div><div className="flex gap-2"><Button size="sm" variant="outline" disabled={loadingInvoicePreview || (!invoice.image_url && !invoice.telegram_file_id)} onClick={() => void openInvoicePreview(invoice)}>{loadingInvoicePreview ? "جارٍ التحميل…" : invoice.image_url || invoice.telegram_file_id ? "عرض صورة الفاتورة" : "لا توجد صورة"}</Button><Button size="sm" variant="outline" onClick={() => setExpandedInvoice(expandedInvoice === invoice.id ? null : invoice.id)}>{expandedInvoice === invoice.id ? <ChevronUp className="ml-1 h-4 w-4" /> : <ChevronDown className="ml-1 h-4 w-4" />}البنود</Button><Button size="sm" variant="destructive" onClick={async () => { if (confirm("حذف سجل الفاتورة؟ ستبقى الصورة في Storage قابلة للاستعادة.")) { try { await deleteSupplierInvoice(invoice.id); await Promise.all([refreshInvoices(), refreshUnlinkedImages()]); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر حذف الفاتورة."); } } }}><Trash2 className="ml-1 h-4 w-4" />حذف</Button></div></div>
@@ -637,6 +742,8 @@ export default function InvoiceOCR() {
       {unlinkedImagesError && <Card><CardContent className="pt-5"><div className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-sm text-amber-900">تعذر تحميل صور Storage غير المرتبطة. {unlinkedImagesError}<Button size="sm" variant="outline" className="mr-3" onClick={() => void refreshUnlinkedImages()}>إعادة التحميل</Button></div></CardContent></Card>}
       {!unlinkedImagesError && unlinkedImagesLoading && <Card><CardContent className="pt-5"><p className="flex items-center gap-2 text-sm text-gray-500"><Loader2 className="h-4 w-4 animate-spin" />جارٍ التحقق من صور Storage غير المرتبطة...</p></CardContent></Card>}
       {unlinkedImages.length > 0 && <Card><CardHeader><div className="flex flex-wrap items-start justify-between gap-3"><div><CardTitle>صور قديمة غير مرتبطة بسجل فاتورة ({unlinkedImages.length})</CardTitle><CardDescription>هذه الصور موجودة سحابياً لكنها لم تُسجل كفواتير. أعد قراءتها، ثم أدخل اسم المورد وتاريخ الفاتورة الصحيحين واحفظها لربط الصورة بالأرشيف.</CardDescription></div><Button variant="destructive" size="sm" disabled={isDeletingAllUnlinked || Boolean(deletingImagePath)} onClick={() => void deleteAllUnlinkedImages()}>{isDeletingAllUnlinked ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}مسح جميع الصور المعلقة دفعة واحدة</Button></div></CardHeader><CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">{unlinkedImages.map(image => <div key={image.path} className="rounded-xl border bg-white p-3"><a href={image.imageUrl} target="_blank" rel="noopener noreferrer"><img src={image.imageUrl} alt="صورة فاتورة قديمة غير مرتبطة" className="h-44 w-full rounded-lg bg-gray-50 object-contain" /></a><p className="mt-2 truncate text-xs text-gray-500">{image.path.split("/").pop()}</p>{image.createdAt && <p className="text-xs text-gray-500">وقت الرفع: {new Date(image.createdAt).toLocaleString("ar-EG")}</p>}<div className="mt-3 grid gap-2"><Button variant="outline" disabled={processing || Boolean(adoptingImagePath) || Boolean(deletingImagePath) || isDeletingAllUnlinked} onClick={() => void adoptStoredImage(image)}>{adoptingImagePath === image.path ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />جارٍ الاستعادة والقراءة...</> : "إعادة القراءة وربطها بالأرشيف"}</Button><Button variant="ghost" className="text-red-700 hover:bg-red-50 hover:text-red-800" disabled={processing || Boolean(adoptingImagePath) || isDeletingAllUnlinked} onClick={() => void deleteUnlinkedImage(image)}>{deletingImagePath === image.path ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Trash2 className="ml-2 h-4 w-4" />}حذف الصورة نهائياً</Button></div></div>)}</CardContent></Card>}
+        </TabsContent>
+      </Tabs>
 
       {invoicePreviewUrl && <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 p-4" role="dialog" aria-modal="true" onClick={closeInvoicePreview}><Card className="max-h-[90vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>صورة فاتورة المورد</CardTitle></CardHeader><CardContent><img src={invoicePreviewUrl} alt="صورة فاتورة المورد المؤرشفة" className="max-h-[70vh] w-full rounded-lg object-contain" /><Button className="mt-4 w-full" onClick={closeInvoicePreview}>إغلاق</Button></CardContent></Card></div>}
       {history.length > 0 && <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setHistory([])}><Card className="max-h-[80vh] w-full max-w-3xl overflow-auto" onClick={event => event.stopPropagation()}><CardHeader><CardTitle>سجل ومقارنة أسعار: {historyName}</CardTitle></CardHeader><CardContent><table className="w-full text-sm"><thead><tr className="border-b"><th className="p-2 text-right">المورد</th><th className="p-2 text-right">سعر الشراء</th><th className="p-2 text-right">إجمالي البند</th><th className="p-2 text-right">سعر البيع</th><th className="p-2 text-right">التاريخ</th><th className="p-2">الحالة</th></tr></thead><tbody>{history.map(row => <tr key={`${row.invoiceId}-${row.supplierName}`} className="border-b"><td className="p-2">{row.supplierName}</td><td className="p-2 font-bold">{row.unitCost.toFixed(2)} ج.م</td><td className="p-2">{row.totalCost.toFixed(2)} ج.م</td><td className="p-2">{row.salePrice == null ? "غير مسجل" : `${row.salePrice.toFixed(2)} ج.م`}</td><td className="p-2">{row.invoiceDate}</td><td className="p-2">{row.isCheapest ? "⭐ أفضل صفقة" : "أغلى من الأرخص"}</td></tr>)}</tbody></table><Button className="mt-4 w-full" onClick={() => setHistory([])}>إغلاق</Button></CardContent></Card></div>}
