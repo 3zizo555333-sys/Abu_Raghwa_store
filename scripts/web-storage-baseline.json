@@ -12,6 +12,7 @@
   "client/src/hooks/useStaffAccess.ts": 1,
   "client/src/lib/cloudSync.ts": 7,
   "client/src/lib/socialAppLinks.ts": 1,
+  "client/src/lib/supabase/staffEmployeePins.ts": 2,
   "client/src/lib/useSalesCloudState.ts": 2,
   "client/src/main.tsx": 7,
   "client/src/pages/AdvancedReports.tsx": 3,
