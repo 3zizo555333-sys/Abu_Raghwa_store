@@ -1,5 +1,5 @@
 import { browserState } from "@/lib/browserState";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Building2, Check, ChevronLeft, CircleHelp, ClipboardList, Clock3, Heart, Home, Minus, Package, Percent, Phone, Plus, Search, ShoppingBag, Sparkles, Star, Ticket, Trash2, Truck, UserRound, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -14,6 +14,15 @@ import { listActiveStoreOffers, type CloudStoreOffer } from "@/lib/supabase/stor
 import { PromoCarousel } from "@/components/PromoCarousel";
 import { listActiveCatalogCoupons, validateCatalogCoupon, type CatalogCoupon, type CatalogCouponValidation } from "@/lib/supabase/catalogCoupons";
 import { readPersistentCloudCache, writePersistentCloudCache } from "@/lib/persistentCloudCache";
+
+const VirtualStore3D = lazy(() => import("@/components/virtual-store/VirtualStore3D"));
+
+function CatalogModeSwitch({ onVirtual }: { onVirtual: () => void }) {
+  return <div className="flex flex-wrap gap-2" role="group" aria-label="طريقة عرض الكتالوج">
+    <span className="inline-flex min-h-10 items-center rounded-xl bg-blue-600 px-3 text-xs font-black text-white">عرض القائمة (الكتالوج العادي)</span>
+    <button type="button" onClick={onVirtual} className="min-h-10 rounded-xl border border-orange-300 bg-orange-50 px-3 text-xs font-black text-orange-800 transition hover:bg-orange-100">تجول داخل المحل 3D</button>
+  </div>;
+}
 
 type SavedOrderReference = { id: string; phone: string; customerCode?: string };
 type LoyaltyRewardLevel = { points: number; giftName: string; confirmed?: boolean };
@@ -75,6 +84,7 @@ function CatalogProductCard({
 }
 
 export default function PublicCatalogPage() {
+  const [catalogView, setCatalogView] = useState<"list" | "virtual">("list");
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
   const [recipes, setRecipes] = useState<CatalogRecipe[]>([]);
@@ -404,6 +414,21 @@ export default function PublicCatalogPage() {
     }
   };
 
+  const addWeightToCart = (product: CatalogProduct, kilograms: number) => {
+    if (!Number.isFinite(kilograms) || kilograms <= 0) return toast.error("أدخل وزناً صحيحاً");
+    const price = getFulfillmentPrice(getCatalogPrice(product), fulfillmentMode, pricingConfig);
+    setCart(current => {
+      const found = current.find(item => item.productId === product.id && item.unit === "كجم");
+      if (found) return current.map(item => item === found ? { ...item, quantity: Number((item.quantity + kilograms).toFixed(6)), price } : item);
+      return [...current, { productId: product.id, name: product.name, unit: "كجم", price, quantity: Number(kilograms.toFixed(6)), loyaltyPoints: 0 }];
+    });
+    toast.success(`أضيف ${kilograms} كجم من ${product.name} إلى السلة`);
+  };
+
+  if (catalogView === "virtual") return <Suspense fallback={<main dir="rtl" className="grid min-h-screen place-items-center bg-slate-950 p-6 text-white"><div className="text-center"><Package className="mx-auto h-10 w-10 animate-pulse text-orange-400" /><p className="mt-3 font-black">جارٍ تجهيز المحل ثلاثي الأبعاد...</p></div></main>}>
+    <VirtualStore3D shopId={publicShopId} products={catalogProducts} cartCount={cartCount} onAddToCart={addToCart} onAddWeightToCart={addWeightToCart} onOpenCart={() => { setCatalogView("list"); setCartOpen(true); }} onBackToCatalog={() => setCatalogView("list")} />
+  </Suspense>;
+
   if (selectedSection) {
     const categoryFirst = selectedSection.type === "category";
     const activeCategory = categoryFirst ? selectedSection.name : categoryFilter;
@@ -426,6 +451,7 @@ export default function PublicCatalogPage() {
       <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/95 shadow-md backdrop-blur">
         <div className="mx-auto max-w-7xl px-3 py-3 sm:px-4">
           <div className="flex items-center gap-3"><button type="button" aria-label="العودة للرئيسية" onClick={clearCatalogBrowse} className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-800 hover:bg-orange-100 hover:text-orange-700"><ArrowRight className="h-5 w-5" /></button><div className="min-w-0 flex-1"><p className="text-[11px] font-black text-orange-600">تصفح الكتالوج</p><h1 className="truncate text-lg font-black text-slate-950">{title}</h1></div><span className="rounded-full bg-orange-50 px-3 py-1 text-xs font-black text-orange-700">{dedicatedProducts.length} منتج</span></div>
+          <div className="mt-3 border-t border-slate-100 pt-3"><CatalogModeSwitch onVirtual={() => setCatalogView("virtual")} /></div>
           {categoryFirst ? <>
             <div className="mt-3 flex gap-3 overflow-x-auto border-t border-slate-100 pt-3">{categoryCards.map(card => <button type="button" key={card.name} onClick={() => browseCategory(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCategory === card.name ? "text-orange-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCategory === card.name ? "ring-4 ring-orange-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Package className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>
             <div aria-label="شريط الشركات التابعة للفئة" className="mt-2 flex gap-3 overflow-x-auto border-t border-slate-100 pt-2"><button type="button" onClick={() => { setCompanyFilter("الكل"); setSelectedSection({ type: "category", name: activeCategory }); window.scrollTo({ top: 0, behavior: "instant" }); }} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === "الكل" ? "text-slate-950" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center rounded-full bg-slate-950 text-xs text-white ${activeCompany === "الكل" ? "ring-4 ring-orange-300" : ""}`}>الكل</span><span>كل الشركات</span></button>{dedicatedCompanyCards.map(card => <button type="button" key={card.name} onClick={() => setDedicatedCompany(card.name)} className={`flex w-16 shrink-0 flex-col items-center gap-1 text-center text-[10px] font-black ${activeCompany === card.name ? "text-orange-700" : "text-slate-600"}`}><span className={`grid h-12 w-12 place-items-center overflow-hidden rounded-full bg-white ${activeCompany === card.name ? "ring-4 ring-orange-400" : "ring-1 ring-slate-200"}`}>{card.image ? <img src={card.image} alt="" className="h-full w-full object-contain" /> : <Building2 className="h-5 w-5 text-slate-400" />}</span><span className="w-full truncate">{card.name}</span></button>)}</div>
@@ -455,6 +481,7 @@ export default function PublicCatalogPage() {
             <h1 className="text-xl font-black text-slate-950">{directoryTitle}</h1>
             <span className="mr-auto rounded-full bg-orange-50 px-3 py-1 text-xs font-black text-orange-700">{directoryCards.length}</span>
           </div>
+          <div className="mx-auto mt-3 max-w-5xl border-t border-slate-100 pt-3"><CatalogModeSwitch onVirtual={() => setCatalogView("virtual")} /></div>
         </header>
         <section className="mx-auto max-w-5xl px-4 py-6">
           {directoryCards.length ? <div className="grid grid-cols-3 gap-3 sm:gap-5">{directoryCards.map(card => <button key={card.name} type="button" onClick={() => { if (isCategoryDirectory) browseCategory(card.name); else browseCompany(card.name); setShowAllCategories(false); setShowAllCompanies(false); }} className="group overflow-hidden rounded-2xl bg-white text-right shadow-sm ring-1 ring-slate-100 transition hover:-translate-y-1 hover:shadow-lg">
@@ -474,6 +501,7 @@ export default function PublicCatalogPage() {
           <div className="flex min-w-0 items-center gap-3"><span className="grid h-11 w-11 shrink-0 place-items-center rounded-2xl bg-gradient-to-br from-blue-600 to-cyan-400 text-white shadow-lg"><Sparkles className="h-5 w-5" /></span><div className="min-w-0"><h1 className="truncate text-lg font-black text-blue-950">أبو رغوة</h1><p className="truncate text-[10px] font-bold text-orange-600">{fulfillmentLabel}</p></div></div>
           <div className="flex max-w-full flex-wrap items-center justify-end gap-2"><Button variant="outline" onClick={openLoyalty} className="rounded-xl border-amber-200 text-amber-700 hover:bg-amber-50"><Star className="ml-1 h-4 w-4" />نقاطي</Button><Button variant="outline" onClick={openMyOrders} className="rounded-xl border-blue-200 text-blue-700 hover:bg-blue-50"><ClipboardList className="ml-1 h-4 w-4" />طلباتي{savedOrders.length > 0 && <span className="mr-1 rounded-full bg-blue-600 px-1.5 text-[10px] text-white">{savedOrders.length}</span>}</Button><Button onClick={() => setCartOpen(true)} className="relative rounded-xl bg-blue-600 px-4 hover:bg-blue-700"><ShoppingBag className="ml-1 h-4 w-4" />السلة{cartCount > 0 && <span className="absolute -left-2 -top-2 grid h-5 min-w-5 place-items-center rounded-full bg-orange-500 px-1 text-[10px] font-black text-white">{cartCount}</span>}</Button></div>
         </div>
+        <div className="mx-auto max-w-7xl px-4 pb-3"><CatalogModeSwitch onVirtual={() => setCatalogView("virtual")} /></div>
       </header>
       <section className="overflow-hidden bg-gradient-to-l from-blue-700 via-blue-600 to-cyan-500 px-4 py-10 text-white sm:py-14">
         <div className="mx-auto grid max-w-7xl gap-8 lg:grid-cols-[1.2fr_0.8fr] lg:items-center">

@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validateCatalogCouponServer } from "./supabaseLoyalty";
+import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
 import type { CatalogOrderInput } from "./db";
 
 let adminClient: SupabaseClient | null = null;
@@ -29,9 +30,9 @@ function parseItems(itemsJson: string) {
   return parsed.map(item => {
     const row = item && typeof item === "object" ? item as Record<string, unknown> : {};
     const price = Number(row.price);
-    const quantity = Number(row.quantity);
+    const quantity = normalizeCatalogOrderQuantity(row.quantity);
     const name = String(row.name || "").trim();
-    if (!name || !Number.isFinite(price) || price < 0 || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new Error("تحتوي العربة على بيانات منتج أو كمية غير صالحة.");
+    if (!name || !Number.isFinite(price) || price < 0) throw new Error("تحتوي العربة على بيانات منتج أو كمية غير صالحة.");
     return { productId: String(row.productId || ""), name, unit: String(row.unit || "وحدة"), price, quantity, loyaltyPoints: Math.max(0, Number(row.loyaltyPoints) || 0) };
   });
 }

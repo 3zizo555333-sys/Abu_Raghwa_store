@@ -10,6 +10,7 @@ import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
 import { createSupabaseCatalogOrder, getSupabaseCatalogOrdersForCustomer } from "./supabaseCatalogOrders";
+import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
 import * as loyaltyModule from "./supabaseLoyalty";
 import {
   applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile,
@@ -523,8 +524,8 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   if (!orderItems.length || orderItems.length > 100) throw new Error("يجب أن يحتوي الطلب على صنف واحد إلى 100 صنف.");
   const computedTotal = orderItems.reduce((sum, item) => {
     const price = Number(item.price);
-    const quantity = Number(item.quantity);
-    if (typeof item.name !== "string" || !item.name.trim() || !Number.isFinite(price) || price < 0 || !Number.isInteger(quantity) || quantity < 1 || quantity > 1000) throw new Error("تحتوي العربة على بيانات منتج أو كمية غير صالحة.");
+    const quantity = normalizeCatalogOrderQuantity(item.quantity);
+    if (typeof item.name !== "string" || !item.name.trim() || !Number.isFinite(price) || price < 0) throw new Error("تحتوي العربة على بيانات منتج أو كمية غير صالحة.");
     return sum + price * quantity;
   }, 0);
   let finalTotal = computedTotal;
