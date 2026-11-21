@@ -1,8 +1,9 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
 
-export type DrawStatus = "active" | "drawing" | "completed";
+export type DrawStatus = "active" | "drawing" | "spinning" | "completed";
 export type DrawEventType = "purchase" | "trivia";
+export type LiveDrawEntry = { ticket_number: string; phone_masked: string };
 export type PurchaseRaffle = {
   id: string; shop_id: string; title: string; description: string; banner_image_url: string | null;
   prize_name: string; prize_image_url: string | null; prize_description: string;
@@ -16,7 +17,7 @@ export type TriviaContest = {
 export type LiveDrawStage = {
   id: string; shop_id: string; event_type: DrawEventType; event_id: string; title: string; prize_title: string;
   ends_at: string; status: DrawStatus; winner_name: string | null; winner_phone_masked: string | null;
-  winner_code: string | null; updated_at: string;
+  winner_code: string | null; spin_started_at: string | null; entries: LiveDrawEntry[]; updated_at: string;
 };
 export type RaffleTicket = { id: string; raffle_id: string; customer_name: string; customer_phone: string; invoice_code: string; ticket_number: string; created_at: string };
 export type TriviaEntry = { id: string; contest_id: string; customer_name: string; customer_phone: string; selected_option: number; is_correct: boolean; entry_code: string; created_at: string };
@@ -138,6 +139,10 @@ export async function completeCommunityDraw(eventType: DrawEventType, eventId: s
   assertCloudOnline();
   const { role } = await getActiveShopContext(true); assertDrawManager(role);
   return requireCloudResult(await client().rpc("complete_community_draw", { p_event_type: eventType, p_event_id: eventId })) as LiveDrawStage;
+}
+export async function finishCommunityDraw(eventType: DrawEventType, eventId: string): Promise<LiveDrawStage> {
+  assertCloudOnline();
+  return requireCloudResult(await client().rpc("finish_community_draw", { p_event_type: eventType, p_event_id: eventId })) as LiveDrawStage;
 }
 export function subscribeCommunityDraws(onChange: () => void) {
   const channel = client().channel("community-draw-live-stage").on("postgres_changes", { event: "*", schema: "public", table: "community_draw_live_stage" }, onChange).subscribe();

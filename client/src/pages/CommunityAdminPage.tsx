@@ -786,18 +786,18 @@ export default function CommunityAdminPage() {
                 const rules = item.required_products_rules || item.rules || {};
                 const targetCount = Number(rules.target_participants ?? rules.minParticipants ?? 10);
                 const minimumPurchase = item.min_invoice_total ?? rules.min_invoice_total ?? rules.minAmount ?? 0;
-                const participantsCount = item.entries_count || 0;
+                const raffleTickets = (adminData?.tickets || []).filter((ticket: any) => ticket.raffle_id === item.id);
+                const participantsCount = raffleTickets.length;
                 const isCountMet = participantsCount >= targetCount;
-                const isDatePassed = new Date(item.ends_at).getTime() <= clock;
-                const canDraw = rules.drawConditionType === "count" ? isCountMet : isDatePassed;
+                const canDraw = participantsCount > 0 && item.status === "active";
 
                 return (
                   <div key={item.id} className="p-4 rounded-xl bg-slate-800/90 border border-slate-700 shadow-md flex flex-col justify-between space-y-3">
                     <div>
                       <div className="flex items-start justify-between gap-2">
                         <h3 className="font-bold text-white text-sm">{item.title}</h3>
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${canDraw ? "bg-emerald-950 text-emerald-300 border border-emerald-600" : "bg-amber-950 text-amber-300 border border-amber-600"}`}>
-                          {canDraw ? "جاهز للسحب" : "قيد جمع المشتركين"}
+                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-semibold ${item.status === "completed" ? "bg-violet-950 text-violet-200 border border-violet-600" : item.status === "spinning" ? "bg-cyan-950 text-cyan-200 border border-cyan-600" : canDraw ? "bg-emerald-950 text-emerald-300 border border-emerald-600" : "bg-amber-950 text-amber-300 border border-amber-600"}`}>
+                          {item.status === "completed" ? "أُعلن الفائز" : item.status === "spinning" ? "البث المباشر يدور" : canDraw ? (isCountMet ? "جاهز للسحب" : "يمكن السحب الآن") : "قيد جمع المشتركين"}
                         </span>
                       </div>
                       <p className="text-xs text-amber-400 font-bold mt-1">🎁 {item.prize_name}</p>
@@ -814,6 +814,13 @@ export default function CommunityAdminPage() {
                             style={{ width: `${Math.min(100, (participantsCount / targetCount) * 100)}%` }}
                           />
                         </div>
+                      </div>
+                      <div className="mt-3 max-h-36 space-y-1 overflow-y-auto rounded-lg border border-slate-700 bg-slate-950/70 p-2">
+                        {raffleTickets.length ? raffleTickets.map((ticket: any) => {
+                          const digits = String(ticket.customer_phone || "").replace(/\D/g, "");
+                          const maskedPhone = digits.length >= 7 ? `${digits.slice(0, 3)}****${digits.slice(-4)}` : "***";
+                          return <div key={ticket.id} className="flex items-center justify-between gap-2 text-[11px] text-slate-300"><span className="font-mono font-black text-amber-300" dir="ltr">{ticket.ticket_number}</span><span className="font-mono" dir="ltr">{maskedPhone}</span></div>;
+                        }) : <p className="py-1 text-center text-[11px] text-slate-500">لا توجد تذاكر مشاركة بعد.</p>}
                       </div>
                     </div>
 
@@ -844,7 +851,8 @@ export default function CommunityAdminPage() {
                       <Button
                         size="sm"
                         onClick={async () => {
-                          if (!canDraw && !confirm("تنبيه: لم يكتمل العدد المطلوب بعد لتغطية تكلفة الجائزة! هل أنت متأكد من إجراء السحب؟")) return;
+                          if (!canDraw) return;
+                          if (!confirm(`سيبدأ السحب المباشر الآن بين ${participantsCount} تذكرة، قبل موعد الانتهاء أو اكتمال التارجت. هل تريد المتابعة؟`)) return;
                           setBusy(`draw_${item.id}`);
                           try {
                             const res = await (communityModule as any).startCommunityDraw("purchase", item.id);
@@ -856,10 +864,10 @@ export default function CommunityAdminPage() {
                             setBusy("");
                           }
                         }}
-                        disabled={busy === `draw_${item.id}`}
+                        disabled={busy === `draw_${item.id}` || !canDraw}
                         className={`${canDraw ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-700 hover:bg-slate-600"} text-white font-bold text-xs w-full h-8`}
                       >
-                        <Play className="h-3 w-3 ml-1" /> سحب الفائز الآن
+                        <Play className="h-3 w-3 ml-1" /> {item.status === "spinning" ? "السحب مباشر الآن" : item.status === "completed" ? "تم إعلان الفائز" : "سحب الفائز الآن"}
                       </Button>
                     </div>
                   </div>
@@ -946,9 +954,7 @@ export default function CommunityAdminPage() {
         />
       </OfferProductStagerBoundary>}
 
-      {activeWinnerModal && (
-        <CommunityLiveWinner stage={activeWinnerModal} />
-      )}
+      {activeWinnerModal && <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 p-3 backdrop-blur-sm sm:p-6"><div className="mx-auto max-w-3xl"><div className="flex items-center justify-between gap-3 text-white"><div><p className="text-xs font-bold text-amber-300">بث مباشر متزامن للمدير والزبائن</p><h2 className="text-lg font-black">عجلة السحب التفاعلية</h2></div><Button type="button" variant="outline" onClick={() => setActiveWinnerModal(null)} className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white">إغلاق العرض</Button></div><CommunityLiveWinner stage={adminData?.stages?.find((stage: any) => stage.event_id === activeWinnerModal.event_id && stage.event_type === activeWinnerModal.event_type) || activeWinnerModal} onComplete={setActiveWinnerModal} /></div></div>}
     </main>
   );
 }
