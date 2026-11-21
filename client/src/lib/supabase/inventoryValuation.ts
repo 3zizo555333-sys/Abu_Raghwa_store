@@ -11,6 +11,7 @@ export type InventoryValuationItem = {
   section: InventorySectionKey;
   sectionName: string;
   category: string;
+  categoryAliases?: string[];
   quantity: number;
   unit: string;
   unitCost: number;
@@ -179,6 +180,46 @@ async function fetchAllApartmentItems(shopId: string) {
   }
 }
 
+async function fetchAllCatalogCategories(shopId: string): Promise<string[]> {
+  const client = getSupabaseClient();
+  const categories: string[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const result = await client.from("catalog_categories")
+      .select("id,name").eq("shop_id", shopId).is("deleted_at", null)
+      .order("name").range(offset, offset + PAGE_SIZE - 1);
+    const page = requireCloudResult(result);
+    categories.push(...page.map(category => category.name));
+    if (page.length < PAGE_SIZE) return categories;
+  }
+}
+
+async function fetchAllApartmentCategories(shopId: string): Promise<string[]> {
+  const client = getSupabaseClient();
+  const categories: string[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const result = await client.from("apartment_inventory_categories")
+      .select("id,name").eq("shop_id", shopId).order("name").range(offset, offset + PAGE_SIZE - 1);
+    const page = requireCloudResult(result);
+    categories.push(...page.map(category => category.name));
+    if (page.length < PAGE_SIZE) return categories;
+  }
+}
+
+type FormulationCategoryRow = { id: string; category: string; catalog_category: string };
+
+async function fetchAllFormulationCategories(shopId: string): Promise<FormulationCategoryRow[]> {
+  const client = getSupabaseClient();
+  const rows: FormulationCategoryRow[] = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const result = await client.from("recipes")
+      .select("id,category,catalog_category").eq("shop_id", shopId).is("deleted_at", null)
+      .order("id").range(offset, offset + PAGE_SIZE - 1);
+    const page = requireCloudResult(result) as FormulationCategoryRow[];
+    rows.push(...page);
+    if (page.length < PAGE_SIZE) return rows;
+  }
+}
+
 async function fetchAllProductionRuns(shopId: string) {
   const client = getSupabaseClient();
   const rows: Array<{ id: string; recipe_id: string | null; recipe_name: string; quantity: number; status: string; produced_at: string }> = [];
@@ -233,21 +274,59 @@ async function fetchAllFormulationReturns(shopId: string) {
 const normalizeName = (value: string) => value.normalize("NFKC").trim().replace(/\s+/g, " ").toLocaleLowerCase("ar");
 const positiveOrZero = (...values: Array<number | undefined>) => values.map(cleanNumber).find(value => value > 0) ?? 0;
 
+export const UNCLASSIFIED_INVENTORY_CATEGORY = "أصناف غير مصنفة";
+
+function normalizeInventoryCategory(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const category = value.normalize("NFKC").trim().replace(/\s+/g, " ");
+  if (!category || category === "بدون فئة") return null;
+  return category;
+}
+
+export function getInventoryItemCategories(item: Pick<InventoryValuationItem, "category" | "categoryAliases">): string[] {
+  return Array.from(new Set([item.category, ...(item.categoryAliases ?? [])]
+    .map(normalizeInventoryCategory).filter((category): category is string => Boolean(category))));
+}
+
+export function matchesInventoryCategory(item: Pick<InventoryValuationItem, "category" | "categoryAliases">, category: string): boolean {
+  return getInventoryItemCategories(item).includes(category);
+}
+
+export function collectInventoryCategories(registeredCategories: string[], items: InventoryValuationItem[]): string[] {
+  const categories = new Set<string>();
+  for (const value of registeredCategories) {
+    const category = normalizeInventoryCategory(value);
+    if (category) categories.add(category);
+  }
+  let hasUnclassifiedItems = false;
+  for (const item of items) {
+    const itemCategories = getInventoryItemCategories(item);
+    if (!itemCategories.length || itemCategories.includes(UNCLASSIFIED_INVENTORY_CATEGORY)) hasUnclassifiedItems = true;
+    itemCategories.forEach(category => categories.add(category));
+  }
+  if (hasUnclassifiedItems) categories.add(UNCLASSIFIED_INVENTORY_CATEGORY);
+  return Array.from(categories).sort((left, right) => left.localeCompare(right, "ar"));
+}
+
 export async function loadInventoryValuation(): Promise<InventoryValuationSnapshot> {
   const context = await getActiveShopContext();
   if (!( ["manager", "admin", "supervisor"] as string[]).includes(context.role)) {
     throw new Error("عرض التقييم المالي للمخزون متاح للإدارة والمشرفين فقط.");
   }
   const warnings: string[] = [];
-  const [productsResult, categoriesResult, materialsResult, apartmentResult, formulationsResult, productionResult, salesResult, returnsResult] = await Promise.allSettled([
-    fetchAllProducts(), listProductCategories(), fetchAllRawMaterials(context.shopId), fetchAllApartmentItems(context.shopId),
-    listCloudFormulations(), fetchAllProductionRuns(context.shopId), fetchAllFormulationSales(context.shopId), fetchAllFormulationReturns(context.shopId),
+  const [productsResult, categoriesResult, catalogCategoriesResult, apartmentCategoriesResult, materialsResult, apartmentResult, formulationsResult, formulationCategoriesResult, productionResult, salesResult, returnsResult] = await Promise.allSettled([
+    fetchAllProducts(), listProductCategories(), fetchAllCatalogCategories(context.shopId), fetchAllApartmentCategories(context.shopId),
+    fetchAllRawMaterials(context.shopId), fetchAllApartmentItems(context.shopId), listCloudFormulations(),
+    fetchAllFormulationCategories(context.shopId), fetchAllProductionRuns(context.shopId), fetchAllFormulationSales(context.shopId), fetchAllFormulationReturns(context.shopId),
   ]);
   const products = resolveInventorySource("منتجات المتجر", productsResult, [], warnings);
   const productCategories = resolveInventorySource("فئات المنتجات", categoriesResult, [], warnings);
+  const catalogCategories = resolveInventorySource("فئات الكتالوج", catalogCategoriesResult, [], warnings);
+  const apartmentCategories = resolveInventorySource("فئات مخزن الشقة", apartmentCategoriesResult, [], warnings);
   const materials = resolveInventorySource("الخامات", materialsResult, [], warnings);
   const apartmentItems = resolveInventorySource("مخزن الشقة", apartmentResult, [], warnings);
   const formulations = resolveInventorySource("التركيبات", formulationsResult, [], warnings);
+  const formulationCategories = resolveInventorySource("فئات التركيبات", formulationCategoriesResult, [], warnings);
   const productionRuns = resolveInventorySource("سجلات الإنتاج", productionResult, [], warnings);
   const salesAvailable = salesResult.status === "fulfilled";
   const formulationSales = resolveInventorySource("مبيعات التركيبات", salesResult, [], warnings);
@@ -285,15 +364,18 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
     producedByFormulation.set(formulationId, (producedByFormulation.get(formulationId) ?? 0) + cleanNumber(run.quantity));
   }
 
-  const categoryById = new Map(productCategories.map(category => [category.id, category.name]));
+  const categoryById = new Map(productCategories.map(category => [category.id, normalizeInventoryCategory(category.name)]));
+  const formulationCategoryById = new Map(formulationCategories.map(category => [category.id, category]));
   const items: InventoryValuationItem[] = [];
   for (const product of products) {
     const unitCost = product.saleMode === "weight"
       ? positiveOrZero(product.costPerPiece, product.wholesalePricePerPiece, product.costPerUnit, product.wholesalePricePerUnit)
       : positiveOrZero(product.costPerUnit, product.wholesalePricePerUnit, product.costPerPiece, product.wholesalePricePerPiece);
-    const category = (product.categoryId && categoryById.get(product.categoryId)) || product.category || "بدون فئة";
+    const category = normalizeInventoryCategory((product.categoryId && categoryById.get(product.categoryId)) || product.category) || UNCLASSIFIED_INVENTORY_CATEGORY;
+    const catalogCategory = normalizeInventoryCategory(product.catalogCategory);
     items.push(makeItem({
       id: `product:${product.id}`, name: product.name, section: "products", sectionName: "منتجات الكتالوج والجاهز", category,
+      categoryAliases: catalogCategory && catalogCategory !== category ? [catalogCategory] : [],
       quantity: product.quantity, unit: product.unit || "وحدة", unitCost, unitSalePrice: product.retailPrice,
     }));
   }
@@ -303,8 +385,12 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
     const quantity = formulationMovementsAvailable
       ? calculateFormulationOnHand(producedByFormulation.get(formulation.id) ?? 0, movement.sold, movement.returned)
       : 0;
+    const formulationCategory = formulationCategoryById.get(formulation.id);
+    const category = normalizeInventoryCategory(formulationCategory?.category) || UNCLASSIFIED_INVENTORY_CATEGORY;
+    const catalogCategory = normalizeInventoryCategory(formulationCategory?.catalog_category);
     items.push(makeItem({
-      id: `formulation:${formulation.id}`, name: formulation.name, section: "formulations", sectionName: "التركيبات ومنتجات رجوة المصنعة", category: "التركيبات",
+      id: `formulation:${formulation.id}`, name: formulation.name, section: "formulations", sectionName: "التركيبات ومنتجات رجوة المصنعة", category,
+      categoryAliases: catalogCategory && catalogCategory !== category ? [catalogCategory] : [],
       quantity, unit: formulation.productionUnit || "وحدة", unitCost: formulation.costPerUnit, unitSalePrice: formulation.salePrice,
       details: formulationMovementsAvailable
         ? "الرصيد مقدر من سجلات الإنتاج المكتملة ومبيعات/مرتجعات التركيبات السحابية."
@@ -317,7 +403,7 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
     const unitCost = valuation.equivalentUnits > 0 ? valuation.capital / valuation.equivalentUnits : cleanNumber(item.wholesale_price);
     const unitSalePrice = valuation.equivalentUnits > 0 ? valuation.expectedSales / valuation.equivalentUnits : cleanNumber(item.retail_price);
     items.push(makeItem({
-      id: `apartment:${item.id}`, name: item.name, section: "apartment", sectionName: "مخزن الشقة", category: item.category_name || "بدون فئة",
+      id: `apartment:${item.id}`, name: item.name, section: "apartment", sectionName: "مخزن الشقة", category: normalizeInventoryCategory(item.category_name) || UNCLASSIFIED_INVENTORY_CATEGORY,
       quantity: valuation.equivalentUnits, unit: item.unit || "وحدة", unitCost, unitSalePrice,
       details: `${cleanNumber(item.quantity)} ${item.unit || "وحدة"} + ${cleanNumber(item.extra_pieces)} قطعة إضافية${item.pieces_per_unit > 0 ? ` (كل وحدة ${cleanNumber(item.pieces_per_unit)} قطعة)` : ""}`,
     }));
@@ -326,7 +412,7 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
   for (const material of materials) {
     const valuation = calculateRawMaterialValuation({ quantity: material.quantity, totalWeight: material.total_weight, totalPrice: material.total_price, pricePerKilo: material.price_per_kilo });
     items.push(makeItem({
-      id: `material:${material.id}`, name: material.name, section: "materials", sectionName: "الخامات والكيماويات", category: "الخامات",
+      id: `material:${material.id}`, name: material.name, section: "materials", sectionName: "الخامات والكيماويات", category: UNCLASSIFIED_INVENTORY_CATEGORY,
       quantity: valuation.quantity, unit: material.unit || "وحدة", unitCost: valuation.unitCost, unitSalePrice: 0,
       details: material.supplier ? `المورد: ${material.supplier}` : "محتسبة حسب الكمية والوحدة المسجلتين.",
       capitalOnly: true,
@@ -334,16 +420,20 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
   }
 
   const sections = Object.fromEntries(INVENTORY_SECTIONS.map(section => [section.key, summarizeInventory(items.filter(item => item.section === section.key))])) as Record<InventorySectionKey, InventoryTotals>;
-  const categories = Array.from(new Set([...productCategories.map(category => category.name), ...items.map(item => item.category).filter(Boolean)]))
-    .filter(name => items.some(item => item.category === name))
-    .sort((left, right) => left.localeCompare(right, "ar"));
+  const registeredCategories = [
+    ...productCategories.map(category => category.name), ...catalogCategories, ...apartmentCategories,
+    ...products.flatMap(product => [product.category, product.catalogCategory]),
+    ...apartmentItems.map(item => item.category_name),
+    ...formulationCategories.flatMap(category => [category.category, category.catalog_category]),
+  ];
+  const categories = collectInventoryCategories(registeredCategories, items);
   return { shopId: context.shopId, calculatedAt: new Date().toISOString(), items, categories, sections, totals: summarizeInventory(items), sourceWarnings: warnings };
 }
 
 export function subscribeInventoryValuationChanges(shopId: string, onChange: () => void) {
   const client = getSupabaseClient();
   const tables: Array<[string, string]> = [
-    ["products", "shop_id"], ["product_categories", "shop_id"], ["raw_materials", "shop_id"],
+    ["products", "shop_id"], ["product_categories", "shop_id"], ["catalog_categories", "shop_id"], ["raw_materials", "shop_id"],
     ["recipes", "shop_id"], ["recipe_ingredients", "shop_id"], ["production_runs", "shop_id"],
     ["invoices", "shop_id"], ["invoice_return_items", "shop_id"],
     ["apartment_inventory_items", "shop_id"], ["apartment_inventory_categories", "shop_id"],

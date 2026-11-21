@@ -3,9 +3,12 @@ import {
   calculateApartmentValuation,
   calculateFormulationOnHand,
   calculateRawMaterialValuation,
+  collectInventoryCategories,
   createInventoryValuationItem,
+  matchesInventoryCategory,
   resolveInventorySource,
   summarizeInventory,
+  UNCLASSIFIED_INVENTORY_CATEGORY,
   type InventoryValuationItem,
 } from "./inventoryValuation";
 
@@ -46,5 +49,18 @@ describe("inventory valuation calculations", () => {
     expect(resolveInventorySource("المنتجات", goodSource, [], warnings)).toHaveLength(1);
     expect(resolveInventorySource("بنود الفواتير", failedSource, [], warnings)).toEqual([]);
     expect(warnings).toEqual(["تعذر تحميل بنود الفواتير: permission denied"]);
+  });
+
+  it("keeps registered empty categories and merges trimmed values and catalog aliases", () => {
+    const product = item({ category: " مساحيق ", categoryAliases: [" ورقيات  "] });
+    const categories = collectInventoryCategories(["فئة فارغة", "مساحيق"], [product]);
+    expect(categories).toEqual(["فئة فارغة", "مساحيق", "ورقيات"]);
+    expect(matchesInventoryCategory(product, "ورقيات")).toBe(true);
+  });
+
+  it("groups items without an assigned category under the unclassified category", () => {
+    const unclassified = item({ category: UNCLASSIFIED_INVENTORY_CATEGORY });
+    expect(collectInventoryCategories([], [unclassified])).toEqual([UNCLASSIFIED_INVENTORY_CATEGORY]);
+    expect(matchesInventoryCategory(unclassified, UNCLASSIFIED_INVENTORY_CATEGORY)).toBe(true);
   });
 });
