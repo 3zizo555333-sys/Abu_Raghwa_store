@@ -7,7 +7,9 @@ select ok(
     select 1 from pg_policies
     where schemaname = 'public' and tablename = 'catalog_categories'
       and policyname = 'catalog_categories_manager_insert'
-      and with_check ilike '%array[''manager'',''admin'']%'
+      and with_check ilike '%has_shop_role%'
+      and with_check ilike '%manager%'
+      and with_check ilike '%admin%'
       and with_check not ilike '%supervisor%'
   ),
   'category insert is limited to manager/admin'
@@ -17,8 +19,12 @@ select ok(
     select 1 from pg_policies
     where schemaname = 'public' and tablename = 'catalog_categories'
       and policyname = 'catalog_categories_manager_update'
-      and qual ilike '%array[''manager'',''admin'']%'
-      and with_check ilike '%array[''manager'',''admin'']%'
+      and qual ilike '%has_shop_role%'
+      and qual ilike '%manager%'
+      and qual ilike '%admin%'
+      and with_check ilike '%has_shop_role%'
+      and with_check ilike '%manager%'
+      and with_check ilike '%admin%'
       and qual not ilike '%supervisor%'
       and with_check not ilike '%supervisor%'
   ),
@@ -29,8 +35,12 @@ select ok(
     select 1 from pg_policies
     where schemaname = 'public' and tablename = 'catalog_companies'
       and policyname = 'catalog_companies_manager_update'
-      and qual ilike '%array[''manager'',''admin'']%'
-      and with_check ilike '%array[''manager'',''admin'']%'
+      and qual ilike '%has_shop_role%'
+      and qual ilike '%manager%'
+      and qual ilike '%admin%'
+      and with_check ilike '%has_shop_role%'
+      and with_check ilike '%manager%'
+      and with_check ilike '%admin%'
       and qual not ilike '%supervisor%'
       and with_check not ilike '%supervisor%'
   ),
@@ -41,7 +51,9 @@ select ok(
     select 1 from pg_policies
     where schemaname = 'public' and tablename = 'catalog_manual_products'
       and policyname = 'catalog_manual_products_manager_insert'
-      and with_check ilike '%array[''manager'',''admin'']%'
+      and with_check ilike '%has_shop_role%'
+      and with_check ilike '%manager%'
+      and with_check ilike '%admin%'
       and with_check not ilike '%supervisor%'
   ),
   'manual product insert is limited to manager/admin'
@@ -57,10 +69,17 @@ select ok(
   'catalog tables have no anonymous write policy'
 );
 select ok(
-  has_table_privilege('anon', 'public.catalog_manual_products', 'SELECT')
+  has_column_privilege('anon', 'public.catalog_manual_products', 'id', 'SELECT')
+  and has_column_privilege('anon', 'public.catalog_manual_products', 'shop_id', 'SELECT')
   and has_column_privilege('anon', 'public.catalog_manual_products', 'category_id', 'SELECT')
-  and has_column_privilege('anon', 'public.catalog_manual_products', 'company_id', 'SELECT'),
-  'public manual product projection can resolve taxonomy identifiers'
+  and has_column_privilege('anon', 'public.catalog_manual_products', 'company_id', 'SELECT')
+  and exists (
+    select 1 from pg_policies
+    where schemaname = 'public' and tablename = 'catalog_manual_products'
+      and policyname = 'catalog_manual_products_public_read'
+      and roles && array['anon']::name[] and cmd = 'SELECT'
+  ),
+  'public manual product projection exposes only granted taxonomy columns behind its public read policy'
 );
 
 select * from finish();
