@@ -1,6 +1,7 @@
 import { assertCloudOnline, getSupabaseClient, requireCloudResult } from "./client";
 import { getActiveShopContext } from "./products";
 import type { Database } from "./database.types";
+import { normalizeCatalogCouponPhone } from "../../../../shared/catalogCouponRules";
 
 export type CatalogCoupon = Database["public"]["Tables"]["catalog_coupons"]["Row"];
 export type CatalogCouponInput = Omit<Database["public"]["Tables"]["catalog_coupons"]["Insert"], "shop_id" | "id" | "created_at" | "updated_at"> & { id?: string };
@@ -28,10 +29,15 @@ export async function listActiveCatalogCoupons(shopId: string): Promise<CatalogC
   return requireCloudResult(result) as CatalogCoupon[];
 }
 
-export async function validateCatalogCoupon(code: string, orderAmount: number, shopId?: string): Promise<CatalogCouponValidation> {
+export async function validateCatalogCoupon(code: string, orderAmount: number, shopId?: string, customerPhone?: string): Promise<CatalogCouponValidation> {
   assertCloudOnline();
   const id = shopId || (await getActiveShopContext(true)).shopId;
-  const result = await getSupabaseClient().rpc("validate_catalog_coupon", { p_shop_id: id, p_code: code.trim(), p_order_amount: orderAmount });
+  const result = await getSupabaseClient().rpc("validate_catalog_coupon_for_customer", {
+    p_shop_id: id,
+    p_code: code.trim(),
+    p_order_amount: orderAmount,
+    p_customer_phone: normalizeCatalogCouponPhone(customerPhone) || null,
+  });
   return (requireCloudResult(result) || { valid: false, error_code: "coupon_not_found" }) as CatalogCouponValidation;
 }
 

@@ -11,6 +11,7 @@ import { getOfferEndAt } from "../client/src/lib/offerExpiry";
 import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffers";
 import { createSupabaseCatalogOrder, getSupabaseCatalogOrdersForCustomer } from "./supabaseCatalogOrders";
 import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
+import { catalogCouponValidationError } from "../shared/catalogCouponRules";
 import * as loyaltyModule from "./supabaseLoyalty";
 import {
   applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile,
@@ -530,14 +531,33 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   }, 0);
   let finalTotal = computedTotal;
   if (order.couponCode?.trim()) {
-    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal, shopId: order.shopId });
-    if (!coupon.valid) throw new Error(coupon.error_code === "min_order_not_met" ? `الحد الأدنى للكوبون هو ${coupon.min_order_amount || 0} ج.م` : "الكوبون غير صالح أو منتهي.");
+    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal, shopId: order.shopId, customerPhone: order.customerPhone });
+    if (!coupon.valid) throw new Error(catalogCouponValidationError(coupon, computedTotal));
     finalTotal = Math.max(0, Number(coupon.final_amount ?? computedTotal));
   }
   if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
 
   const db = await getDb();
   if (!db) return createSupabaseCatalogOrder(order);
+  if (order.couponCode?.trim()) {
+    const supabaseOrder = await createSupabaseCatalogOrder(order);
+    let customerCode: string | null = null;
+    try {
+      await db.insert(catalogOrders).values({
+        id: supabaseOrder.id, customerName: order.customerName, customerPhone: order.customerPhone,
+        customerCode: null, address: order.address || null, note: order.note || null,
+        itemsJson: JSON.stringify(orderItems), totalAmount: finalTotal,
+        fulfillmentMethod: order.fulfillmentMethod || "pickup",
+        priceAdjustmentPercent: Number(order.priceAdjustmentPercent || 0),
+      }).onDuplicateKeyUpdate({ set: { id: supabaseOrder.id } });
+      const profile = await ensureSupabaseLoyaltyProfile({ name: order.customerName, phone: order.customerPhone, customerCode: order.customerCode });
+      customerCode = profile?.customer_code || null;
+      if (customerCode) await db.update(catalogOrders).set({ customerCode }).where(eq(catalogOrders.id, supabaseOrder.id));
+    } catch (error) {
+      console.warn("[Catalog] Coupon order saved in Supabase; local order mirror or loyalty setup needs retry", { orderId: supabaseOrder.id, reason: error instanceof Error ? error.message : "unknown error" });
+    }
+    return { ...supabaseOrder, customerCode };
+  }
   try {
     await db.insert(catalogOrders).values({
       id: order.id, customerName: order.customerName, customerPhone: order.customerPhone,

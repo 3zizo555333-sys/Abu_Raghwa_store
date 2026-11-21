@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { validateCatalogCouponServer } from "./supabaseLoyalty";
 import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
+import { catalogCouponValidationError } from "../shared/catalogCouponRules";
 import type { CatalogOrderInput } from "./db";
 
 let adminClient: SupabaseClient | null = null;
@@ -51,15 +52,43 @@ export async function createSupabaseCatalogOrder(order: CatalogOrderInput) {
   const client = getClient();
   const items = parseItems(order.itemsJson);
   const computedTotal = items.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const shopId = await resolveShopId(order, client);
   let finalTotal = computedTotal;
   if (order.couponCode?.trim()) {
-    const coupon = await validateCatalogCouponServer({ code: order.couponCode, orderAmount: computedTotal, shopId: order.shopId });
-    if (!coupon.valid) throw new Error(coupon.error_code === "min_order_not_met" ? `الحد الأدنى للكوبون هو ${coupon.min_order_amount || 0} ج.م` : "الكوبون غير صالح أو منتهي.");
+    const code = order.couponCode.trim().toUpperCase();
+    const coupon = await validateCatalogCouponServer({ code, orderAmount: computedTotal, shopId, customerPhone: order.customerPhone });
+    if (!coupon.valid) throw new Error(catalogCouponValidationError(coupon, computedTotal));
     finalTotal = Math.max(0, Number(coupon.final_amount ?? computedTotal));
+    if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
+    const id = stableUuid(order.id);
+    const { data, error } = await client.rpc("create_catalog_coupon_order", {
+      p_id: id,
+      p_shop_id: shopId,
+      p_customer_name: order.customerName.trim(),
+      p_customer_phone: order.customerPhone.trim(),
+      p_address: order.address?.trim() || null,
+      p_note: order.note?.trim() || null,
+      p_items: items,
+      p_total_amount: finalTotal,
+      p_coupon_code: code,
+    });
+    if (error) {
+      if (/COUPON_ALREADY_USED/i.test(error.message)) throw new Error(catalogCouponValidationError({ valid: false, error_code: "coupon_already_used" }));
+      if (/COUPON_MIN_ORDER_NOT_MET/i.test(error.message)) {
+        const minimum = Number(error.message.match(/COUPON_MIN_ORDER_NOT_MET[: ]+(\d+(?:\.\d+)?)/i)?.[1]) || 0;
+        throw new Error(catalogCouponValidationError({ valid: false, error_code: "min_order_not_met", min_order_amount: minimum }, computedTotal));
+      }
+      throw new Error(`تعذر حفظ طلب الكوبون في Supabase: ${error.message}`);
+    }
+    const response = data && typeof data === "object" ? data as Record<string, unknown> : {};
+    if (response.success !== true) {
+      const validation = response as { error_code?: string; min_order_amount?: number };
+      throw new Error(catalogCouponValidationError({ ...validation, valid: false }, computedTotal));
+    }
+    return { id: String(response.id || id), customerCode: null as string | null };
   }
   if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
   const id = stableUuid(order.id);
-  const shopId = await resolveShopId(order, client);
   const result = await client.from("catalog_orders").upsert({
     id,
     shop_id: shopId,
