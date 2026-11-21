@@ -10,6 +10,44 @@ import { trpc } from "@/lib/trpc";
 type Tab = "purchase" | "trivia";
 type Receipt = { id: string; code: string; correct?: boolean };
 type SavedCatalogCustomer = { name: string; phone: string; orderCode: string };
+type RequiredSocialTask = { id: string; label: string; url: string };
+
+function safeExternalUrl(value: unknown) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:" ? url.toString() : "";
+  } catch {
+    return "";
+  }
+}
+
+function requiredSocialTasks(contest: TriviaContest): RequiredSocialTask[] {
+  const rules = contest.rules && typeof contest.rules === "object" ? contest.rules : {};
+  const raw = rules.social_tasks && typeof rules.social_tasks === "object" ? rules.social_tasks as Record<string, unknown> : {};
+  const tasks: RequiredSocialTask[] = [];
+  const add = (id: string, label: string, url: string) => {
+    if (url) tasks.push({ id, label: `${tasks.length + 1}. ${label}`, url });
+  };
+
+  if (raw.requireFacebookShare === true) {
+    add("facebookPageUrl", "إعجاب ومتابعة صفحتنا على فيسبوك", safeExternalUrl(raw.facebookPageUrl));
+    add("facebookPostUrl", "مشاركة منشور المسابقة على فيسبوك", safeExternalUrl(raw.facebookPostUrl));
+  }
+  if (raw.requireWhatsappShare === true) {
+    const message = typeof raw.whatsappShareText === "string" && raw.whatsappShareText.trim()
+      ? raw.whatsappShareText.trim()
+      : "ادخل مسابقة متجر أبو رغوة واكسب جوائز فورية!";
+    add("whatsappShare", "مشاركة المسابقة على واتساب", `https://wa.me/?text=${encodeURIComponent(message)}`);
+  }
+  if (raw.requireInstagramFollow === true) {
+    add("instagramUrl", "متابعة حسابنا على إنستجرام", safeExternalUrl(raw.instagramUrl));
+  }
+  if (raw.requireTiktokFollow === true) {
+    add("tiktokUrl", "متابعة حسابنا على تيك توك", safeExternalUrl(raw.tiktokUrl));
+  }
+  return tasks;
+}
 
 function loadSavedCatalogCustomer(): SavedCatalogCustomer {
   if (typeof window === "undefined") return { name: "", phone: "", orderCode: "" };
@@ -66,6 +104,7 @@ export default function CommunityPage() {
   const [triviaForms, setTriviaForms] = useState<Record<string, { name: string; phone: string; option: number | null }>>({});
   const [busy, setBusy] = useState("");
   const [receipts, setReceipts] = useState<Record<string, Receipt>>({});
+  const [socialTaskCompletions, setSocialTaskCompletions] = useState<Record<string, Record<string, boolean>>>({});
 
   const refresh = useCallback(async () => {
     try {
@@ -99,6 +138,14 @@ export default function CommunityPage() {
     [id]: { ...(prev[id] || { name: "", phone: "", option: null }), [key]: value },
   }));
 
+  const completeSocialTask = (contestId: string, task: RequiredSocialTask) => {
+    window.open(task.url, "_blank", "noopener,noreferrer");
+    setSocialTaskCompletions(previous => ({
+      ...previous,
+      [contestId]: { ...(previous[contestId] || {}), [task.id]: true },
+    }));
+  };
+
   const joinPurchase = async (raffle: PurchaseRaffle) => {
     const form = purchaseForms[raffle.id] || { name: savedCatalogCustomer.name, phone: savedCatalogCustomer.phone, invoice: savedCatalogCustomer.orderCode };
     if (!form.name.trim() || !form.phone.trim() || !form.invoice.trim()) return toast.error("أكمل الاسم والهاتف وكود الفاتورة أو الطلب");
@@ -118,9 +165,12 @@ export default function CommunityPage() {
   const joinTrivia = async (contest: TriviaContest) => {
     const form = triviaForms[contest.id];
     if (!form?.name.trim() || !form.phone.trim() || form.option == null) return toast.error("أكمل الاسم والهاتف واختر إجابة");
+    const tasks = requiredSocialTasks(contest);
+    const completedTasks = socialTaskCompletions[contest.id] || {};
+    if (!tasks.every(task => completedTasks[task.id] === true)) return toast.error("أكمل جميع خطوات التواصل المطلوبة للتأهل للسحب أولاً.");
     setBusy(contest.id);
     try {
-      const result = await submitTriviaEntry({ contestId: contest.id, customerName: form.name, customerPhone: form.phone, selectedOption: form.option });
+      const result = await submitTriviaEntry({ contestId: contest.id, customerName: form.name, customerPhone: form.phone, selectedOption: form.option, socialTasksCompleted: completedTasks });
       setReceipts(prev => ({ ...prev, [contest.id]: { id: result.entry_id, code: result.entry_code, correct: result.is_correct } }));
       toast.success(`تم تسجيلك ${result.entry_code}${result.is_correct ? " — إجابة صحيحة، بالتوفيق في السحب" : ""}`);
       void refresh();
@@ -194,6 +244,9 @@ export default function CommunityPage() {
           const receipt = receipts[contest.id];
           const stage = eventCard("trivia", contest.id);
           const form = triviaForms[contest.id] || { name: "", phone: "", option: null };
+          const socialTasks = requiredSocialTasks(contest);
+          const completedTasks = socialTaskCompletions[contest.id] || {};
+          const allSocialTasksComplete = socialTasks.every(task => completedTasks[task.id] === true);
           return <article key={contest.id} className="overflow-hidden rounded-[1.7rem] border border-indigo-100 bg-white shadow-lg">
             <div className="flex flex-wrap items-center justify-between gap-4 bg-gradient-to-l from-indigo-700 via-violet-700 to-fuchsia-600 bg-cover bg-center p-6 text-white" style={contest.banner_image_url ? { backgroundImage: `linear-gradient(90deg, rgba(49,46,129,.84), rgba(124,58,237,.55)), url("${contest.banner_image_url}")` } : undefined}>
               <div><span className="rounded-full bg-white/15 px-3 py-1 text-xs font-black">مسابقة بلا شروط شراء</span><h2 className="mt-3 text-2xl font-black">{contest.title}</h2><p className="mt-1 text-sm text-white/90">الجائزة: {contest.prize_title}</p></div>
@@ -202,7 +255,27 @@ export default function CommunityPage() {
             </div>
             <div className="grid gap-5 p-5 md:grid-cols-2">
               <div><h3 className="text-lg font-black text-indigo-950">{contest.question}</h3>{contest.question_image_url && <div className="mt-3 overflow-hidden rounded-2xl border border-indigo-100 bg-slate-50 p-2"><img src={contest.question_image_url} alt="صورة توضيحية للسؤال" className="max-h-72 w-full object-contain" loading="lazy" /></div>}<div className="mt-3 space-y-2">{contest.options.map((option, index) => <button key={`${index}-${option}`} type="button" disabled={!!receipt} onClick={() => patchTrivia(contest.id, "option", index)} className={`w-full rounded-xl border p-3 text-right text-sm font-bold transition ${form.option === index ? "border-indigo-600 bg-indigo-50 text-indigo-900 ring-2 ring-indigo-200" : "border-slate-200 hover:bg-slate-50"}`}><span className="ml-2 inline-grid h-6 w-6 place-items-center rounded-full bg-indigo-100 text-xs text-indigo-800">{String.fromCharCode(65 + index)}</span>{option}</button>)}</div></div>
-              <div>{receipt ? <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-center"><CheckCircle2 className="mx-auto h-9 w-9 text-indigo-600" /><p className="mt-2 font-black text-indigo-950">تم تسجيل مشاركتك</p><p className="mt-2 font-mono text-2xl font-black text-indigo-700" dir="ltr">{receipt.code}</p><p className="mt-2 text-xs text-indigo-800">{receipt.correct ? "إجابة صحيحة — أصبحت مؤهلاً للسحب." : "تم حفظ إجابتك، لكن السحب يقتصر على الإجابات الصحيحة."}</p></div> : contest.status !== "active" ? <div className="rounded-2xl bg-slate-100 p-5 text-center text-sm font-bold text-slate-600">انتهى التسجيل في هذه المسابقة.</div> : <form onSubmit={event => { event.preventDefault(); void joinTrivia(contest); }} className="space-y-3"><p className="font-black">سجّل إجابتك — لا يلزم شراء</p><Input required maxLength={120} placeholder="اسمك" value={form.name} onChange={event => patchTrivia(contest.id, "name", event.target.value)} /><Input required inputMode="tel" maxLength={24} placeholder="رقم التليفون" value={form.phone} onChange={event => patchTrivia(contest.id, "phone", event.target.value)} /><Button type="submit" disabled={busy === contest.id || form.option == null} className="w-full bg-indigo-700 font-black hover:bg-indigo-800">{busy === contest.id ? "جارٍ التسجيل…" : "سجّل في المسابقة"}</Button></form>}</div>
+              <div>
+                {receipt ? <div className="rounded-2xl border border-indigo-200 bg-indigo-50 p-5 text-center"><CheckCircle2 className="mx-auto h-9 w-9 text-indigo-600" /><p className="mt-2 font-black text-indigo-950">تم تسجيل مشاركتك</p><p className="mt-2 font-mono text-2xl font-black text-indigo-700" dir="ltr">{receipt.code}</p><p className="mt-2 text-xs text-indigo-800">{receipt.correct ? "إجابة صحيحة — أصبحت مؤهلاً للسحب." : "تم حفظ إجابتك، لكن السحب يقتصر على الإجابات الصحيحة."}</p></div>
+                  : contest.status !== "active" ? <div className="rounded-2xl bg-slate-100 p-5 text-center text-sm font-bold text-slate-600">انتهى التسجيل في هذه المسابقة.</div>
+                    : <form onSubmit={event => { event.preventDefault(); void joinTrivia(contest); }} className="space-y-3">
+                      <p className="font-black">سجّل إجابتك — لا يلزم شراء</p>
+                      {socialTasks.length > 0 && <section className="space-y-2 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+                        <h4 className="font-black text-amber-950">خطوات إجبارية للتأهل للسحب</h4>
+                        <p className="text-xs leading-5 text-amber-800">افتح كل رابط لإتمام المهمة؛ لا يمكن إصدار تذكرة المشاركة قبل إكمالها.</p>
+                        {socialTasks.map(task => {
+                          const completed = completedTasks[task.id] === true;
+                          return <Button key={task.id} type="button" aria-pressed={completed} onClick={() => completeSocialTask(contest.id, task)} className={`w-full justify-between whitespace-normal text-right font-bold ${completed ? "bg-emerald-600 text-white hover:bg-emerald-700" : "bg-white text-slate-900 hover:bg-amber-100 border border-amber-200"}`}>
+                            <span>{task.label}</span><span className="shrink-0">{completed ? "✓ تم" : "فتح المهمة"}</span>
+                          </Button>;
+                        })}
+                      </section>}
+                      <Input required maxLength={120} placeholder="اسمك" value={form.name} onChange={event => patchTrivia(contest.id, "name", event.target.value)} />
+                      <Input required inputMode="tel" maxLength={24} placeholder="رقم التليفون" value={form.phone} onChange={event => patchTrivia(contest.id, "phone", event.target.value)} />
+                      <Button type="submit" disabled={busy === contest.id || form.option == null || !allSocialTasksComplete} className="w-full bg-indigo-700 font-black hover:bg-indigo-800">{busy === contest.id ? "جارٍ التسجيل…" : "سجّل في المسابقة"}</Button>
+                      {socialTasks.length > 0 && !allSocialTasksComplete && <p className="text-center text-xs font-bold text-amber-800">أكمل جميع الخطوات الإجبارية لتفعيل تسجيل الإجابة.</p>}
+                    </form>}
+              </div>
             </div>
             {stage && stage.status !== "active" && <div className="px-5 pb-5"><CommunityLiveWinner stage={stage} onComplete={finished => setStages(current => current.map(value => value.event_id === finished.event_id && value.event_type === finished.event_type ? finished : value))} /></div>}
           </article>;

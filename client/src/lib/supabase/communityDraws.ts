@@ -12,7 +12,8 @@ export type PurchaseRaffle = {
 };
 export type TriviaContest = {
   id: string; shop_id: string; title: string; question: string; question_image_url: string | null; options: string[];
-  prize_title: string; prize_image_url: string | null; banner_image_url: string | null; ends_at: string; status: DrawStatus; created_at: string; updated_at: string;
+  prize_title: string; prize_image_url: string | null; banner_image_url: string | null; rules?: Record<string, unknown>;
+  ends_at: string; status: DrawStatus; created_at: string; updated_at: string;
 };
 export type LiveDrawStage = {
   id: string; shop_id: string; event_type: DrawEventType; event_id: string; title: string; prize_title: string;
@@ -38,12 +39,25 @@ export async function listPublicCommunityEvents(): Promise<{ raffles: PurchaseRa
   };
 }
 
-export async function submitTriviaEntry(input: { contestId: string; customerName: string; customerPhone: string; selectedOption: number }): Promise<{ entry_id: string; entry_code: string; is_correct: boolean }> {
+export async function submitTriviaEntry(input: { contestId: string; customerName: string; customerPhone: string; selectedOption: number; socialTasksCompleted: Record<string, boolean> }): Promise<{ entry_id: string; entry_code: string; is_correct: boolean }> {
   assertCloudOnline();
-  const result = await client().rpc("submit_trivia_entry", { p_contest_id: input.contestId, p_customer_name: input.customerName.trim(), p_customer_phone: input.customerPhone, p_selected_option: input.selectedOption });
-  const row = (requireCloudResult(result) as any[])?.[0];
-  if (!row) throw new Error("لم يؤكد النظام تسجيل المشاركة؛ حاول مرة أخرى.");
-  return row;
+  try {
+    const result = await client().rpc("submit_trivia_entry", {
+      p_contest_id: input.contestId,
+      p_customer_name: input.customerName.trim(),
+      p_customer_phone: input.customerPhone,
+      p_selected_option: input.selectedOption,
+      p_social_tasks_completed: input.socialTasksCompleted,
+    });
+    const row = (requireCloudResult(result) as any[])?.[0];
+    if (!row) throw new Error("لم يؤكد النظام تسجيل المشاركة؛ حاول مرة أخرى.");
+    return row;
+  } catch (error) {
+    if (error instanceof Error && /SOCIAL_TASKS_REQUIRED/.test(error.message)) {
+      throw new Error("أكمل جميع خطوات التواصل المطلوبة للتأهل للسحب أولاً.");
+    }
+    throw error;
+  }
 }
 
 function assertDrawManager(role: string) {
@@ -54,19 +68,25 @@ export async function listManagedCommunityEvents() {
   const { shopId, role } = await getActiveShopContext(true);
   assertDrawManager(role);
   const db = client();
-  const [raffles, tickets, contests, entries, stages] = await Promise.all([
+  const [raffles, tickets, contests, stages] = await Promise.all([
     db.from("purchase_raffles").select("*").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(100),
     db.from("raffle_tickets").select("id,raffle_id,customer_name,customer_phone,invoice_code,ticket_number,created_at").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(1000),
     db.from("trivia_contests").select("*").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(100),
-    db.from("trivia_entries").select("id,contest_id,customer_name,customer_phone,selected_option,is_correct,entry_code,created_at").eq("shop_id", shopId).order("created_at", { ascending: false }).limit(1000),
     db.from("community_draw_live_stage").select("*").eq("shop_id", shopId).order("updated_at", { ascending: false }).limit(100),
   ]);
+  const contestRows = (requireCloudResult(contests) || []) as Array<TriviaContest & { correct_option_index: number }>;
+  const correctCounts = Object.fromEntries(await Promise.all(contestRows.map(async contest => {
+    const result = await db.from("trivia_entries").select("id", { count: "exact", head: true })
+      .eq("shop_id", shopId).eq("contest_id", contest.id).eq("is_correct", true);
+    if (result.error) throw new Error(result.error.message);
+    return [contest.id, result.count || 0] as const;
+  })));
   return {
     shopId,
     raffles: (requireCloudResult(raffles) || []) as PurchaseRaffle[],
     tickets: (requireCloudResult(tickets) || []) as RaffleTicket[],
-    contests: (requireCloudResult(contests) || []) as Array<TriviaContest & { correct_option_index: number }>,
-    entries: (requireCloudResult(entries) || []) as TriviaEntry[],
+    contests: contestRows,
+    correctCounts,
     stages: (requireCloudResult(stages) || []) as LiveDrawStage[],
   };
 }
@@ -117,7 +137,7 @@ export async function saveTriviaContest(input: Partial<TriviaContest> & { title:
   const question = String(input.question || "").trim();
   const prizeTitle = String(input.prize_title || "").trim();
   if (!title || !question || !prizeTitle) throw new Error("عنوان المسابقة والسؤال واسم الجائزة مطلوبة.");
-  const payload = { shop_id: shopId, title, question, question_image_url: input.question_image_url || null, options, correct_option_index: input.correct_option_index, prize_title: prizeTitle, prize_image_url: input.prize_image_url || null, banner_image_url: input.banner_image_url || null, ends_at: input.ends_at, status: input.status || "active" };
+  const payload = { shop_id: shopId, title, question, question_image_url: input.question_image_url || null, options, correct_option_index: input.correct_option_index, prize_title: prizeTitle, prize_image_url: input.prize_image_url || null, banner_image_url: input.banner_image_url || null, rules: input.rules || {}, ends_at: input.ends_at, status: input.status || "active" };
   const query = input.id ? client().from("trivia_contests").update(payload).eq("id", input.id).eq("shop_id", shopId) : client().from("trivia_contests").insert(payload);
   return requireCloudResult(await query.select("*").single()) as TriviaContest;
 }

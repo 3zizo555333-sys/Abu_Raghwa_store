@@ -105,6 +105,16 @@ function errorText(error: unknown) {
   return message.includes("duplicate") ? "هذا العنصر مسجل مسبقاً" : message;
 }
 
+function isValidSocialUrl(value: string) {
+  if (!value.trim()) return true;
+  try {
+    const url = new URL(value.trim());
+    return url.protocol === "https:" || url.protocol === "http:";
+  } catch {
+    return false;
+  }
+}
+
 function fileAsDataUrl(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -177,6 +187,20 @@ export default function CommunityAdminPage() {
       ...current,
       social_tasks: { ...current.social_tasks, [key]: value }
     }));
+  };
+
+  const updateSocialLink = (key: "facebookPageUrl" | "facebookPostUrl" | "instagramUrl" | "tiktokUrl", value: string) => {
+    setTrivia((current) => {
+      const requiredKey = key === "instagramUrl" ? "requireInstagramFollow" : key === "tiktokUrl" ? "requireTiktokFollow" : "requireFacebookShare";
+      return {
+        ...current,
+        social_tasks: {
+          ...current.social_tasks,
+          [key]: value,
+          ...(value.trim() ? { [requiredKey]: true } : {}),
+        },
+      };
+    });
   };
 
   const updateTriviaOption = (index: number, val: string) => {
@@ -257,9 +281,9 @@ export default function CommunityAdminPage() {
         facebookPostUrl: item.rules?.social_tasks?.facebookPostUrl || "",
         requireWhatsappShare: item.rules?.social_tasks?.requireWhatsappShare ?? true,
         whatsappShareText: item.rules?.social_tasks?.whatsappShareText || "ادخل مسابقة متجر رجوة واكسب جوائز فورية!",
-        requireInstagramFollow: item.rules?.social_tasks?.requireInstagramFollow ?? false,
+        requireInstagramFollow: item.rules?.social_tasks?.requireInstagramFollow ?? Boolean(item.rules?.social_tasks?.instagramUrl),
         instagramUrl: item.rules?.social_tasks?.instagramUrl || "",
-        requireTiktokFollow: item.rules?.social_tasks?.requireTiktokFollow ?? false,
+        requireTiktokFollow: item.rules?.social_tasks?.requireTiktokFollow ?? Boolean(item.rules?.social_tasks?.tiktokUrl),
         tiktokUrl: item.rules?.social_tasks?.tiktokUrl || ""
       }
     });
@@ -328,6 +352,9 @@ export default function CommunityAdminPage() {
     if (!String(trivia.question || "").trim()) return toast.error("أدخل سؤال المسابقة");
     if (!Array.isArray(trivia.options) || trivia.options.some((o) => !String(o || "").trim())) return toast.error("يرجى ملء جميع الخيارات الأربعة");
     if (!trivia.ends_at) return toast.error("حدد موعد انتهاء المسابقة");
+    if (![trivia.social_tasks.facebookPageUrl, trivia.social_tasks.facebookPostUrl, trivia.social_tasks.instagramUrl, trivia.social_tasks.tiktokUrl].every(isValidSocialUrl)) {
+      return toast.error("أدخل روابط تواصل صحيحة تبدأ بـ https:// أو http://");
+    }
 
     const payload = {
       ...(editingTrivia ? { id: editingTrivia.id } : {}),
@@ -364,6 +391,13 @@ export default function CommunityAdminPage() {
   };
 
   const currentPrizeImg = activeTab === "raffles" ? raffle.prize_image_url : trivia.prize_image_url;
+  const modalLiveStage = activeWinnerModal
+    ? adminData?.stages?.find((stage: any) =>
+      stage.event_id === activeWinnerModal.event_id
+      && stage.event_type === activeWinnerModal.event_type
+      && new Date(stage.updated_at).getTime() > new Date(activeWinnerModal.updated_at).getTime()
+    ) || activeWinnerModal
+    : null;
   return (
     <main dir="rtl" className="min-h-screen bg-slate-900 text-slate-100 pb-16">
       <header className="bg-slate-950 border-b border-indigo-900/50 px-4 py-4 shadow-lg sticky top-0 z-30">
@@ -681,15 +715,17 @@ export default function CommunityAdminPage() {
                       متابعة صفحة الفيسبوك والتفاعل مع المنشور
                     </label>
                     <Input
+                      type="url"
                       placeholder="رابط صفحة المتجر على فيسبوك"
                       value={trivia.social_tasks.facebookPageUrl}
-                      onChange={(e) => updateSocialTask("facebookPageUrl", e.target.value)}
+                      onChange={(e) => updateSocialLink("facebookPageUrl", e.target.value)}
                       className="bg-slate-950 border-slate-700 text-xs text-white"
                     />
                     <Input
+                      type="url"
                       placeholder="رابط بوست المسابقة (لايك وكومنت وشير)"
                       value={trivia.social_tasks.facebookPostUrl}
-                      onChange={(e) => updateSocialTask("facebookPostUrl", e.target.value)}
+                      onChange={(e) => updateSocialLink("facebookPostUrl", e.target.value)}
                       className="bg-slate-950 border-slate-700 text-xs text-white"
                     />
                   </div>
@@ -720,12 +756,13 @@ export default function CommunityAdminPage() {
                         onChange={(e) => updateSocialTask("requireInstagramFollow", e.target.checked)}
                         className="accent-pink-500"
                       />
-                      متابعة حساب الإنستجرام (اختياري)
+                      متابعة حساب الإنستجرام (يُفعّل الشرط تلقائياً عند إضافة الرابط)
                     </label>
                     <Input
+                      type="url"
                       placeholder="رابط حساب إنستجرام الخاص بالمتجر"
                       value={trivia.social_tasks.instagramUrl}
-                      onChange={(e) => updateSocialTask("instagramUrl", e.target.value)}
+                      onChange={(e) => updateSocialLink("instagramUrl", e.target.value)}
                       className="bg-slate-950 border-slate-700 text-xs text-white"
                     />
                   </div>
@@ -738,12 +775,13 @@ export default function CommunityAdminPage() {
                         onChange={(e) => updateSocialTask("requireTiktokFollow", e.target.checked)}
                         className="accent-cyan-500"
                       />
-                      متابعة حساب تيك توك (اختياري)
+                      متابعة حساب تيك توك (يُفعّل الشرط تلقائياً عند إضافة الرابط)
                     </label>
                     <Input
+                      type="url"
                       placeholder="رابط حساب تيك توك"
                       value={trivia.social_tasks.tiktokUrl}
-                      onChange={(e) => updateSocialTask("tiktokUrl", e.target.value)}
+                      onChange={(e) => updateSocialLink("tiktokUrl", e.target.value)}
                       className="bg-slate-950 border-slate-700 text-xs text-white"
                     />
                   </div>
@@ -890,7 +928,7 @@ export default function CommunityAdminPage() {
                         <img src={contest.question_image_url} alt="سؤال" className="w-full h-full object-cover" />
                       </div>
                     )}
-                    <p className="text-[11px] text-slate-400 mt-1">الإجابات الصحيحة: {contest.correct_count || 0}</p>
+                    <p className="text-[11px] text-slate-400 mt-1">الإجابات الصحيحة: {Number(adminData?.correctCounts?.[contest.id] || 0)}</p>
                   </div>
 
                   <div className="pt-2 border-t border-slate-700 flex flex-col gap-2">
@@ -917,24 +955,27 @@ export default function CommunityAdminPage() {
                       </div>
                     </div>
 
-                    <Button
-                      size="sm"
-                      onClick={async () => {
-                        setBusy(`draw_${contest.id}`);
-                        try {
-                          const res = await (communityModule as any).startCommunityDraw("trivia", contest.id);
-                          setActiveWinnerModal(res);
-                          toast.success("تم السحب من بين أصحاب الإجابات الصحيحة!");
+                      <Button
+                        size="sm"
+                        onClick={async () => {
+                          const correctCount = Number(adminData?.correctCounts?.[contest.id] || 0);
+                          if (contest.status !== "active" || correctCount < 1) return;
+                          if (!window.confirm(`سيبدأ السحب المباشر الآن بين ${correctCount} إجابة صحيحة مؤهلة، قبل موعد انتهاء المسابقة. هل تريد المتابعة؟`)) return;
+                          setBusy(`draw_${contest.id}`);
+                          try {
+                            const res = await startCommunityDraw("trivia", contest.id);
+                            setActiveWinnerModal(res);
+                            toast.success("تم السحب من بين أصحاب الإجابات الصحيحة!");
                         } catch (err: any) {
                           toast.error(errorText(err));
                         } finally {
                           setBusy("");
                         }
                       }}
-                      disabled={busy === `draw_${contest.id}`}
-                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs w-full h-8"
+                      disabled={busy === `draw_${contest.id}` || contest.status !== "active" || Number(adminData?.correctCounts?.[contest.id] || 0) < 1}
+                      className={`${contest.status === "active" && Number(adminData?.correctCounts?.[contest.id] || 0) > 0 ? "bg-emerald-600 hover:bg-emerald-500" : "bg-slate-700 hover:bg-slate-600"} text-white font-bold text-xs w-full h-8`}
                     >
-                      <Play className="h-3 w-3 ml-1" /> سحب فائز المسابقة
+                      <Play className="h-3 w-3 ml-1" /> {contest.status === "spinning" ? "السحب مباشر الآن" : contest.status === "completed" ? "تم إعلان الفائز" : Number(adminData?.correctCounts?.[contest.id] || 0) > 0 ? "سحب فائز المسابقة" : "بانتظار إجابة صحيحة"}
                     </Button>
                   </div>
                 </div>
@@ -954,7 +995,7 @@ export default function CommunityAdminPage() {
         />
       </OfferProductStagerBoundary>}
 
-      {activeWinnerModal && <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 p-3 backdrop-blur-sm sm:p-6"><div className="mx-auto max-w-3xl"><div className="flex items-center justify-between gap-3 text-white"><div><p className="text-xs font-bold text-amber-300">بث مباشر متزامن للمدير والزبائن</p><h2 className="text-lg font-black">عجلة السحب التفاعلية</h2></div><Button type="button" variant="outline" onClick={() => setActiveWinnerModal(null)} className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white">إغلاق العرض</Button></div><CommunityLiveWinner stage={adminData?.stages?.find((stage: any) => stage.event_id === activeWinnerModal.event_id && stage.event_type === activeWinnerModal.event_type) || activeWinnerModal} onComplete={setActiveWinnerModal} /></div></div>}
+      {activeWinnerModal && <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-950/95 p-3 backdrop-blur-sm sm:p-6"><div className="mx-auto max-w-3xl"><div className="flex items-center justify-between gap-3 text-white"><div><p className="text-xs font-bold text-amber-300">بث مباشر متزامن للمدير والزبائن</p><h2 className="text-lg font-black">عجلة السحب التفاعلية</h2></div><Button type="button" variant="outline" onClick={() => setActiveWinnerModal(null)} className="border-white/30 bg-white/10 text-white hover:bg-white/20 hover:text-white">إغلاق العرض</Button></div><CommunityLiveWinner stage={modalLiveStage || activeWinnerModal} onComplete={setActiveWinnerModal} /></div></div>}
     </main>
   );
 }
