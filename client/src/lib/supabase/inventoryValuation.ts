@@ -1,4 +1,4 @@
-import { getActiveShopContext, listProductCategories, listProductsPage } from "./products";
+import { getActiveShopContext, listProductsPage } from "./products";
 import type { CloudProduct, ProductCursor } from "./products";
 import { getSupabaseClient, requireCloudResult } from "./client";
 import { listCloudFormulations } from "./formulations";
@@ -180,6 +180,19 @@ async function fetchAllApartmentItems(shopId: string) {
   }
 }
 
+async function fetchAllProductCategories(shopId: string): Promise<Array<{ id: string; name: string }>> {
+  const client = getSupabaseClient();
+  const categories: Array<{ id: string; name: string }> = [];
+  for (let offset = 0; ; offset += PAGE_SIZE) {
+    const result = await client.from("product_categories")
+      .select("id,name").eq("shop_id", shopId).order("sort_order").order("name")
+      .range(offset, offset + PAGE_SIZE - 1);
+    const page = requireCloudResult(result);
+    categories.push(...page.map(category => ({ id: category.id, name: category.name })));
+    if (page.length < PAGE_SIZE) return categories;
+  }
+}
+
 async function fetchAllCatalogCategories(shopId: string): Promise<string[]> {
   const client = getSupabaseClient();
   const categories: string[] = [];
@@ -315,7 +328,7 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
   }
   const warnings: string[] = [];
   const [productsResult, categoriesResult, catalogCategoriesResult, apartmentCategoriesResult, materialsResult, apartmentResult, formulationsResult, formulationCategoriesResult, productionResult, salesResult, returnsResult] = await Promise.allSettled([
-    fetchAllProducts(), listProductCategories(), fetchAllCatalogCategories(context.shopId), fetchAllApartmentCategories(context.shopId),
+    fetchAllProducts(), fetchAllProductCategories(context.shopId), fetchAllCatalogCategories(context.shopId), fetchAllApartmentCategories(context.shopId),
     fetchAllRawMaterials(context.shopId), fetchAllApartmentItems(context.shopId), listCloudFormulations(),
     fetchAllFormulationCategories(context.shopId), fetchAllProductionRuns(context.shopId), fetchAllFormulationSales(context.shopId), fetchAllFormulationReturns(context.shopId),
   ]);
