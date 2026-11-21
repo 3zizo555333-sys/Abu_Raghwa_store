@@ -2,7 +2,7 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useLocation } from "wouter";
-import { ArrowLeft, TrendingUp, Package, DollarSign, ShoppingCart, Users, CheckSquare, Gift, Mic, Beaker, Calculator, Settings, Facebook, MessageCircle, Instagram, TrendingDown, CreditCard, Camera, Banknote, Bell, Trophy, Lock, AlertTriangle, WalletCards } from "lucide-react";
+import { ArrowLeft, TrendingUp, Package, DollarSign, ShoppingCart, Users, CheckSquare, Gift, Mic, Beaker, Calculator, Settings, Facebook, MessageCircle, Instagram, TrendingDown, CreditCard, Camera, Banknote, Bell, Trophy, Lock, AlertTriangle, WalletCards, BarChart3 } from "lucide-react";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { getSavedSocialLinks, openSocialApp } from "@/lib/socialAppLinks";
 import { trpc } from "@/lib/trpc";
@@ -212,6 +212,13 @@ export default function Dashboard() {
               >
                 🏠 إدارة الشقة
               </Button>
+              {canViewSensitiveFinancials && <Button
+                onClick={() => navigate("/inventory-valuation")}
+                className="bg-emerald-700 hover:bg-emerald-800 text-white flex items-center justify-center gap-2"
+              >
+                <BarChart3 className="w-4 h-4" />
+                الجرد الذكي والتقييم المالي
+              </Button>}
             </div>
           </CardContent>
         </Card>

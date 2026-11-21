@@ -156,7 +156,15 @@ export default function Home() {
       path: "/invoice-ocr",
       color: "bg-indigo-50",
       textColor: "text-indigo-600"
-    }
+    },
+    ...(canViewSensitiveFinancials ? [{
+      icon: BarChart3,
+      label: "الجرد الذكي والتقييم المالي",
+      description: "تقييم حي للمخزون ورأس المال والربحية",
+      path: "/inventory-valuation",
+      color: "bg-emerald-50",
+      textColor: "text-emerald-700"
+    }] : [])
   ];
 
   const toolsFeatures = [

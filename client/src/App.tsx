@@ -101,6 +101,7 @@ const Invoice = lazy(() => import("./pages/Invoice"));
 const Returns = lazy(() => import("./pages/Returns"));
 const AuditLog = lazy(() => import("./pages/AuditLog"));
 const InventoryAlerts = lazy(() => import("./pages/InventoryAlerts"));
+const InventoryValuation = lazy(() => import("./pages/InventoryValuation"));
 const RecipeProduction = lazy(() => import("./pages/RecipeProduction"));
 const DataExportImport = lazy(() => import("./pages/DataExportImport"));
 const RecipesDisplay = lazy(() => import("./pages/RecipesDisplay"));
@@ -222,6 +223,7 @@ function Router() {
       <Route path={"/audit-log"} component={withSupervisorRole(withPasswordProtection(AuditLog, 'screen__audit_log', 'سجل التدقيق'))} />
 
       <Route path={"/inventory-alerts"} component={withSupervisorRole(withPasswordProtection(InventoryAlerts, 'screen__inventory_alerts', 'تنبيهات المخزون'))} />
+      <Route path={"/inventory-valuation"} component={withSupervisorRole(withPasswordProtection(InventoryValuation, 'screen__inventory_valuation', 'الجرد الذكي والتقييم المالي للمخزون'))} />
       <Route path={"/recipe-production"} component={withSupervisorRole(withPasswordProtection(RecipeProduction, 'screen__recipe_production', 'إنتاج التركيبات'))} />
       <Route path={"/data-export-import"} component={withManagerRole(withPasswordProtection(DataExportImport, 'screen__data_export_import', 'النسخ الاحتياطي والاستيراد والتصدير'))} />
       <Route path={"/recipes-display"} component={withSupervisorRole(withPasswordProtection(RecipesDisplay, 'screen__recipes_display', 'عرض التركيبات'))} />
