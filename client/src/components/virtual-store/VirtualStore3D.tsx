@@ -95,7 +95,7 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     let unsubscribe: (() => Promise<unknown>) | undefined;
     void canManageVirtualStore(shopId).then(value => { if (active) setIsManager(value); });
     void loadVirtualStoreLayout(shopId).then(saved => { if (active && saved) setLayout(saved); }).catch(() => undefined);
-    const refreshStock = () => loadVirtualStoreStock(shopId).then(value => { if (active) { setStock(value); setStockError(false); } }).catch(() => { if (active) setStockError(true); });
+    const refreshStock = () => loadVirtualStoreStock(shopId).then(value => { if (active) { setStock(previous => Object.keys(previous).length === Object.keys(value).length && Object.entries(value).every(([id, quantity]) => previous[id] === quantity) ? previous : value); setStockError(false); } }).catch(() => { if (active) setStockError(true); });
     void refreshStock();
     void subscribeToShopChanges(shopId, () => { void refreshStock(); }).then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); }).catch(() => undefined);
     const interval = window.setInterval(refreshStock, 20_000);
@@ -182,17 +182,48 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     const shopRoot = new THREE.Group(); scene.add(shopRoot);
     const productObjects: THREE.Object3D[] = [];
     const layoutObjects: THREE.Object3D[] = [];
+    const productTextureCache = new Map<string, Promise<THREE.Texture>>();
+    const loadProductTexture = (url: string) => {
+      const existing = productTextureCache.get(url);
+      if (existing) return existing;
+      const texturePromise = new Promise<THREE.Texture>((resolve, reject) => {
+        const loader = new THREE.TextureLoader();
+        loader.setCrossOrigin("anonymous");
+        loader.load(url, texture => {
+          texture.colorSpace = THREE.SRGBColorSpace;
+          resolve(texture);
+        }, undefined, async () => {
+          try {
+            const response = await fetch(url, { mode: "cors", credentials: "omit", cache: "force-cache" });
+            if (!response.ok) throw new Error(`image request failed (${response.status})`);
+            const blobUrl = URL.createObjectURL(await response.blob());
+            const texture = await new Promise<THREE.Texture>((resolveBlob, rejectBlob) => {
+              new THREE.TextureLoader().load(blobUrl, resolveBlob, undefined, rejectBlob);
+            });
+            URL.revokeObjectURL(blobUrl);
+            texture.colorSpace = THREE.SRGBColorSpace;
+            resolve(texture);
+          } catch (error) {
+            reject(error);
+          }
+        });
+      });
+      productTextureCache.set(url, texturePromise);
+      return texturePromise;
+    };
     const makeProductCard = (node: VirtualStoreNode, product: CatalogProduct, x: number, y: number, z: number, cloneNo: number) => {
       const group = new THREE.Group(); group.position.set(x, y, z); group.rotation.y = node.rotation; group.userData.layoutId = node.id;
-      const imageMat = new THREE.MeshStandardMaterial({ color: "#fffaf2", roughness: 0.8 });
+      const imageMat = new THREE.MeshStandardMaterial({ color: "#fffaf2", roughness: 0.68, side: THREE.DoubleSide });
       if (product.catalogImageUrl) {
-        const loader = new THREE.TextureLoader(); loader.setCrossOrigin("anonymous");
-        loader.load(product.catalogImageUrl, texture => { texture.colorSpace = THREE.SRGBColorSpace; imageMat.map = texture; imageMat.needsUpdate = true; }, undefined, () => { imageMat.color.set("#ffe7ca"); });
+        void loadProductTexture(product.catalogImageUrl).then(texture => {
+          if (renderer.getContext().isContextLost()) return;
+          imageMat.map = texture; imageMat.color.set("#ffffff"); imageMat.needsUpdate = true;
+        }).catch(() => { imageMat.color.set("#ffe7ca"); imageMat.needsUpdate = true; });
       }
-      const imagePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.49), imageMat); imagePlane.position.y = 0.3; imagePlane.userData.productId = product.id; imagePlane.userData.layoutId = node.id; group.add(imagePlane); productObjects.push(imagePlane);
+      const imagePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.52), imageMat); imagePlane.position.y = 0.34; imagePlane.userData.productId = product.id; imagePlane.userData.layoutId = node.id; group.add(imagePlane); productObjects.push(imagePlane);
       const title = product.name.length > 20 ? `${product.name.slice(0, 18)}…` : product.name;
       const labelTexture = makeCanvasLabel(title, `${bulkUnitPrice(product)} ج.م · ${product.unit || "وحدة"}`, "#fff7ed");
-      const label = new THREE.Mesh(new THREE.PlaneGeometry(0.58, 0.18), new THREE.MeshBasicMaterial({ map: labelTexture, toneMapped: false })); label.position.set(0, -0.04, 0.005); label.userData.productId = product.id; label.userData.layoutId = node.id; group.add(label); productObjects.push(label);
+      const label = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.16), new THREE.MeshBasicMaterial({ map: labelTexture, toneMapped: false })); label.position.set(0, 0.015, 0.008); label.userData.productId = product.id; label.userData.layoutId = node.id; group.add(label); productObjects.push(label);
       group.userData.cloneNo = cloneNo; return group;
     };
     const addShelf = (node: VirtualStoreNode) => {
@@ -209,10 +240,13 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
         const shelfLevel = index < 4 ? 0.43 : index < 8 ? 1.45 : 2.52;
         const itemIndex = index % 4;
         const stockCount = stockRef.current[product.id];
-        const clones = stockCount === undefined ? Math.max(1, Math.min(4, Math.floor(Number(node.copies) || 3))) : stockCount <= 0 ? 1 : Math.max(1, Math.min(6, Math.ceil(stockCount)));
+        const clones = stockCount === undefined ? Math.max(1, Math.min(4, Math.floor(Number(node.copies) || 3))) : stockCount <= 0 ? 1 : Math.max(1, Math.min(10, Math.ceil(stockCount)));
         for (let copy = 0; copy < clones; copy++) {
-          const x = node.x + (node.rotation ? 0 : -0.82 + itemIndex * 0.54) + (copy % 2) * 0.13;
-          const z = node.z + (node.rotation ? 0.34 : 0) + Math.floor(copy / 2) * -0.025;
+          const slotX = -0.82 + itemIndex * 0.54;
+          const rowX = (copy % 2) * 0.22 - 0.11;
+          const rowZ = Math.floor(copy / 2) * 0.095;
+          const x = node.x + (node.rotation ? -slotX + rowX : slotX + rowX);
+          const z = node.z + (node.rotation ? -0.18 - rowZ : 0.18 + rowZ);
           const card = makeProductCard(node, product, x, shelfLevel, z, copy); shopRoot.add(card);
         }
         if (stockCount === 0) {
@@ -304,7 +338,7 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
       cameraRef.current = null; scene.traverse(object => { const mesh = object as THREE.Mesh; if (mesh.geometry) mesh.geometry.dispose(); if (Array.isArray(mesh.material)) mesh.material.forEach(material => { (material as THREE.MeshStandardMaterial).map?.dispose(); material.dispose(); }); else if (mesh.material) { (mesh.material as THREE.MeshStandardMaterial).map?.dispose(); mesh.material.dispose(); } });
       renderer.dispose(); renderer.domElement.remove();
     };
-  }, [layout, products, productById, managerMode]);
+  }, [layout, products, productById, managerMode, stock]);
 
   const teleport = (name: "front" | "barrels" | "shelves" | "cashier") => {
     const camera = cameraRef.current; if (!camera) return;
