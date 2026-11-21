@@ -4,6 +4,7 @@ import {
   calculateFormulationOnHand,
   calculateRawMaterialValuation,
   createInventoryValuationItem,
+  resolveInventorySource,
   summarizeInventory,
   type InventoryValuationItem,
 } from "./inventoryValuation";
@@ -37,5 +38,13 @@ describe("inventory valuation calculations", () => {
   it("subtracts formulation sales and adds only recorded returns without going below zero", () => {
     expect(calculateFormulationOnHand(20, 8, 2)).toBe(14);
     expect(calculateFormulationOnHand(2, 8, 1)).toBe(0);
+  });
+
+  it("falls back for a failed secondary source and preserves a visible warning", async () => {
+    const warnings: string[] = [];
+    const [goodSource, failedSource] = await Promise.allSettled([Promise.resolve([item()]), Promise.reject(new Error("permission denied"))]);
+    expect(resolveInventorySource("المنتجات", goodSource, [], warnings)).toHaveLength(1);
+    expect(resolveInventorySource("بنود الفواتير", failedSource, [], warnings)).toEqual([]);
+    expect(warnings).toEqual(["تعذر تحميل بنود الفواتير: permission denied"]);
   });
 });

@@ -37,6 +37,7 @@ export type InventoryValuationSnapshot = {
   categories: string[];
   sections: Record<InventorySectionKey, InventoryTotals>;
   totals: InventoryTotals;
+  sourceWarnings: string[];
 };
 
 export const INVENTORY_SECTIONS: Array<{ key: InventorySectionKey; title: string; description: string }> = [
@@ -125,6 +126,18 @@ export function calculateFormulationOnHand(produced: number, sold: number, retur
   return Math.max(0, cleanNumber(produced) - cleanNumber(sold) + cleanNumber(returned));
 }
 
+export function resolveInventorySource<T>(
+  sourceName: string,
+  result: PromiseSettledResult<T>,
+  fallback: T,
+  warnings: string[],
+): T {
+  if (result.status === "fulfilled") return result.value;
+  const reason = result.reason instanceof Error ? result.reason.message : String(result.reason ?? "خطأ غير معروف");
+  warnings.push(`تعذر تحميل ${sourceName}: ${reason}`);
+  return fallback;
+}
+
 async function fetchAllProducts(): Promise<CloudProduct[]> {
   const products: CloudProduct[] = [];
   let cursor: ProductCursor | null = null;
@@ -183,7 +196,7 @@ async function fetchAllFormulationSales(shopId: string) {
   const client = getSupabaseClient();
   const rows: Array<{ id: string; invoice_id: string; formulation_id: string | null; quantity: number }> = [];
   for (let offset = 0; ; offset += PAGE_SIZE) {
-    const result = await client.from("invoice_items")
+    const result = await client.from("manager_invoice_items")
       .select("id,invoice_id,formulation_id,quantity")
       .eq("shop_id", shopId).not("formulation_id", "is", null)
       .order("created_at").order("id").range(offset, offset + PAGE_SIZE - 1);
@@ -225,17 +238,36 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
   if (!( ["manager", "admin", "supervisor"] as string[]).includes(context.role)) {
     throw new Error("عرض التقييم المالي للمخزون متاح للإدارة والمشرفين فقط.");
   }
-  const [products, productCategories, materials, apartmentItems, formulations, productionRuns, formulationSales] = await Promise.all([
+  const warnings: string[] = [];
+  const [productsResult, categoriesResult, materialsResult, apartmentResult, formulationsResult, productionResult, salesResult, returnsResult] = await Promise.allSettled([
     fetchAllProducts(), listProductCategories(), fetchAllRawMaterials(context.shopId), fetchAllApartmentItems(context.shopId),
-    listCloudFormulations(), fetchAllProductionRuns(context.shopId), fetchAllFormulationSales(context.shopId),
+    listCloudFormulations(), fetchAllProductionRuns(context.shopId), fetchAllFormulationSales(context.shopId), fetchAllFormulationReturns(context.shopId),
   ]);
-  const invoiceStatuses = await fetchInvoiceStatuses(context.shopId, Array.from(new Set(formulationSales.map(line => line.invoice_id))));
-  const formulationReturns = await fetchAllFormulationReturns(context.shopId);
+  const products = resolveInventorySource("منتجات المتجر", productsResult, [], warnings);
+  const productCategories = resolveInventorySource("فئات المنتجات", categoriesResult, [], warnings);
+  const materials = resolveInventorySource("الخامات", materialsResult, [], warnings);
+  const apartmentItems = resolveInventorySource("مخزن الشقة", apartmentResult, [], warnings);
+  const formulations = resolveInventorySource("التركيبات", formulationsResult, [], warnings);
+  const productionRuns = resolveInventorySource("سجلات الإنتاج", productionResult, [], warnings);
+  const salesAvailable = salesResult.status === "fulfilled";
+  const formulationSales = resolveInventorySource("مبيعات التركيبات", salesResult, [], warnings);
+  const returnsAvailable = returnsResult.status === "fulfilled";
+  const formulationReturns = resolveInventorySource("مرتجعات الفواتير", returnsResult, [], warnings);
+  const invoiceStatuses = new Map<string, string>();
+  let invoiceStatusesAvailable = true;
+  try {
+    const statuses = await fetchInvoiceStatuses(context.shopId, Array.from(new Set(formulationSales.map(line => line.invoice_id))));
+    statuses.forEach((status, id) => invoiceStatuses.set(id, status));
+  } catch (error) {
+    invoiceStatusesAvailable = false;
+    warnings.push(`تعذر تحميل حالات الفواتير: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const formulationMovementsAvailable = salesAvailable && returnsAvailable && invoiceStatusesAvailable;
   const returnsByInvoiceItem = new Map<string, number>();
   for (const row of formulationReturns) returnsByInvoiceItem.set(row.invoice_item_id, (returnsByInvoiceItem.get(row.invoice_item_id) ?? 0) + cleanNumber(row.quantity));
 
   const soldByFormulation = new Map<string, { sold: number; returned: number }>();
-  for (const line of formulationSales) {
+  for (const line of formulationMovementsAvailable ? formulationSales : []) {
     if (!line.formulation_id || invoiceStatuses.get(line.invoice_id) === "voided") continue;
     const balance = soldByFormulation.get(line.formulation_id) ?? { sold: 0, returned: 0 };
     balance.sold += cleanNumber(line.quantity);
@@ -268,11 +300,15 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
 
   for (const formulation of formulations) {
     const movement = soldByFormulation.get(formulation.id) ?? { sold: 0, returned: 0 };
-    const quantity = calculateFormulationOnHand(producedByFormulation.get(formulation.id) ?? 0, movement.sold, movement.returned);
+    const quantity = formulationMovementsAvailable
+      ? calculateFormulationOnHand(producedByFormulation.get(formulation.id) ?? 0, movement.sold, movement.returned)
+      : 0;
     items.push(makeItem({
       id: `formulation:${formulation.id}`, name: formulation.name, section: "formulations", sectionName: "التركيبات ومنتجات رجوة المصنعة", category: "التركيبات",
       quantity, unit: formulation.productionUnit || "وحدة", unitCost: formulation.costPerUnit, unitSalePrice: formulation.salePrice,
-      details: "الرصيد مقدر من سجلات الإنتاج المكتملة ومبيعات/مرتجعات التركيبات السحابية.",
+      details: formulationMovementsAvailable
+        ? "الرصيد مقدر من سجلات الإنتاج المكتملة ومبيعات/مرتجعات التركيبات السحابية."
+        : "تعذر التحقق من اكتمال حركات المبيعات والمرتجعات؛ لم يُعرض رصيد مقدر لتجنب تضخيمه.",
     }));
   }
 
@@ -301,7 +337,7 @@ export async function loadInventoryValuation(): Promise<InventoryValuationSnapsh
   const categories = Array.from(new Set([...productCategories.map(category => category.name), ...items.map(item => item.category).filter(Boolean)]))
     .filter(name => items.some(item => item.category === name))
     .sort((left, right) => left.localeCompare(right, "ar"));
-  return { shopId: context.shopId, calculatedAt: new Date().toISOString(), items, categories, sections, totals: summarizeInventory(items) };
+  return { shopId: context.shopId, calculatedAt: new Date().toISOString(), items, categories, sections, totals: summarizeInventory(items), sourceWarnings: warnings };
 }
 
 export function subscribeInventoryValuationChanges(shopId: string, onChange: () => void) {
@@ -309,7 +345,7 @@ export function subscribeInventoryValuationChanges(shopId: string, onChange: () 
   const tables: Array<[string, string]> = [
     ["products", "shop_id"], ["product_categories", "shop_id"], ["raw_materials", "shop_id"],
     ["recipes", "shop_id"], ["recipe_ingredients", "shop_id"], ["production_runs", "shop_id"],
-    ["invoices", "shop_id"], ["invoice_items", "shop_id"], ["invoice_return_items", "shop_id"],
+    ["invoices", "shop_id"], ["invoice_return_items", "shop_id"],
     ["apartment_inventory_items", "shop_id"], ["apartment_inventory_categories", "shop_id"],
   ];
   let channel = client.channel(`inventory-valuation:${shopId}`);
