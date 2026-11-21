@@ -37,13 +37,6 @@ export async function listPublicCommunityEvents(): Promise<{ raffles: PurchaseRa
   };
 }
 
-export async function registerPurchaseRaffle(input: { raffleId: string; customerName: string; customerPhone: string; invoiceCode: string }): Promise<{ ticket_id: string; ticket_number: string }> {
-  assertCloudOnline();
-  const result = await client().rpc("register_purchase_raffle_ticket", { p_raffle_id: input.raffleId, p_customer_name: input.customerName.trim(), p_customer_phone: input.customerPhone, p_invoice_code: input.invoiceCode.trim() });
-  const row = (requireCloudResult(result) as any[])?.[0];
-  if (!row) throw new Error("لم يؤكد النظام إصدار التذكرة؛ حاول مرة أخرى.");
-  return row;
-}
 export async function submitTriviaEntry(input: { contestId: string; customerName: string; customerPhone: string; selectedOption: number }): Promise<{ entry_id: string; entry_code: string; is_correct: boolean }> {
   assertCloudOnline();
   const result = await client().rpc("submit_trivia_entry", { p_contest_id: input.contestId, p_customer_name: input.customerName.trim(), p_customer_phone: input.customerPhone, p_selected_option: input.selectedOption });

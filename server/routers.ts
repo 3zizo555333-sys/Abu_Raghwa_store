@@ -13,6 +13,7 @@ import { invokeLLM } from "./_core/llm";
 import { buildEmployeeFinanceSummary, EMPLOYEE_FINANCE_KEY, getMonthKey, hashEmployeeFinancePin, normalizeEmployeeFinanceStore, type EmployeeFinanceStore } from "./employeeFinance";
 import { publicOfferData, publicOfferJson } from "./sharedOffers";
 import { notifyCatalogOrder, notifyOfferPurchase } from "./telegramNotifications";
+import { registerPurchaseRaffleTicket } from "./supabaseCommunityDraws";
 
 export const appRouter = router({
   system: systemRouter,
@@ -132,6 +133,26 @@ export const appRouter = router({
             throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة قراءة الفواتير غير مهيأة على الخادم؛ تحقّق من إعداد اتصال الذكاء الاصطناعي." });
           }
           throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذرت قراءة بنود الفاتورة. تأكد من وضوح الصورة واتصال الخدمة ثم أعد المحاولة." });
+        }
+      }),
+  }),
+
+  communityDraws: router({
+    registerPurchaseRaffle: publicProcedure
+      .input(z.object({
+        raffleId: z.string().uuid(),
+        customerName: z.string().trim().min(1).max(120),
+        customerPhone: z.string().trim().min(7).max(24),
+        invoiceCode: z.string().trim().min(4).max(100),
+      }))
+      .mutation(async ({ input }) => {
+        try {
+          return await registerPurchaseRaffleTicket(input);
+        } catch (error) {
+          throw new TRPCError({
+            code: "BAD_REQUEST",
+            message: error instanceof Error ? error.message : "تعذر تسجيل الاشتراك في السحب.",
+          });
         }
       }),
   }),
