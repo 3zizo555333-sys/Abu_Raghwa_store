@@ -26,7 +26,6 @@ create or replace function public.list_active_catalog_coupons(p_shop_id uuid)
 returns setof public.catalog_coupons
 language sql
 stable
-security definer
 set search_path = ''
 as $function$
   select c.*
