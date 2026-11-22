@@ -4,7 +4,7 @@ import { drizzle } from "drizzle-orm/mysql2";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   InsertUser, InsertStaffAccount, users, staffAccounts, sharedOffers,
-  globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders, offerPurchaseRequests
+  globalAppSettings, cloudAppRecords, cloudAppBackups, catalogOrders
 } from "../drizzle/schema";
 import { ENV } from './_core/env';
 import { getOfferEndAt } from "../client/src/lib/offerExpiry";
@@ -17,6 +17,11 @@ import {
   applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile,
   listSupabaseLoyaltyProfiles, validateCatalogCouponServer, type SupabaseLoyaltyTransaction
 } from "./supabaseLoyalty";
+import {
+  approveSupabaseOfferPurchaseRequest, cancelSupabaseOfferPurchaseRequest,
+  createSupabaseOfferPurchaseRequest, getSupabaseOfferPurchaseStatus,
+  listSupabaseOfferPurchaseRequests,
+} from "./supabaseOfferPurchaseRequests";
 
 export type { InsertStaffAccount } from "../drizzle/schema";
 export type UpdateStaffAccount = Partial<InsertStaffAccount>;
@@ -581,11 +586,12 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   }
   return { id: order.id, customerCode };
 }
-export async function listCatalogOrders(options: { includeArchived?: boolean } = {}) {
+export async function listCatalogOrders(options: { includeArchived?: boolean; shopId?: string } = {}) {
   const supabase = getSupabaseServerClient();
   if (supabase) {
     try {
       let query = supabase.from("catalog_orders").select("*").order("created_at", { ascending: false });
+      if (options.shopId) query = query.eq("shop_id", options.shopId);
       if (!options.includeArchived) {
         query = query.is("archived_at", null);
       }
@@ -593,10 +599,12 @@ export async function listCatalogOrders(options: { includeArchived?: boolean } =
       if (!error && Array.isArray(data)) {
         return data.map((r: any) => ({
           id: r.id,
+          shopId: r.shop_id ?? r.shopId ?? "",
           customerName: r.customer_name ?? r.customerName ?? "",
           customerPhone: r.customer_phone ?? r.customerPhone ?? "",
           customerCode: r.customer_code ?? r.customerCode ?? null,
-          address: r.address ?? null,
+          address: r.address ?? r.delivery_address ?? null,
+          deliveryAddress: r.delivery_address ?? r.address ?? null,
           note: r.note ?? null,
           itemsJson: typeof r.items_json === "string" ? r.items_json : JSON.stringify(r.items ?? r.items_json ?? []),
           totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
@@ -604,6 +612,11 @@ export async function listCatalogOrders(options: { includeArchived?: boolean } =
           fulfillmentMethod: (r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup") as "pickup" | "delivery",
           priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
           loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
+          orderType: r.order_type ?? r.orderType ?? "catalog",
+          offerId: r.offer_id ?? r.offerId ?? null,
+          offerTitle: r.offer_title ?? r.offerTitle ?? null,
+          loyaltyPoints: Number(r.loyalty_points ?? r.loyaltyPoints ?? 0),
+          offerSnapshot: r.offer_snapshot ?? r.offerSnapshot ?? null,
           createdAt: r.created_at ? new Date(r.created_at) : new Date(),
           updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
           archivedAt: r.archived_at ? new Date(r.archived_at) : null,
@@ -618,8 +631,9 @@ export async function listCatalogOrders(options: { includeArchived?: boolean } =
   const db = await getDb();
   if (!db) return [];
   try {
-    const query = db.select().from(catalogOrders);
-    return (options.includeArchived ? query : query.where(isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+    const filters = !options.includeArchived ? [isNull(catalogOrders.archivedAt)] : [];
+    const query = filters.length ? db.select().from(catalogOrders).where(and(...filters)) : db.select().from(catalogOrders);
+    return query.orderBy(desc(catalogOrders.createdAt));
   } catch (err) {
     console.warn("[Catalog] listCatalogOrders DB error:", err);
     return [];
@@ -758,152 +772,24 @@ export async function manuallyAwardReferralPoints(input: { phone?: string; custo
   return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsAwarded: event.points_delta };
 }
 
-export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string; customerNote?: string }) {
-  const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لتسجيل طلب العرض الآن");
-  const offerRow = await getSharedOffer(input.offerId);
-  if (!offerRow) throw new Error("هذا العرض غير موجود أو لم يُنشر بعد");
-
-  let offer: Record<string, any>;
-  try {
-    offer = JSON.parse(offerRow.offerData);
-  } catch {
-    throw new Error("تعذر قراءة تفاصيل هذا العرض");
-  }
-  if (!offer || typeof offer !== "object" || offer.isActivated !== true || !Array.isArray(offer.items) || offer.items.length === 0) {
-    throw new Error("هذا العرض غير متاح للشراء حاليًا");
-  }
-  const endAt = getOfferEndAt(offer);
-  if (Number.isFinite(offer.startAt) && Number(offer.startAt) > Date.now()) throw new Error("لم يبدأ هذا العرض بعد");
-  if (endAt && endAt <= Date.now()) throw new Error("انتهت صلاحية هذا العرض");
-  const offerTitle = String(offer.title || "").trim();
-  const offerPrice = Number(offer.offerPrice);
-  if (!offerTitle || !Number.isFinite(offerPrice) || offerPrice < 0) throw new Error("بيانات سعر العرض غير صالحة");
-  const offerPoints = Math.max(0, Math.trunc(Number(offer.loyaltyPoints) || 0));
-  const offerSnapshot = JSON.stringify({
-    id: input.offerId,
-    title: offerTitle,
-    originalTotalRetail: Math.max(0, Number(offer.originalTotalRetail) || Number(offer.originalPrice) || offerPrice),
-    strategyName: String(offer.strategyName || "عرض أبو رغوة"),
-    items: offer.items.map((rawItem: unknown) => {
-      const item = rawItem && typeof rawItem === "object" ? rawItem as Record<string, unknown> : {};
-      return { name: String(item.name || ""), quantity: Math.max(1, Math.trunc(Number(item.quantity) || 1)), offerPrice: Math.max(0, Number(item.offerPrice) || 0) };
-    }),
-    offerPrice,
-    loyaltyPoints: offerPoints,
-    endAt: Number(offer.endAt) || null,
-    endDate: String(offer.endDate || ""),
-  });
-  const customerCode = input.customerCode.trim().toUpperCase();
-
-  return database.transaction(async tx => {
-    const profile = await getSupabaseLoyaltyProfile({ customerCode });
-    if (!profile) throw new Error("كود الولاء غير مسجل؛ سجّل بطاقة نقاطك أولًا");
-    const existingRequests = await tx.select().from(offerPurchaseRequests).where(and(
-      eq(offerPurchaseRequests.offerId, input.offerId),
-      eq(offerPurchaseRequests.customerCode, profile.customerCode),
-      eq(offerPurchaseRequests.status, "pending"),
-    )).limit(1);
-    if (existingRequests[0]) return {
-      id: existingRequests[0].id,
-      offerTitle: existingRequests[0].offerTitle,
-      status: existingRequests[0].status,
-      loyaltyPointsAwarded: Number(existingRequests[0].loyaltyPointsAwarded || 0),
-      createdAt: existingRequests[0].createdAt,
-      created: false,
-      customerName: existingRequests[0].customerName,
-      customerPhone: existingRequests[0].customerPhone,
-      customerNote: existingRequests[0].customerNote,
-      offerSnapshot: existingRequests[0].offerSnapshot,
-    };
-
-    const id = `offer-purchase-${randomUUID()}`;
-    await tx.insert(offerPurchaseRequests).values({
-      id,
-      offerId: input.offerId,
-      offerTitle,
-      offerSnapshot,
-      offerPoints,
-      customerName: profile.name,
-      customerPhone: profile.phone || null,
-      customerNote: input.customerNote?.trim().slice(0, 1000) || null,
-      customerCode: profile.customerCode,
-      status: "pending",
-      loyaltyPointsAwarded: 0,
-    });
-    const created = await tx.select().from(offerPurchaseRequests).where(eq(offerPurchaseRequests.id, id)).limit(1);
-    if (!created[0]) throw new Error("تعذر حفظ طلب العرض");
-    return {
-      id: created[0].id,
-      offerTitle: created[0].offerTitle,
-      status: created[0].status,
-      loyaltyPointsAwarded: Number(created[0].loyaltyPointsAwarded || 0),
-      createdAt: created[0].createdAt,
-      created: true,
-      customerName: created[0].customerName,
-      customerPhone: created[0].customerPhone,
-      customerNote: created[0].customerNote,
-      offerSnapshot: created[0].offerSnapshot,
-    };
-  });
+export async function createOfferPurchaseRequest(input: { offerId: string; customerCode: string; customerNote?: string; deliveryAddress?: string }) {
+  return createSupabaseOfferPurchaseRequest(input);
 }
 
 export async function listOfferPurchaseRequests() {
-  const database = await getDb();
-  if (!database) return [];
-  return database.select().from(offerPurchaseRequests).orderBy(desc(offerPurchaseRequests.createdAt)).limit(200);
+  return listSupabaseOfferPurchaseRequests();
 }
 
 export async function approveOfferPurchaseRequest(id: string) {
-  const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لتأكيد طلب العرض الآن");
-
-  return database.transaction(async tx => {
-    const requests = await tx.select().from(offerPurchaseRequests).where(eq(offerPurchaseRequests.id, id)).for("update").limit(1);
-    const request = requests[0];
-    if (!request) throw new Error("طلب العرض غير موجود");
-    if (request.status === "approved") return { success: true as const, alreadyApproved: true, awardedPoints: Number(request.loyaltyPointsAwarded || 0), customerCode: request.customerCode };
-    if (request.status !== "pending") throw new Error("لا يمكن تأكيد طلب مرفوض أو ملغى");
-
-    const profile = await getSupabaseLoyaltyProfile({ customerCode: request.customerCode, phone: request.customerPhone });
-    if (!profile) throw new Error("تعذر العثور على بطاقة ولاء العميل");
-    const plannedPoints = Math.max(0, Math.trunc(Number(request.offerPoints) || 0));
-    const event = plannedPoints > 0 ? await applySupabaseLoyaltyEvent({
-      phone: profile.phone, name: profile.name, pointsDelta: plannedPoints, source: "offer",
-      sourceId: request.id, idempotencyKey: `offer-purchase:${request.id}:earned`,
-      description: `${plannedPoints} نقطة بعد موافقة المحل على شراء العرض: ${request.offerTitle}`,
-    }) : null;
-    const awardedPoints = event ? Math.max(0, Number(event.points_delta) || 0) : 0;
-    await tx.update(offerPurchaseRequests).set({
-      status: "approved",
-      loyaltyPointsAwarded: awardedPoints,
-      approvedAt: new Date(),
-    }).where(eq(offerPurchaseRequests.id, request.id));
-    return { success: true as const, alreadyApproved: false, awardedPoints, customerCode: profile.customerCode };
-  });
+  return approveSupabaseOfferPurchaseRequest(id);
 }
 
 export async function cancelOfferPurchaseRequest(id: string) {
-  const database = await getDb();
-  if (!database) throw new Error("قاعدة البيانات غير متاحة لتحديث طلب العرض الآن");
-  return database.transaction(async tx => {
-    const requests = await tx.select().from(offerPurchaseRequests).where(eq(offerPurchaseRequests.id, id)).for("update").limit(1);
-    const request = requests[0];
-    if (!request) throw new Error("طلب العرض غير موجود");
-    if (request.status === "approved") throw new Error("تمت الموافقة على هذا الطلب وإضافة النقاط بالفعل؛ لا يمكن رفضه الآن");
-    if (request.status === "pending") await tx.update(offerPurchaseRequests).set({ status: "cancelled" }).where(eq(offerPurchaseRequests.id, id));
-    return { success: true as const, status: "cancelled" as const };
-  });
+  return cancelSupabaseOfferPurchaseRequest(id);
 }
 
 export async function getCustomerOfferPurchaseStatus(input: { id: string; customerCode: string }) {
-  const database = await getDb();
-  if (!database) return null;
-  const rows = await database.select({ id: offerPurchaseRequests.id, offerTitle: offerPurchaseRequests.offerTitle, status: offerPurchaseRequests.status, loyaltyPointsAwarded: offerPurchaseRequests.loyaltyPointsAwarded, createdAt: offerPurchaseRequests.createdAt }).from(offerPurchaseRequests).where(and(
-    eq(offerPurchaseRequests.id, input.id),
-    eq(offerPurchaseRequests.customerCode, input.customerCode.trim().toUpperCase()),
-  )).limit(1);
-  return rows[0] || null;
+  return getSupabaseOfferPurchaseStatus(input);
 }
 
 export async function getCustomerLoyaltyProfile(identifier: LoyaltyIdentifier) {
@@ -981,6 +867,19 @@ export async function restoreDirectSaleLoyalty(input: { restoreId: string; saleI
 }
 
 export async function updateCatalogOrderStatus(id: string, status: CatalogOrderStatus) {
+  const supabase = getSupabaseServerClient();
+  if (supabase) {
+    const offerLookup = await supabase.from("catalog_orders").select("order_type").eq("id", id).maybeSingle();
+    if (offerLookup.error) throw new Error(`تعذر التحقق من نوع الطلب: ${offerLookup.error.message}`);
+    if (offerLookup.data?.order_type === "offer") {
+      if (status === "confirmed" || status === "delivered") return approveSupabaseOfferPurchaseRequest(id);
+      if (status === "cancelled") return cancelSupabaseOfferPurchaseRequest(id);
+      const nextStatus = status === "new" ? "pending" : "contacted";
+      const update = await supabase.from("catalog_orders").update({ status: nextStatus, updated_at: new Date().toISOString() }).eq("id", id);
+      if (update.error) throw new Error(`تعذر تحديث طلب العرض: ${update.error.message}`);
+      return { awardedPoints: 0 };
+    }
+  }
   const db = await getDb();
   if (db) {
     try {
@@ -1005,7 +904,6 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
     } catch { }
   }
 
-  const supabase = getSupabaseServerClient();
   if (supabase) {
     const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
     const order = data as any;

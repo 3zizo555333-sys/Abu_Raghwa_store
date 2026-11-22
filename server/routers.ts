@@ -213,7 +213,7 @@ export const appRouter = router({
       .input(z.object({ name: z.string().min(2).max(255), phone: z.string().max(32).optional(), customerCode: z.string().max(48).optional(), referralPhone: z.string().max(32).optional() }))
       .mutation(async ({ input }) => db.registerOfferCustomer(input)),
     createOfferPurchaseRequest: publicProcedure
-      .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48), customerNote: z.string().max(1000).optional() }))
+      .input(z.object({ offerId: z.string().min(1).max(64), customerCode: z.string().min(4).max(48), customerNote: z.string().max(1000).optional(), deliveryAddress: z.string().max(1000).optional() }))
       .mutation(async ({ input }) => {
         const request = await db.createOfferPurchaseRequest(input);
         if (request.created) {
@@ -305,10 +305,10 @@ export const appRouter = router({
       .input(z.object({ orderIds: z.array(z.string().min(6)).min(1).max(50), customerPhone: z.string().min(7).max(32) }))
       .query(async ({ input }) => db.getCatalogOrdersForCustomer(input.orderIds, input.customerPhone)),
     listOrders: publicProcedure
-      .input(z.object({ includeArchived: z.boolean().optional() }).optional())
+      .input(z.object({ includeArchived: z.boolean().optional(), shopId: z.string().uuid().optional() }).optional())
       .query(async ({ input, ctx }) => {
         await requireCatalogAdminSession(ctx.req);
-        return db.listCatalogOrders({ includeArchived: input?.includeArchived });
+        return db.listCatalogOrders({ includeArchived: input?.includeArchived, shopId: input?.shopId });
       }),
     archiveOrder: publicProcedure
       .input(z.object({ id: z.string().min(6).max(64) }))

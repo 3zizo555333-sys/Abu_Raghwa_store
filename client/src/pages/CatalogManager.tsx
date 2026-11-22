@@ -30,6 +30,7 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 type CatalogOrder = {
   id: string;
+  shopId?: string;
   customerName: string;
   customerPhone: string;
   address: string | null;
@@ -41,6 +42,9 @@ type CatalogOrder = {
   loyaltyPointsAwarded?: number;
   fulfillmentMethod?: "pickup" | "delivery";
   priceAdjustmentPercent?: number;
+  orderType?: "catalog" | "offer";
+  offerTitle?: string | null;
+  loyaltyPoints?: number;
   status: "new" | "contacted" | "confirmed" | "preparing" | "delivered" | "cancelled";
   createdAt: Date | string;
 };
@@ -99,6 +103,7 @@ export default function CatalogManager() {
   const audioContextRef = useRef<AudioContext | null>(null);
   const ordersRefreshTimer = useRef<number | null>(null);
   const knownOrderIds = useRef<Set<string> | null>(null);
+  const trpcUtils = trpc.useUtils();
   const catalogUrl = typeof window === "undefined" ? "" : `${window.location.origin}/catalog${catalogShopId ? `?shop_id=${encodeURIComponent(catalogShopId)}` : ""}`;
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
@@ -107,17 +112,13 @@ export default function CatalogManager() {
     setOrdersLoading(true);
     setOrdersError(null);
     try {
-      const result = await (getSupabaseClient() as any)
-        .from("catalog_orders")
-        .select("id,shop_id,customer_name,customer_phone,address,note,items,total_amount,status,created_at,updated_at")
-        .eq("shop_id", shopId)
-        .order("created_at", { ascending: false });
-      if (result.error) throw new Error(result.error.message);
-      setOrders((result.data || []).map((row: any) => ({
-        id: String(row.id), customerName: String(row.customer_name || ""), customerPhone: String(row.customer_phone || ""),
-        address: row.address || null, note: row.note || null, itemsJson: JSON.stringify(row.items || []),
-        totalAmount: Number(row.total_amount || 0), status: row.status === "pending" ? "new" : row.status || "new",
-        createdAt: row.created_at, loyaltyPointsAwarded: 0,
+      const result = await trpcUtils.catalog.listOrders.fetch({ shopId, includeArchived: false });
+      setOrders(result.map((row: any) => ({
+        id: String(row.id), shopId: row.shopId, customerName: String(row.customerName || ""), customerPhone: String(row.customerPhone || ""),
+        address: row.deliveryAddress || row.address || null, note: row.note || null, itemsJson: row.itemsJson || JSON.stringify(row.items || []),
+        totalAmount: Number(row.totalAmount || 0), status: row.status === "pending" ? "new" : row.status || "new",
+        createdAt: row.createdAt, loyaltyPointsAwarded: Number(row.loyaltyPointsAwarded || 0), orderType: row.orderType || "catalog",
+        offerTitle: row.offerTitle || null, loyaltyPoints: Number(row.loyaltyPoints || 0),
       })));
     } catch (error) {
       setOrdersError(error instanceof Error ? error : new Error("تعذر تحميل طلبات الكتالوج من Supabase"));
@@ -125,7 +126,7 @@ export default function CatalogManager() {
     } finally {
       setOrdersLoading(false);
     }
-  }, []);
+  }, [trpcUtils]);
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId) void loadOrders(catalogShopId); } });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
   const [stagingProduct, setStagingProduct] = useState<{ id: string; name: string; price: number } | null>(null);
@@ -679,15 +680,14 @@ export default function CatalogManager() {
 
   const updateStatus = async (id: string, status: CatalogOrder["status"]) => {
     const previousStatus = orders.find(order => order.id === id)?.status;
+    const currentOrder = orders.find(order => order.id === id);
     setOrders(current => current.map(order => order.id === id ? { ...order, status } : order));
     try {
-      const persistedStatus = status === "new" ? "pending" : status;
-      const result = await (getSupabaseClient() as any)
-        .from("catalog_orders")
-        .update({ status: persistedStatus })
-        .eq("id", id);
-      if (result.error) throw new Error(result.error.message);
-      toast.success("تم تحديث حالة طلب العميل");
+      const result = await updateOrderStatus.mutateAsync({ id, status });
+      const awardedPoints = Number((result as any)?.loyalty?.awardedPoints || 0);
+      toast.success(currentOrder?.orderType === "offer" && (status === "confirmed" || status === "delivered")
+        ? awardedPoints > 0 ? `تم اعتماد العرض وإضافة ${awardedPoints} نقطة للعميل.` : "تم اعتماد العرض."
+        : "تم تحديث حالة طلب العميل");
     } catch (error) {
       if (previousStatus) setOrders(current => current.map(order => order.id === id ? { ...order, status: previousStatus } : order));
       toast.error(error instanceof Error ? `تعذر تحديث الطلب: ${error.message}` : "تعذر تحديث الطلب، حاول مرة أخرى");
@@ -708,13 +708,28 @@ export default function CatalogManager() {
     const safePhone = String(order?.customerPhone || "");
     const phone = safePhone.replace(/\D/g, "");
     const safeTotal = Number.isFinite(Number(order?.totalAmount)) ? Number(order.totalAmount) : 0;
+    const isOfferOrder = order?.orderType === "offer";
     const timestamp = order?.createdAt ? new Date(order.createdAt) : null;
     const safeDate = timestamp && Number.isFinite(timestamp.getTime()) ? timestamp.toLocaleString("ar-EG") : "تاريخ غير متاح";
     const whatsappPhone = phone.startsWith("00") ? phone.slice(2) : phone.startsWith("0") ? `20${phone.slice(1)}` : phone;
     return <article key={order.id} className="rounded-2xl border border-slate-200 p-4">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between"><div><div className="flex flex-wrap items-center gap-2"><h3 className="font-black text-slate-900">{order?.customerName || "عميل"}</h3><span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span><span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span></div><p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{safePhone || "—"}</p><p className="text-xs text-slate-500">{safeDate}{order?.address ? ` · ${order.address}` : ""}</p><div className="mt-1 flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-blue-700">كود الطلب: {order.id.slice(-6).toUpperCase()}</span><CopyCodeButton code={order.id} /></div>{order?.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}</div><div className="text-left"><p className="text-xs text-slate-500">إجمالي الطلب</p><p className="text-xl font-black text-green-700">{safeTotal} ج.م</p></div></div>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="font-black text-slate-900">{order?.customerName || "عميل"}</h3>
+            <span className={`rounded-full border px-2.5 py-1 text-xs font-black ${status.className}`}>{status.label}</span>
+            {isOfferOrder ? <span className="rounded-full bg-violet-100 px-2.5 py-1 text-xs font-black text-violet-800">طلب عرض</span> : <span className={`rounded-full px-2.5 py-1 text-xs font-black ${isDelivery ? "bg-orange-100 text-orange-800" : "bg-blue-100 text-blue-800"}`}>{isDelivery ? `توصيل${order.priceAdjustmentPercent ? ` +${order.priceAdjustmentPercent}%` : ""}` : "استلام من المحل"}</span>}
+          </div>
+          {isOfferOrder && <p className="mt-1 text-sm font-black text-violet-800">العرض: {order.offerTitle || items[0]?.name || "عرض"}</p>}
+          <p className="mt-1 text-sm font-bold text-orange-700" dir="ltr">{safePhone || "—"}</p>
+          <p className="text-xs text-slate-500">{safeDate}{order?.address ? ` · ${order.address}` : ""}</p>
+          <div className="mt-1 flex flex-wrap items-center gap-2"><span className="text-xs font-bold text-blue-700">كود الطلب: {order.id.slice(-6).toUpperCase()}</span><CopyCodeButton code={order.id} /></div>
+          {order?.note && <p className="mt-2 rounded-lg bg-slate-50 p-2 text-xs text-slate-600">ملاحظة العميل: {order.note}</p>}
+        </div>
+        <div className="text-left"><p className="text-xs text-slate-500">{isOfferOrder ? "سعر العرض" : "إجمالي الطلب"}</p><p className="text-xl font-black text-green-700">{safeTotal} ج.م</p></div>
+      </div>
       <div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{(items || []).map((item, index) => { const quantity = Number.isFinite(Number(item?.quantity)) ? Number(item.quantity) : 0; const price = Number.isFinite(Number(item?.price)) ? Number(item.price) : 0; return <p key={`${item?.name || "صنف"}-${index}`}>• {item?.name || "صنف"} × {quantity} — {price * quantity} ج.م {Number(item?.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints) * quantity} نقطة</span>}</p>; })}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div>
-      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{STATUS_LABELS[next].label}</Button>)}</div>
+      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{isOfferOrder && next === "confirmed" ? "موافقة وإضافة النقاط" : isOfferOrder && next === "cancelled" ? "رفض العرض" : STATUS_LABELS[next].label}</Button>)}</div>
     </article>;
   };
 

@@ -18,7 +18,7 @@ import { calculateManualOfferPrice, type ManualDiscountType } from "@/lib/manual
 import { createOfferExpiryWindow, formatOfferTimeRemaining, getOfferExpiryInfo, parseLegacyOfferDate } from "@/lib/offerExpiry";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
-import { listStoreOfferOrders, saveStoreOffer, updateStoreOfferOrderStatus, type CloudOfferOrder } from "@/lib/supabase/storeOffers";
+import { saveStoreOffer } from "@/lib/supabase/storeOffers";
 import { createLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, updateLoyaltyMilestone, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow } from "@/lib/supabase/loyaltyExperience";
 import { OfferVideoScriptButton } from "@/components/OfferVideoScript";
 import { generateCatalogOfferBanner, getCatalogOfferStoragePath, removeCatalogOfferImageIfUnreferenced, uploadCatalogOfferImage } from "@/lib/supabase/offerImages";
@@ -223,7 +223,6 @@ export default function SmartOffers() {
 
   const [customersList, setCustomersList] = useState<CustomerLoyalty[]>([]);
   const [showCustomers, setShowCustomers] = useState(false);
-  const [cloudOfferOrders, setCloudOfferOrders] = useState<CloudOfferOrder[]>([]);
   const [rewardLevels, setRewardLevels] = useShopFeatureState<RewardLevel[]>("abu_reward_levels", DEFAULT_REWARDS);
   const [deliveryLogs, setDeliveryLogs, , flushDeliveryLogs] = useShopFeatureState<GiftDeliveryLog[]>("abu_gift_delivery_logs", []);
   const [newRewardPoints, setNewRewardPoints] = useState("");
@@ -324,20 +323,6 @@ export default function SmartOffers() {
     if (!loyaltyCustomersQuery.data) return;
     setCustomersList(loyaltyCustomersQuery.data as CustomerLoyalty[]);
   }, [loyaltyCustomersQuery.data]);
-  useEffect(() => {
-    if (isSeller) return;
-    let active = true;
-    const refresh = async () => {
-      try {
-        const orders = await listStoreOfferOrders();
-        if (active) setCloudOfferOrders(orders);
-      } catch { /* keep the existing legacy request panel available */ }
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), 10_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [isSeller]);
-
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), 60_000);
     return () => window.clearInterval(timer);
@@ -994,8 +979,10 @@ export default function SmartOffers() {
                       <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                         <div className="space-y-1">
                           <p className="font-black text-gray-900">{request.offerTitle}</p>
+                          <p className="text-xs font-bold text-gray-500">رقم الطلب: <span dir="ltr">#{request.id.slice(-8).toUpperCase()}</span></p>
                           <p className="text-sm text-gray-700">العميل: <strong>{request.customerName}</strong> · كود الولاء: <strong dir="ltr" className="inline-block">{request.customerCode}</strong></p>
                           {request.customerPhone && <p className="text-xs text-gray-600">الهاتف: {request.customerPhone}</p>}
+                          {request.deliveryAddress && <p className="text-xs font-bold text-blue-700">عنوان التوصيل: {request.deliveryAddress}</p>}
                           {request.customerNote && <p className="text-xs font-bold text-blue-700">ملاحظات العميل: {request.customerNote}</p>}
                           {itemNames && <p className="text-xs text-gray-600">الأصناف: {itemNames}</p>}
                           <p className="text-xs text-gray-600">سعر العرض: {price} ج.م · نقاط العرض: {request.offerPoints} · وصل الطلب: {new Date(request.createdAt).toLocaleString("ar-EG")}</p>
@@ -1008,9 +995,7 @@ export default function SmartOffers() {
                               if (!window.confirm(`هل تؤكد اكتمال شراء «${request.offerTitle}» بواسطة ${request.customerName}؟ ستضاف ${request.offerPoints} نقطة إلى الكود ${request.customerCode}.`)) return;
                               try {
                                 const result = await approveOfferPurchase.mutateAsync({ id: request.id });
-                                try { await updateStoreOfferOrderStatus(request.id, "approved"); } catch { toast.warning("تم اعتماد الطلب، لكن تعذر تحديث نسخته السحابية."); }
                                 await offerPurchaseRequestsQuery.refetch();
-                                setCloudOfferOrders(previous => previous.map(order => order.id === request.id ? { ...order, status: "approved" } : order));
                                 toast.success(result.awardedPoints > 0 ? `تم تأكيد البيع وإضافة ${result.awardedPoints} نقطة إلى ${request.customerCode}.` : "تم تأكيد البيع؛ هذا العرض لا يمنح نقاطًا إضافية.");
                               } catch (error) {
                                 toast.error(error instanceof Error ? error.message : "تعذر تأكيد طلب العرض");
@@ -1022,9 +1007,7 @@ export default function SmartOffers() {
                               if (!window.confirm(`هل تريد رفض طلب ${request.customerName}؟ لن تُضاف نقاط.`)) return;
                               try {
                                 await cancelOfferPurchase.mutateAsync({ id: request.id });
-                                try { await updateStoreOfferOrderStatus(request.id, "cancelled"); } catch { toast.warning("تم إلغاء الطلب، لكن تعذر تحديث نسخته السحابية."); }
                                 await offerPurchaseRequestsQuery.refetch();
-                                setCloudOfferOrders(previous => previous.map(order => order.id === request.id ? { ...order, status: "cancelled" } : order));
                                 toast.success("تم إلغاء الطلب دون إضافة نقاط.");
                               } catch (error) {
                                 toast.error(error instanceof Error ? error.message : "تعذر إلغاء الطلب");
@@ -1046,15 +1029,6 @@ export default function SmartOffers() {
             )}
           </CardContent>
         </Card>
-        {cloudOfferOrders.length > 0 && (
-          <Card className="border-2 border-blue-200 shadow-md">
-            <CardHeader className="bg-blue-50 pb-3"><CardTitle className="flex items-center justify-between gap-2 text-base text-blue-950"><span className="flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-blue-600" /> نسخة الطلبات السحابية</span><span className="rounded-full bg-blue-600 px-3 py-1 text-xs font-black text-white">{cloudOfferOrders.filter(order => order.status === "pending").length} معلّق</span></CardTitle></CardHeader>
-            <CardContent className="space-y-2 p-4">
-              {cloudOfferOrders.map(order => <article key={order.id} className={`rounded-xl border p-3 ${order.status === "pending" ? "border-blue-200 bg-blue-50/60" : "border-gray-200 bg-white"}`}><div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center"><div><p className="font-black text-gray-900">{order.offer_title}</p><p className="text-sm text-gray-700">{order.customer_name} · كود <strong dir="ltr">{order.customer_code}</strong></p><p className="text-xs text-gray-500">{new Date(order.created_at).toLocaleString("ar-EG")} · {order.points_cost} نقطة</p></div><span className={`rounded-full px-3 py-1 text-xs font-black ${order.status === "approved" ? "bg-green-100 text-green-800" : order.status === "cancelled" ? "bg-gray-100 text-gray-600" : "bg-amber-100 text-amber-800"}`}>{order.status === "approved" ? "موافق عليه" : order.status === "cancelled" ? "ملغي" : "بانتظار الموافقة"}</span></div></article>)}
-            </CardContent>
-          </Card>
-        )}
-
         {/* 🏆 تقرير نتائج العروض */}
         {showResultsReport && (
           <div className="bg-white p-6 rounded-2xl shadow-lg space-y-6">

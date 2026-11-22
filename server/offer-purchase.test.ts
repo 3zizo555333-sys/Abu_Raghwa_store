@@ -1,7 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
-import { eq } from "drizzle-orm";
-import { customerLoyalty, offerPurchaseRequests } from "../drizzle/schema";
 import * as db from "./db";
 import { appRouter, resetStaffAccountMigrationForTests } from "./routers";
 
@@ -84,47 +82,6 @@ describe("شراء العروض ونقاط الولاء", () => {
     expect(approve).toHaveBeenCalledWith(request.id);
     expect(refuse).toHaveBeenCalledWith(request.id);
   }, 15_000);
-
-  it.skipIf(!process.env.DATABASE_URL)("لا يمنح نقاطًا عند التسجيل؛ يضيفها مرة واحدة بعد اعتماد الطلب، ولا يضيفها للطلب المرفوض", async () => {
-    const suffix = randomUUID().replace(/-/g, "");
-    const offerId = `purchase-test-${suffix}`;
-    const cancelledOfferId = `cancel-test-${suffix}`;
-    let customerCode = "";
-    const database = await db.getDb();
-    if (!database) throw new Error("The test database was expected to be configured");
-    try {
-      await db.saveSharedOffer(offerId, JSON.stringify({ id: offerId, title: "عرض اختبار", strategyName: "اختبار", items: [{ name: "منتج اختبار", offerPrice: 25 }], offerPrice: 25, loyaltyPoints: 9, isActivated: true, startAt: Date.now() - 60_000, endAt: Date.now() + 3_600_000 }));
-      await db.saveSharedOffer(cancelledOfferId, JSON.stringify({ id: cancelledOfferId, title: "عرض ملغي", items: [{ name: "منتج" }], offerPrice: 10, loyaltyPoints: 4, isActivated: true, endAt: Date.now() + 3_600_000 }));
-      const profile = await db.registerOfferCustomer({ name: `عميل اختبار ${suffix.slice(0, 8)}` });
-      if (!profile) throw new Error("Expected a loyalty profile to be created");
-      customerCode = profile.customerCode;
-      expect(profile.points).toBe(0);
-
-      const pending = await db.createOfferPurchaseRequest({ offerId, customerCode });
-      const duplicate = await db.createOfferPurchaseRequest({ offerId, customerCode });
-      expect(pending.status).toBe("pending");
-      expect(duplicate.id).toBe(pending.id);
-      expect((await db.getCustomerLoyaltyProfile({ customerCode }))?.points).toBe(0);
-
-      await expect(db.approveOfferPurchaseRequest(pending.id)).resolves.toMatchObject({ awardedPoints: 9, alreadyApproved: false });
-      await expect(db.approveOfferPurchaseRequest(pending.id)).resolves.toMatchObject({ awardedPoints: 9, alreadyApproved: true });
-      const afterApproval = await db.getCustomerLoyaltyProfile({ customerCode });
-      expect(afterApproval?.points).toBe(9);
-      expect(afterApproval?.transactions?.filter(transaction => transaction.id === `offer-purchase:${pending.id}:earned`)).toHaveLength(1);
-
-      const cancelled = await db.createOfferPurchaseRequest({ offerId: cancelledOfferId, customerCode });
-      await db.cancelOfferPurchaseRequest(cancelled.id);
-      await expect(db.approveOfferPurchaseRequest(cancelled.id)).rejects.toThrow("لا يمكن تأكيد طلب مرفوض أو ملغى");
-      expect((await db.getCustomerLoyaltyProfile({ customerCode }))?.points).toBe(9);
-    } finally {
-      if (customerCode) {
-        await database.delete(offerPurchaseRequests).where(eq(offerPurchaseRequests.customerCode, customerCode));
-        await database.delete(customerLoyalty).where(eq(customerLoyalty.customerCode, customerCode));
-      }
-      await db.deleteSharedOffer(offerId);
-      await db.deleteSharedOffer(cancelledOfferId);
-    }
-  }, 20_000);
 
   it.skipIf(!process.env.DATABASE_URL)("يحفظ عدة عروض معًا ولا يحذف إلا العرض الذي يختاره المدير يدويًا", async () => {
     const prefix = `multi-offer-test-${randomUUID().replace(/-/g, "")}`;

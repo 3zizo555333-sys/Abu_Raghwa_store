@@ -10,7 +10,7 @@ import { formatOfferTimeRemaining, getOfferExpiryInfo } from "@/lib/offerExpiry"
 import { buildLoyaltyPageHref } from "@/lib/loyaltyLookup";
 import { LoyaltyRewardProgressCard } from "@/components/LoyaltyRewardProgress";
 import { shouldDisableOfferPurchaseButton } from "@/lib/offerPurchaseUi";
-import { getPublicStoreOffer, getPublishedOfferImage, mirrorPublicOfferOrder } from "@/lib/supabase/storeOffers";
+import { getPublicStoreOffer, getPublishedOfferImage } from "@/lib/supabase/storeOffers";
 import { getSupabaseClient } from "@/lib/supabase/client";
 
 interface SmartOffer {
@@ -54,6 +54,7 @@ export default function PublicOfferPage() {
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [customerNote, setCustomerNote] = useState("");
+  const [deliveryAddress, setDeliveryAddress] = useState("");
   const [referralPhone, setReferralPhone] = useState("");
   const [customerCode, setCustomerCode] = useState("");
   const [isRegistered, setIsRegistered] = useState(false);
@@ -134,6 +135,10 @@ export default function PublicOfferPage() {
       toast.error("⚠️ يرجى إدخال الاسم");
       return;
     }
+    if (customerPhone.replace(/\D/g, "").length < 7) {
+      toast.error("أدخل رقم هاتف صالحًا لربط الطلب ببطاقة الولاء");
+      return;
+    }
     try {
       const profile = await registerOfferCustomer.mutateAsync({ name: customerName.trim(), phone: customerPhone.trim() || undefined, customerCode: customerCode.trim() || undefined, referralPhone: referralPhone.trim() || undefined });
       if (!profile) throw new Error("تعذر إنشاء بطاقة الولاء");
@@ -149,7 +154,7 @@ export default function PublicOfferPage() {
         toast.error("هذا الكود غير مسجل. إذا كانت هذه أول مرة، امسح الكود واترك الخانة فارغة ليُنشئ النظام كودًا جديدًا لك.");
         return;
       }
-      toast.error("تعذر حفظ بطاقة نقاط الولاء الآن، حاول مرة أخرى.");
+      toast.error(error instanceof Error ? error.message : "تعذر حفظ بطاقة نقاط الولاء الآن، حاول مرة أخرى.");
     }
   };
 
@@ -164,14 +169,9 @@ export default function PublicOfferPage() {
       return;
     }
     try {
-      const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code, customerNote: customerNote.trim() || undefined });
-      try {
-        await mirrorPublicOfferOrder({ id: request.id, offerId: offer.id, customerName: customerRecord?.name || customerName, customerCode: code, customerPhone: customerRecord?.phone || customerPhone, pointsCost: offer.loyaltyPoints });
-      } catch {
-        toast.warning("تم إرسال الطلب للمحل، لكن تعذر إنشاء النسخة السحابية الثانوية.");
-      }
+      const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code, customerNote: customerNote.trim() || undefined, deliveryAddress: deliveryAddress.trim() || undefined });
       setPurchaseRequestId(request.id);
-      toast.success("وصل طلب شراء العرض إلى المحل. ستُضاف النقاط بعد تأكيد إتمام الشراء.");
+      toast.success(`وصل طلبك إلى المحل — رقم الطلب #${request.id.slice(-8).toUpperCase()}`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر إرسال طلب شراء العرض الآن.");
     }
@@ -306,9 +306,9 @@ export default function PublicOfferPage() {
 
             {!isRegistered ? (
               <form onSubmit={handleRegisterCustomer} className="space-y-2.5">
-                <p className="text-[11px] leading-5 text-slate-600">سجّل بياناتك لإرسال طلب العرض وربط نقاط الولاء. الهاتف وكود الإحالة اختياريان.</p>
+                <p className="text-[11px] leading-5 text-slate-600">سجّل بياناتك لإرسال طلب العرض وربط نقاط الولاء. الهاتف مطلوب، وكود الإحالة اختياري.</p>
                 <Input value={customerName} onChange={event => setCustomerName(event.target.value)} placeholder="اسمك الكريم" required className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
-                <Input value={customerPhone} onChange={event => setCustomerPhone(event.target.value)} placeholder="رقم الهاتف (اختياري)" type="tel" className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
+                <Input value={customerPhone} onChange={event => setCustomerPhone(event.target.value)} placeholder="رقم الهاتف *" type="tel" required minLength={7} className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
                 <Input value={customerCode} onChange={event => setCustomerCode(event.target.value)} placeholder="كود نقاطك (4 خانات، اختياري)" className="bg-white text-xs font-bold text-left" style={{ direction: "ltr" }} />
                 <Input value={referralPhone} onChange={event => setReferralPhone(event.target.value)} placeholder="هاتف الصديق الذي دعاك (اختياري)" type="tel" className="bg-white text-xs font-bold text-right" style={{ direction: "rtl" }} />
                 <Button type="submit" disabled={isExpired || registerOfferCustomer.isLoading} className="w-full rounded-xl bg-violet-700 py-2 text-xs font-black text-white hover:bg-violet-800 disabled:bg-slate-400">{isExpired ? "انتهت صلاحية العرض" : registerOfferCustomer.isLoading ? "جارٍ التسجيل…" : "سجّل بياناتك للطلب وكسب النقاط"}</Button>
@@ -322,7 +322,9 @@ export default function PublicOfferPage() {
             )}
 
             {isRegistered && <div className="mt-3 space-y-2">
+              <Input value={deliveryAddress} onChange={event => setDeliveryAddress(event.target.value)} maxLength={1000} placeholder="عنوان التوصيل (اختياري)" className="bg-white text-xs" />
               <Textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} maxLength={1000} placeholder="ملاحظات اختيارية: توصيل أو استلام من المحل" className="bg-white text-xs" />
+              {purchaseRequestId && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-xs font-black text-green-800">رقم طلبك: <strong dir="ltr">#{purchaseRequestId.slice(-8).toUpperCase()}</strong></div>}
               {offerPurchaseStatusQuery.data?.status === "pending" && <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-900">وصل طلبك إلى المحل وبانتظار تأكيد إتمام الشراء. ستضاف النقاط بعد الموافقة.</div>}
               {offerPurchaseStatusQuery.data?.status === "approved" && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-[11px] font-bold text-green-800"><CheckCircle2 className="ml-1 inline h-4 w-4" /> تم تأكيد الشراء وإضافة {offerPurchaseStatusQuery.data.loyaltyPointsAwarded} نقطة.</div>}
               {offerPurchaseStatusQuery.data?.status === "cancelled" && <div className="rounded-xl border border-slate-300 bg-slate-50 p-2 text-center text-[11px] font-bold text-slate-700">أُلغي الطلب السابق ولم تُضف نقاط؛ يمكنك تقديم طلب جديد.</div>}
