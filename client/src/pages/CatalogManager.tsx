@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowDown, ArrowLeft, ArrowUp, Building2, Camera, CheckCircle2, Copy, ExternalLink, Eye, FolderPlus, GripVertical, History, ImagePlus, Package, Phone, Plus, Printer, QrCode, Search, Share2, ShoppingBag, Sparkles, Trash2, TrendingUp, Truck, UserRound } from "lucide-react";
 import { DndContext, KeyboardSensor, MouseSensor, TouchSensor, closestCenter, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core";
 import { SortableContext, arrayMove, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
@@ -27,6 +27,8 @@ import { OfferProductStager, OfferProductStagerBoundary } from "@/components/Off
 import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+
+const VirtualStore3D = lazy(() => import("@/components/virtual-store/VirtualStore3D"));
 
 type CatalogOrder = {
   id: string;
@@ -76,6 +78,7 @@ export default function CatalogManager() {
   const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
   const [catalogShopId, setCatalogShopId] = useState("");
+  const [virtualStoreOpen, setVirtualStoreOpen] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [newCompany, setNewCompany] = useState("");
   const [search, setSearch] = useState("");
@@ -802,6 +805,8 @@ export default function CatalogManager() {
     }
   };
 
+  if (virtualStoreOpen) return <Suspense fallback={<main dir="rtl" className="grid min-h-screen place-items-center bg-slate-950 text-white"><Package className="h-10 w-10 animate-pulse text-orange-400" /></main>}><VirtualStore3D managerAccess shopId={catalogShopId} products={[...managedProducts, ...catalogRecipes]} cartCount={0} onAddToCart={() => undefined} onAddWeightToCart={() => undefined} onOpenCart={() => undefined} onBackToCatalog={() => setVirtualStoreOpen(false)} /></Suspense>;
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 pb-20" dir="rtl">
       {stagingProduct && <OfferProductStagerBoundary key={stagingProduct.id} onClose={() => setStagingProduct(null)}>
@@ -817,6 +822,7 @@ export default function CatalogManager() {
               <p className="mt-2 max-w-2xl text-sm text-orange-50">رتّب منتجاتك حسب الفئات والشركات، وانشر QR واحدًا يفتح للزبون الكتالوج وعربة الطلب فقط.</p>
             </div>
             <div className="flex flex-wrap gap-2">
+              <Button onClick={() => setVirtualStoreOpen(true)} className="bg-emerald-700 text-white hover:bg-emerald-800"><Package className="ml-2 h-4 w-4" />تخطيط ورص المحل 3D</Button>
               <Button onClick={() => window.open("/catalog", "_blank")} className="bg-white text-orange-700 hover:bg-orange-50"><ExternalLink className="ml-2 h-4 w-4" />معاينة الكتالوج</Button>
               <Button onClick={() => navigate("/advanced-reports")} className="bg-slate-950 text-white hover:bg-slate-800"><TrendingUp className="ml-2 h-4 w-4" />جرد المبيعات والأرباح</Button>
               <Button variant="outline" onClick={() => navigate("/dashboard")} className="border-white/60 bg-white/10 text-white hover:bg-white/20 hover:text-white"><ArrowLeft className="ml-2 h-4 w-4" />الرئيسية</Button>

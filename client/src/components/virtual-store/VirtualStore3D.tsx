@@ -1,17 +1,19 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
-import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Boxes, Check, ChevronRight, CircleHelp, Mic, MicOff, Package, RotateCw, ShoppingBag, Trash2, Volume2, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowRight, ArrowUp, AudioLines, Boxes, ChevronRight, CircleHelp, Mic, Package, RotateCw, ShoppingBag, Trash2, Volume2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { getCatalogPrice, type CatalogProduct } from "@/lib/catalog";
 import { catalogMoneyToKilograms, isWeightCatalogProduct, toCatalogKilograms } from "@/lib/catalogWeight";
-import { canManageVirtualStore, loadVirtualStoreLayout, loadVirtualStoreStock, saveVirtualStoreLayout, type VirtualStoreLayout, type VirtualStoreNode } from "@/lib/supabase/virtualStore";
+import { normalizeVirtualStoreLayout, type VirtualStoreLayout, type VirtualStoreNode } from "@/lib/supabase/virtualStore";
 import { subscribeToShopChanges } from "@/lib/supabase/products";
+import { trpc } from "@/lib/trpc";
 
 const COLORS = ["#f97316", "#0891b2", "#7c3aed", "#16a34a", "#dc2626", "#eab308", "#334155"];
 type Props = {
   shopId?: string;
+  managerAccess?: boolean;
   products: CatalogProduct[];
   cartCount: number;
   onAddToCart: (product: CatalogProduct) => void;
@@ -58,28 +60,40 @@ function addBox(parent: THREE.Object3D, x: number, y: number, z: number, sx: num
   mesh.position.set(x, y, z); mesh.castShadow = true; mesh.receiveShadow = true; parent.add(mesh); return mesh;
 }
 
-export default function VirtualStore3D({ shopId, products, cartCount, onAddToCart, onAddWeightToCart, onOpenCart, onBackToCatalog }: Props) {
+export default function VirtualStore3D({ shopId, managerAccess = false, products: baseProducts, cartCount, onAddToCart, onAddWeightToCart, onOpenCart, onBackToCatalog }: Props) {
   const canvasHost = useRef<HTMLDivElement>(null);
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
   const cameraPose = useRef({ yaw: 0, pitch: 0 });
   const lastCameraPosition = useRef({ x: 0, y: 1.62, z: 4.6 });
+  const storeData = trpc.catalog.virtualStoreData.useQuery({ shopId: shopId || "", managerAccess }, { enabled: Boolean(shopId), refetchInterval: 20_000, retry: 1 });
+  const layoutQuery = trpc.catalog.virtualStoreLayout.useQuery({ shopId: shopId || "" }, { enabled: Boolean(shopId), retry: 1 });
+  const saveLayoutMutation = trpc.catalog.saveVirtualStoreLayout.useMutation();
+  const serverProducts = (storeData.data?.products || []) as CatalogProduct[];
+  const products = useMemo(() => {
+    const source = managerAccess ? [...serverProducts, ...baseProducts] : [...serverProducts, ...baseProducts.filter(product => product.catalogVisible === true)];
+    const unique = new Map(source.map(product => [product.id, product]));
+    return Array.from(unique.values()).filter(product => managerAccess || product.catalogVisible === true);
+  }, [baseProducts, managerAccess, serverProducts]);
   const [stock, setStock] = useState<Record<string, number>>({});
   const stockRef = useRef(stock);
   stockRef.current = stock;
   const pointerRef = useRef<{ id: number; x: number; y: number; moved: boolean } | null>(null);
-  const joystickRef = useRef({ x: 0, y: 0 });
+  const movementRef = useRef({ forward: false, back: false, left: false, right: false });
   const dirtyRef = useRef(false);
   const [layout, setLayout] = useState<VirtualStoreLayout>(() => makeDefaultLayout(products));
   const [selectedProduct, setSelectedProduct] = useState<SelectedProduct>(null);
-  const [isManager, setIsManager] = useState(false);
+  const isManager = managerAccess;
   const [managerMode, setManagerMode] = useState(false);
+  const [activeBuildKind, setActiveBuildKind] = useState<VirtualStoreNode["kind"] | null>(null);
+  const [barrelLabel, setBarrelLabel] = useState("");
+  const [barrelPrice, setBarrelPrice] = useState("");
   const [selectedNodeId, setSelectedNodeId] = useState("");
   const [activeProductId, setActiveProductId] = useState("");
   const [displayCopies, setDisplayCopies] = useState("6");
   const [voiceActive, setVoiceActive] = useState(false);
   const [voiceText, setVoiceText] = useState("");
   const [voiceReply, setVoiceReply] = useState("اضغط الميكروفون واسأل أبو رغوة عن منتج أو سعر.");
-  const [stockError, setStockError] = useState(false);
+  const stockError = storeData.isError && !storeData.data;
   const keySet = useRef(new Set<string>());
   const selectedNode = layout.nodes.find(node => node.id === selectedNodeId) || null;
   const productById = useMemo(() => new Map(products.map(product => [product.id, product])), [products]);
@@ -89,28 +103,23 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     setLayout(previous => mutate(previous));
   }, []);
 
+  useEffect(() => { if (storeData.data?.stock) setStock(storeData.data.stock as Record<string, number>); }, [storeData.data]);
   useEffect(() => {
-    if (!shopId) return;
-    let active = true;
-    let unsubscribe: (() => Promise<unknown>) | undefined;
-    void canManageVirtualStore(shopId).then(value => { if (active) setIsManager(value); });
-    void loadVirtualStoreLayout(shopId).then(saved => { if (active && saved) setLayout(saved); }).catch(() => undefined);
-    const refreshStock = () => loadVirtualStoreStock(shopId).then(value => { if (active) { setStock(previous => Object.keys(previous).length === Object.keys(value).length && Object.entries(value).every(([id, quantity]) => previous[id] === quantity) ? previous : value); setStockError(false); } }).catch(() => { if (active) setStockError(true); });
-    void refreshStock();
-    void subscribeToShopChanges(shopId, () => { void refreshStock(); }).then(cleanup => { if (active) unsubscribe = cleanup; else void cleanup(); }).catch(() => undefined);
-    const interval = window.setInterval(refreshStock, 20_000);
-    return () => { active = false; window.clearInterval(interval); if (unsubscribe) void unsubscribe(); };
-  }, [shopId]);
+    const remote = normalizeVirtualStoreLayout(layoutQuery.data);
+    if (remote) { setLayout(remote); dirtyRef.current = false; return; }
+    if (layoutQuery.isSuccess && shopId) {
+      try { const local = normalizeVirtualStoreLayout(JSON.parse(localStorage.getItem(`virtual-store-layout:${shopId}`) || "null")); if (local) setLayout(local); } catch { /* use the generated default layout */ }
+    }
+  }, [layoutQuery.data, layoutQuery.isSuccess, shopId]);
 
   useEffect(() => {
-    if (!shopId || !isManager || !dirtyRef.current) return;
+    if (!shopId || !managerAccess || !dirtyRef.current) return;
     const timer = window.setTimeout(() => {
-      void saveVirtualStoreLayout(shopId, layout).then(() => { dirtyRef.current = false; }).catch(error => {
-        toast.error(error instanceof Error ? `تعذر حفظ ترتيب المحل: ${error.message}` : "تعذر حفظ ترتيب المحل؛ تأكد من تطبيق تحديث قاعدة البيانات.");
-      });
+      try { localStorage.setItem(`virtual-store-layout:${shopId}`, JSON.stringify(layout)); } catch { /* local fallback is best-effort */ }
+      saveLayoutMutation.mutate({ shopId, layout }, { onSuccess: () => { dirtyRef.current = false; }, onError: () => toast.error("تعذر حفظ التخطيط سحابياً؛ حُفظت نسخة محلية على هذا الجهاز.") });
     }, 700);
     return () => window.clearTimeout(timer);
-  }, [layout, shopId, isManager]);
+  }, [layout, shopId, managerAccess, saveLayoutMutation]);
 
   useEffect(() => {
     const host = canvasHost.current;
@@ -155,12 +164,15 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     const glassMaterial = new THREE.MeshPhysicalMaterial({ color: "#b8e4f1", transparent: true, opacity: 0.28, metalness: 0.12, roughness: 0.16, transmission: 0.2 });
     const windowLeft = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.65, 0.06), glassMaterial); windowLeft.position.set(-3.25, 2.4, 3.24); scene.add(windowLeft);
     const windowRight = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.65, 0.06), glassMaterial); windowRight.position.set(3.25, 2.4, 3.24); scene.add(windowRight);
-    addBox(scene, 0, 1.38, 3.25, 1.45, 2.72, 0.1, "#80cce2", { transparent: true, opacity: 0.32, metalness: 0.12, roughness: 0.14 });
+    const openDoor = new THREE.Group(); openDoor.position.set(-0.72, 0, 3.25); openDoor.rotation.y = -Math.PI / 2;
+    const doorPanel = new THREE.Mesh(new THREE.BoxGeometry(1.42, 2.72, 0.06), glassMaterial); doorPanel.position.set(0.72, 1.38, 0); doorPanel.castShadow = true; openDoor.add(doorPanel);
+    const doorHandle = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.32, 10), new THREE.MeshStandardMaterial({ color: "#d9e1e4", metalness: 0.78, roughness: 0.24 })); doorHandle.position.set(1.24, 1.38, 0.07); openDoor.add(doorHandle); scene.add(openDoor);
     addBox(scene, -0.82, 1.38, 3.25, 0.08, 2.85, 0.18, "#8a592d", { metalness: 0.3 });
     addBox(scene, 0.0, 2.92, 3.25, 1.72, 0.08, 0.18, "#8a592d", { metalness: 0.3 });
     addBox(scene, 0.82, 1.38, 3.25, 0.08, 2.85, 0.18, "#8a592d", { metalness: 0.3 });
     addBox(scene, 0, 4.55, 3.15, 6.8, 0.82, 0.42, "#f97316", { metalness: 0.12, roughness: 0.3 });
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 0.64), new THREE.MeshBasicMaterial({ map: makeCanvasLabel("أبو رغوة للمنظفات", "منظفات البيت وأسعاره على قد الإيد", "#ffedd5"), toneMapped: false })); sign.position.set(0, 4.55, 2.91); scene.add(sign);
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 0.64), new THREE.MeshBasicMaterial({ map: makeCanvasLabel("أبو رغوة للمنظفات", "هنسيب علامة في بيتك", "#ffedd5"), toneMapped: false })); sign.position.set(0, 4.55, 2.91); scene.add(sign);
+    const brand = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.34), new THREE.MeshBasicMaterial({ map: makeCanvasLabel("أصل الرغوة في مصر", "01069035599", "#dcfce7"), toneMapped: false })); brand.position.set(0, 3.98, 3.0); scene.add(brand);
     const fascia = new THREE.PointLight("#ff9c45", 40, 8); fascia.position.set(0, 4.3, 2.5); scene.add(fascia);
     // Neon aisle labels, cashier, counter, generic seller/visitors.
     const aisleTitle = (name: string, x: number, z: number, color = "#fff7ed") => { const mesh = new THREE.Mesh(new THREE.PlaneGeometry(2.6, 0.5), new THREE.MeshBasicMaterial({ map: makeCanvasLabel(name, "أسعار اليوم", color), toneMapped: false })); mesh.position.set(x, 3.45, z); mesh.rotation.y = x < 0 ? Math.PI / 2 : -Math.PI / 2; scene.add(mesh); };
@@ -221,8 +233,9 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
         }).catch(() => { imageMat.color.set("#ffe7ca"); imageMat.needsUpdate = true; });
       }
       const imagePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.52), imageMat); imagePlane.position.y = 0.34; imagePlane.userData.productId = product.id; imagePlane.userData.layoutId = node.id; group.add(imagePlane); productObjects.push(imagePlane);
-      const title = product.name.length > 20 ? `${product.name.slice(0, 18)}…` : product.name;
-      const labelTexture = makeCanvasLabel(title, `${bulkUnitPrice(product)} ج.م · ${product.unit || "وحدة"}`, "#fff7ed");
+      const labelText = node.displayName || product.name;
+      const title = labelText.length > 20 ? `${labelText.slice(0, 18)}…` : labelText;
+      const labelTexture = makeCanvasLabel(title, `${node.displayPrice ?? bulkUnitPrice(product)} ج.م · ${product.unit || "وحدة"}`, "#fff7ed");
       const label = new THREE.Mesh(new THREE.PlaneGeometry(0.56, 0.16), new THREE.MeshBasicMaterial({ map: labelTexture, toneMapped: false })); label.position.set(0, 0.015, 0.008); label.userData.productId = product.id; label.userData.layoutId = node.id; group.add(label); productObjects.push(label);
       group.userData.cloneNo = cloneNo; return group;
     };
@@ -271,8 +284,9 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
       }
       const label = node.productIds.map(id => productById.get(id)).find(Boolean);
       if (label) {
-        const name = label.name.length > 19 ? `${label.name.slice(0, 17)}…` : label.name;
-        const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.33), new THREE.MeshBasicMaterial({ map: makeCanvasLabel(name, `${bulkUnitPrice(label)} ج.م / كجم`, "#fef3c7"), toneMapped: false })); tag.position.set(0, 1.3, 0.48); tag.userData.productId = label.id; tag.userData.layoutId = node.id; vessel.add(tag); productObjects.push(tag);
+        const labelText = node.displayName || label.name;
+        const name = labelText.length > 19 ? `${labelText.slice(0, 17)}…` : labelText;
+        const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.92, 0.33), new THREE.MeshBasicMaterial({ map: makeCanvasLabel(name, `${node.displayPrice ?? bulkUnitPrice(label)} ج.م / كجم`, "#fef3c7"), toneMapped: false })); tag.position.set(0, 1.3, 0.48); tag.userData.productId = label.id; tag.userData.layoutId = node.id; vessel.add(tag); productObjects.push(tag);
       }
       shopRoot.add(vessel); layoutObjects.push(vessel);
       if (label) { const target = vessel; target.traverse(object => { object.userData.layoutId = node.id; }); }
@@ -294,7 +308,10 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
       const rect = renderer.domElement.getBoundingClientRect(); pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1; pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
       raycaster.setFromCamera(pointer, camera);
       const hit = raycaster.intersectObjects(shopRoot.children, true).find(item => item.object.userData.productId || item.object.userData.layoutId);
-      if (!hit) return;
+      if (!hit) {
+        if (managerMode && activeBuildKind) { const ground = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0); const point = new THREE.Vector3(); if (raycaster.ray.intersectPlane(ground, point)) placeUnit(activeBuildKind, point.x, point.z); }
+        return;
+      }
       const object = hit.object;
       const productId = object.userData.productId as string | undefined;
       const layoutId = object.userData.layoutId as string | undefined;
@@ -317,9 +334,9 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     const animate = (now: number) => {
       if (!running) return;
       frame = requestAnimationFrame(animate);
-      const keys = keySet.current; const joy = joystickRef.current;
-      const forward = (keys.has("w") || keys.has("arrowup") ? 1 : 0) - (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - joy.y;
-      const sideways = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0) + joy.x;
+      const keys = keySet.current; const move = movementRef.current;
+      const forward = (keys.has("w") || keys.has("arrowup") || move.forward ? 1 : 0) - (keys.has("s") || keys.has("arrowdown") || move.back ? 1 : 0);
+      const sideways = (keys.has("d") || keys.has("arrowright") || move.right ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") || move.left ? 1 : 0);
       const speed = 0.068; const yaw = cameraPose.current.yaw;
       camera.position.x += (Math.sin(yaw) * forward + Math.cos(yaw) * sideways) * speed;
       camera.position.z += (-Math.cos(yaw) * forward + Math.sin(yaw) * sideways) * speed;
@@ -338,7 +355,7 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
       cameraRef.current = null; scene.traverse(object => { const mesh = object as THREE.Mesh; if (mesh.geometry) mesh.geometry.dispose(); if (Array.isArray(mesh.material)) mesh.material.forEach(material => { (material as THREE.MeshStandardMaterial).map?.dispose(); material.dispose(); }); else if (mesh.material) { (mesh.material as THREE.MeshStandardMaterial).map?.dispose(); mesh.material.dispose(); } });
       renderer.dispose(); renderer.domElement.remove();
     };
-  }, [layout, products, productById, managerMode, stock]);
+  }, [layout, products, productById, managerMode, activeBuildKind, activeProductId, stock]);
 
   const teleport = (name: "front" | "barrels" | "shelves" | "cashier") => {
     const camera = cameraRef.current; if (!camera) return;
@@ -391,14 +408,15 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
     } catch { setVoiceActive(false); toast.error("تعذر تشغيل الميكروفون؛ تحقق من إذن المتصفح."); }
   };
 
-  const addUnit = (kind: VirtualStoreNode["kind"]) => {
+  const placeUnit = (kind: VirtualStoreNode["kind"], x?: number, z?: number) => {
+    if (kind === "barrel" && layout.nodes.filter(node => node.kind === "barrel").length >= 20) { toast.error("تم الوصول إلى الحد الأقصى: 20 برميلاً"); return; }
     const index = layout.nodes.filter(node => node.kind === kind).length;
-    const node: VirtualStoreNode = { id: `${kind}-${Date.now().toString(36)}`, kind, x: clamp((index % 3 - 1) * 1.6, -3.8, 3.8), z: clamp(-2 - Math.floor(index / 3) * 1.7, -8.5, 1.6), rotation: kind === "shelf" ? 0 : 0, color: kind === "sack" ? COLORS[6] : COLORS[index % COLORS.length], productIds: activeProductId ? [activeProductId] : [], copies: 6 };
-    changeLayout(prev => ({ ...prev, nodes: [...prev.nodes, node] })); setSelectedNodeId(node.id);
+    const node: VirtualStoreNode = { id: `${kind}-${Date.now().toString(36)}`, kind, x: clamp(x ?? (index % 3 - 1) * 1.6, -4.2, 4.2), z: clamp(z ?? (-2 - Math.floor(index / 3) * 1.7), -9, 2), rotation: 0, color: kind === "sack" ? COLORS[6] : COLORS[index % COLORS.length], productIds: activeProductId ? [activeProductId] : [], copies: 6 };
+    changeLayout(prev => ({ ...prev, nodes: [...prev.nodes, node] })); setSelectedNodeId(node.id); setActiveBuildKind(null);
   };
   const shiftNode = (dx: number, dz: number) => { if (!selectedNodeId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.map(node => node.id === selectedNodeId ? { ...node, x: clamp(node.x + dx, -4.25, 4.25), z: clamp(node.z + dz, -9, 2) } : node) })); };
   const rotateNode = () => { if (!selectedNodeId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.map(node => node.id === selectedNodeId ? { ...node, rotation: node.rotation + Math.PI / 12 } : node) })); };
-  const addProductToNode = () => { if (!selectedNodeId || !activeProductId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.map(node => node.id !== selectedNodeId ? node : node.kind === "shelf" ? { ...node, productIds: Array.from(new Set([...node.productIds, activeProductId])).slice(0, 12), copies: clamp(Number(displayCopies) || 6, 1, 20) } : { ...node, productIds: [activeProductId], copies: clamp(Number(displayCopies) || 6, 1, 20) }) })); };
+  const addProductToNode = () => { if (!selectedNodeId || !activeProductId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.map(node => node.id !== selectedNodeId ? node : { ...node, productIds: node.kind === "shelf" ? Array.from(new Set([...node.productIds, activeProductId])).slice(0, 12) : [activeProductId], copies: clamp(Number(displayCopies) || 6, 1, 20), displayName: barrelLabel.trim() || undefined, displayPrice: barrelPrice.trim() ? Math.max(0, Number(barrelPrice)) : undefined }) })); };
   const fillNode = () => { if (!selectedNodeId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.map(node => node.id === selectedNodeId && node.kind === "shelf" ? { ...node, productIds: products.slice(0, 12).map(product => product.id), copies: 8 } : node) })); };
   const removeNode = () => { if (!selectedNodeId) return; changeLayout(prev => ({ ...prev, nodes: prev.nodes.filter(node => node.id !== selectedNodeId) })); setSelectedNodeId(""); };
   const selectProductForNode = (product: CatalogProduct) => { setActiveProductId(product.id); setSelectedProduct({ product }); };
@@ -413,7 +431,7 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
       </header>
       <div className="grid lg:grid-cols-[minmax(0,1fr)_300px]">
         <div className="relative h-[min(76vh,760px)] min-h-[520px] overflow-hidden bg-[#9ad4ee]" ref={canvasHost} aria-label="مشهد محل أبو رغوة ثلاثي الأبعاد">
-          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-2xl border border-white/70 bg-white/85 px-3 py-2 text-xs font-black text-slate-900 shadow-lg">اسحب الشاشة للالتفات · حرّك العصا للدخول</div>
+          <div className="pointer-events-none absolute left-3 top-3 z-10 rounded-2xl border border-white/70 bg-white/85 px-3 py-2 text-xs font-black text-slate-900 shadow-lg">اسحب الشاشة للالتفات 360° · اضغط أزرار الاتجاه للحركة</div>
           {stockError && <div className="absolute right-3 top-3 z-10 rounded-xl bg-amber-100 px-3 py-2 text-xs font-bold text-amber-950">الأرصدة الحية غير متاحة حالياً</div>}
           <div className="absolute bottom-3 left-3 z-10 grid grid-cols-2 gap-1 rounded-2xl border border-white/70 bg-white/85 p-1.5 shadow-lg" aria-label="تنقل سريع داخل المحل">
             <button type="button" onClick={() => teleport("front")} className="min-h-10 rounded-xl px-2 text-[11px] font-black text-slate-900 hover:bg-orange-100">الواجهة</button>
@@ -421,11 +439,11 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
             <button type="button" onClick={() => teleport("shelves")} className="min-h-10 rounded-xl px-2 text-[11px] font-black text-slate-900 hover:bg-orange-100">الأرفف</button>
             <button type="button" onClick={() => teleport("cashier")} className="min-h-10 rounded-xl px-2 text-[11px] font-black text-slate-900 hover:bg-orange-100">الكاشير</button>
           </div>
-          <div className="absolute bottom-5 right-5 z-10 touch-none" onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); const rect = event.currentTarget.getBoundingClientRect(); joystickRef.current = { x: clamp((event.clientX - rect.left - rect.width / 2) / 30, -1, 1), y: clamp((event.clientY - rect.top - rect.height / 2) / 30, -1, 1) }; }} onPointerMove={event => { if (!event.currentTarget.hasPointerCapture(event.pointerId)) return; const rect = event.currentTarget.getBoundingClientRect(); joystickRef.current = { x: clamp((event.clientX - rect.left - rect.width / 2) / 30, -1, 1), y: clamp((event.clientY - rect.top - rect.height / 2) / 30, -1, 1) }; }} onPointerUp={event => { joystickRef.current = { x: 0, y: 0 }; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { joystickRef.current = { x: 0, y: 0 }; }}>
-            <div className="grid h-28 w-28 place-items-center rounded-full border-2 border-white/80 bg-slate-900/45 shadow-xl backdrop-blur-sm"><div className="grid h-11 w-11 place-items-center rounded-full bg-white/90 text-slate-900"><ArrowUp className="h-5 w-5" /></div></div>
+          <div className="absolute bottom-4 right-4 z-10 grid grid-cols-3 gap-1 rounded-2xl border border-white/60 bg-slate-950/60 p-1.5 shadow-xl backdrop-blur-sm" aria-label="أزرار حركة المحل">
+            {[{ key: "forward", label: "أمام", icon: ArrowUp, cell: "col-start-2" }, { key: "left", label: "شمال", icon: ArrowLeft, cell: "col-start-1 row-start-2" }, { key: "back", label: "خلف", icon: ArrowDown, cell: "col-start-2 row-start-2" }, { key: "right", label: "يمين", icon: ArrowRight, cell: "col-start-3 row-start-2" }].map(({ key, label, icon: Icon, cell }) => <button key={key} type="button" aria-label={label} className={`${cell} grid min-h-12 min-w-12 place-items-center rounded-xl bg-white/90 text-slate-900 active:scale-95 active:bg-orange-200`} onPointerDown={event => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); movementRef.current[key as keyof typeof movementRef.current] = true; }} onPointerUp={event => { movementRef.current[key as keyof typeof movementRef.current] = false; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId); }} onPointerCancel={() => { movementRef.current[key as keyof typeof movementRef.current] = false; }} onPointerLeave={() => { movementRef.current[key as keyof typeof movementRef.current] = false; }}><Icon className="h-5 w-5" /><span className="text-[9px] font-black">{label}</span></button>)}
           </div>
           {managerMode && <div className="absolute left-1/2 top-3 z-20 flex max-w-[90%] -translate-x-1/2 flex-wrap items-center justify-center gap-1.5 rounded-2xl border border-emerald-200/70 bg-slate-950/85 p-2 shadow-xl">
-            <Button type="button" size="sm" onClick={() => addUnit("shelf")} className="min-h-10 bg-emerald-600 font-bold">+ بناء رف</Button><Button type="button" size="sm" onClick={() => addUnit("barrel")} className="min-h-10 bg-cyan-700 font-bold">+ برميل سايب</Button><Button type="button" size="sm" onClick={() => addUnit("sack")} className="min-h-10 bg-amber-700 font-bold">+ شيكارة</Button>
+            <Button type="button" size="sm" onClick={() => setActiveBuildKind(activeBuildKind === "shelf" ? null : "shelf")} className="min-h-10 bg-emerald-600 font-bold">{activeBuildKind === "shelf" ? "انقر الأرض لوضع الرف" : "+ وضع رف"}</Button><Button type="button" size="sm" onClick={() => setActiveBuildKind(activeBuildKind === "barrel" ? null : "barrel")} className="min-h-10 bg-cyan-700 font-bold">{activeBuildKind === "barrel" ? `انقر لوضع البرميل (${layout.nodes.filter(node => node.kind === "barrel").length}/20)` : `+ برميل (${layout.nodes.filter(node => node.kind === "barrel").length}/20)`}</Button><Button type="button" size="sm" onClick={() => setActiveBuildKind(activeBuildKind === "sack" ? null : "sack")} className="min-h-10 bg-amber-700 font-bold">{activeBuildKind === "sack" ? "انقر الأرض لوضع الشيكارة" : "+ وضع شيكارة"}</Button>
             <Button type="button" aria-label="تحريك الوحدة لليسار" size="icon" onClick={() => shiftNode(-0.35, 0)} className="h-10 w-10 bg-white/15"><ArrowLeft className="h-4 w-4" /></Button><Button type="button" aria-label="تحريك الوحدة للأعلى" size="icon" onClick={() => shiftNode(0, -0.35)} className="h-10 w-10 bg-white/15"><ArrowUp className="h-4 w-4" /></Button><Button type="button" aria-label="تحريك الوحدة للأسفل" size="icon" onClick={() => shiftNode(0, 0.35)} className="h-10 w-10 bg-white/15"><ArrowDown className="h-4 w-4" /></Button><Button type="button" aria-label="تحريك الوحدة لليمين" size="icon" onClick={() => shiftNode(0.35, 0)} className="h-10 w-10 bg-white/15"><ArrowRight className="h-4 w-4" /></Button><Button type="button" aria-label="تدوير الوحدة المحددة" size="icon" onClick={rotateNode} disabled={!selectedNode} className="h-10 w-10 bg-white/15"><RotateCw className="h-4 w-4" /></Button><Button type="button" aria-label="حذف الوحدة المحددة" size="icon" onClick={removeNode} disabled={!selectedNode} className="h-10 w-10 bg-red-700"><Trash2 className="h-4 w-4" /></Button>
           </div>}
         </div>
@@ -433,10 +451,10 @@ export default function VirtualStore3D({ shopId, products, cartCount, onAddToCar
           <div className="rounded-2xl border border-orange-300/20 bg-gradient-to-br from-orange-500/20 to-amber-200/5 p-3"><p className="flex items-center gap-2 text-sm font-black"><AudioLines className="h-4 w-4 text-orange-300" />أبو رغوة · بائع المحل</p><p className="mt-2 text-xs leading-6 text-slate-200">{voiceReply}</p></div>
           <div className="flex gap-2"><Button type="button" onClick={startVoice} disabled={voiceActive} className="min-h-12 flex-1 bg-orange-500 font-black hover:bg-orange-400">{voiceActive ? <><AudioLines className="ml-2 h-4 w-4 animate-pulse" />أسمعك...</> : <><Mic className="ml-2 h-4 w-4" />تحدث مع البائع</>}</Button><Button type="button" variant="outline" aria-label="كتم الصوت" onClick={() => window.speechSynthesis?.cancel()} className="min-h-12 border-white/20 bg-transparent text-white hover:bg-white/10"><Volume2 className="h-4 w-4" /></Button></div>
           <form onSubmit={event => { event.preventDefault(); if (voiceText.trim()) askSeller(voiceText); }} className="flex gap-2"><Input value={voiceText} onChange={event => setVoiceText(event.target.value)} placeholder="مثال: حط لي نص كيلو زهرة في السلة" className="min-h-11 border-white/15 bg-white/5 text-white placeholder:text-slate-400" /><Button type="submit" variant="secondary" className="min-h-11">اسأل</Button></form>
-          {managerMode && <section className="space-y-2 rounded-2xl border border-emerald-400/30 bg-emerald-950/30 p-3"><h2 className="text-sm font-black text-emerald-200">تعديل الرصّ · {selectedNode ? selectedNode.kind === "shelf" ? "رف" : selectedNode.kind === "barrel" ? "برميل" : "شيكارة" : "اختر قطعة من المشهد"}</h2><label className="block text-xs font-bold text-slate-200">الصنف الحقيقي<select value={activeProductId} onChange={event => setActiveProductId(event.target.value)} className="mt-1 min-h-11 w-full rounded-xl border border-white/15 bg-[#1d2c41] px-3 text-white"><option value="">اختر منتجاً</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {bulkUnitPrice(product)} ج.م</option>)}</select></label><div className="flex gap-2"><Input type="number" min="1" max="20" value={displayCopies} onChange={event => setDisplayCopies(event.target.value)} className="min-h-11 border-white/15 bg-white/5 text-white" aria-label="عدد النسخ المعروضة" /><Button type="button" onClick={addProductToNode} disabled={!selectedNode || !activeProductId} className="min-h-11 flex-1 bg-emerald-600 font-bold">ربط الصنف بالرصة</Button></div><div className="flex gap-2"><Button type="button" variant="outline" onClick={fillNode} disabled={!selectedNode || selectedNode.kind !== "shelf"} className="min-h-10 flex-1 border-white/15 bg-transparent text-white">ملء الرف تلقائياً</Button><span className="flex items-center rounded-xl border border-white/10 px-2 text-[10px] text-emerald-200">حفظ سحابي تلقائي</span></div></section>}
+          {managerMode && <section className="space-y-2 rounded-2xl border border-emerald-400/30 bg-emerald-950/30 p-3"><h2 className="text-sm font-black text-emerald-200">تعديل الرصّ · {selectedNode ? selectedNode.kind === "shelf" ? "رف" : selectedNode.kind === "barrel" ? "برميل" : "شيكارة" : "اختر قطعة من المشهد"}</h2><label className="block text-xs font-bold text-slate-200">الصنف<select value={activeProductId} onChange={event => { setActiveProductId(event.target.value); const product = products.find(item => item.id === event.target.value); setBarrelLabel(product?.name || ""); setBarrelPrice(product ? String(bulkUnitPrice(product)) : ""); }} className="mt-1 min-h-11 w-full rounded-xl border border-white/15 bg-[#1d2c41] px-3 text-white"><option value="">اختر منتجاً</option>{products.map(product => <option key={product.id} value={product.id}>{product.name} · {bulkUnitPrice(product)} ج.م</option>)}</select></label><div className="grid grid-cols-2 gap-2"><Input value={barrelLabel} onChange={event => setBarrelLabel(event.target.value)} placeholder="الاسم على البرميل" aria-label="اسم الصنف للبرميل" className="min-h-11 border-white/15 bg-white/5 text-white" /><Input type="number" min="0" value={barrelPrice} onChange={event => setBarrelPrice(event.target.value)} placeholder="السعر ج.م" aria-label="سعر الصنف على البرميل" className="min-h-11 border-white/15 bg-white/5 text-white" /></div><div className="flex gap-2"><Input type="number" min="1" max="20" value={displayCopies} onChange={event => setDisplayCopies(event.target.value)} className="min-h-11 border-white/15 bg-white/5 text-white" aria-label="عدد النسخ المعروضة" /><Button type="button" onClick={addProductToNode} disabled={!selectedNode || !activeProductId} className="min-h-11 flex-1 bg-emerald-600 font-bold">ربط الصنف بالرصة</Button></div><div className="flex gap-2"><Button type="button" variant="outline" onClick={fillNode} disabled={!selectedNode || selectedNode.kind !== "shelf"} className="min-h-10 flex-1 border-white/15 bg-transparent text-white">ملء الرف تلقائياً</Button><span className="flex items-center rounded-xl border border-white/10 px-2 text-[10px] text-emerald-200">حفظ سحابي + نسخة محلية</span></div></section>}
           <div className="flex items-center justify-between"><h2 className="text-sm font-black">منتجات المحل</h2><span className="text-[11px] text-slate-400">{products.length} صنف</span></div>
           <div className="grid grid-cols-2 gap-2">{products.slice(0, 12).map(product => { const available = stock[product.id]; return <button type="button" key={product.id} onClick={() => selectProductForNode(product)} className="relative min-h-24 overflow-hidden rounded-xl border border-white/10 bg-white/5 p-2 text-right transition hover:border-orange-300/60 hover:bg-white/10"><span className="absolute left-1 top-1 rounded-full bg-slate-950/80 px-1.5 py-0.5 text-[9px] font-black text-orange-200">{bulkUnitPrice(product)} ج.م</span>{product.catalogImageUrl ? <img src={product.catalogImageUrl} alt="" loading="lazy" className="mb-1 h-12 w-full rounded-lg object-contain" /> : <span className="mb-1 grid h-12 place-items-center rounded-lg bg-white/5"><Package className="h-6 w-6 text-orange-300" /></span>}<span className="block line-clamp-2 text-[10px] font-bold leading-4">{product.name}</span><span className={`mt-1 block text-[9px] font-black ${available === 0 ? "text-red-300" : "text-emerald-300"}`}>{available === 0 ? "نفد مؤقتاً" : available === undefined ? "متوفر" : `متوفر · ${available}`}</span></button>; })}</div>
-          <p className="flex items-start gap-1.5 text-[10px] leading-5 text-slate-400"><CircleHelp className="mt-0.5 h-3.5 w-3.5 shrink-0" />حرّك بالعصا أو أزرار الأسهم، واسحب المشهد لتغيير اتجاه النظر. لمس المنتج يفتح السعر والشراء.</p>
+          <p className="flex items-start gap-1.5 text-[10px] leading-5 text-slate-400"><CircleHelp className="mt-0.5 h-3.5 w-3.5 shrink-0" />اضغط مطولاً أحد أزرار الاتجاه للحركة، واسحب المشهد للالتفات بحرية. لمس المنتج يفتح السعر والشراء.</p>
         </aside>
       </div>
     </div>

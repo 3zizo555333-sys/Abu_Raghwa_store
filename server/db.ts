@@ -80,6 +80,26 @@ export function getSupabaseServerClient(): SupabaseClient | null {
   return null;
 }
 
+let _supabaseServiceRole: SupabaseClient | null = null;
+/** A dedicated privileged client for server-only routes; never falls back to an anon key. */
+export function getSupabaseServiceRoleClient(): SupabaseClient | null {
+  if (_supabaseServiceRole) return _supabaseServiceRole;
+  const url = process.env.SUPABASE_URL
+    || process.env.VITE_SUPABASE_URL
+    || process.env.NEXT_PUBLIC_SUPABASE_URL
+    || (ENV as any)?.SUPABASE_URL
+    || "https://smkqizjpdbnbyoumgdwi.supabase.co";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) return null;
+  try {
+    _supabaseServiceRole = createClient(url, serviceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } });
+    return _supabaseServiceRole;
+  } catch (error) {
+    console.warn("[Supabase] Failed to init service-role client:", error);
+    return null;
+  }
+}
+
 export async function upsertUser(user: InsertUser): Promise<void> {
   if (!user.openId) throw new Error("User openId is required for upsert");
   const db = await getDb();

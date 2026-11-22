@@ -158,6 +158,72 @@ export const appRouter = router({
   }),
 
   catalog: router({
+    virtualStoreLayout: publicProcedure
+      .input(z.object({ shopId: z.string().uuid() }))
+      .query(async ({ input }) => {
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server credentials are not configured" });
+        const client = db.getSupabaseServiceRoleClient();
+        if (!client) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server client is unavailable" });
+        const { data, error } = await client.from("virtual_store_layouts").select("layout_json").eq("id", input.shopId).maybeSingle();
+        if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر تحميل تخطيط المحل" });
+        return data?.layout_json ?? null;
+      }),
+    saveVirtualStoreLayout: publicProcedure
+      .input(z.object({ shopId: z.string().uuid(), layout: z.object({ version: z.literal(1), nodes: z.array(z.object({ id: z.string().max(80), kind: z.enum(["shelf", "barrel", "sack"]), x: z.number(), z: z.number(), rotation: z.number(), color: z.string().max(20).optional(), productIds: z.array(z.string().max(128)).max(30), copies: z.number().int().min(1).max(20).optional(), displayName: z.string().max(100).optional(), displayPrice: z.number().nonnegative().optional() })).max(80) }) }))
+      .mutation(async ({ input, ctx }) => {
+        await requireCatalogAdminSession(ctx.req);
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server credentials are not configured" });
+        const client = db.getSupabaseServiceRoleClient();
+        if (!client) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server client is unavailable" });
+        const { error } = await client.from("virtual_store_layouts").upsert({ id: input.shopId, layout_json: input.layout, updated_at: new Date().toISOString() }, { onConflict: "id" });
+        if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر حفظ تخطيط المحل على الخادم" });
+        return { success: true };
+      }),
+    virtualStoreData: publicProcedure
+      .input(z.object({ shopId: z.string().uuid(), managerAccess: z.boolean().optional() }))
+      .query(async ({ input, ctx }) => {
+        if (input.managerAccess) await requireCatalogAdminSession(ctx.req);
+        if (!process.env.SUPABASE_SERVICE_ROLE_KEY) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server credentials are not configured" });
+        const client = db.getSupabaseServiceRoleClient();
+        if (!client) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "Supabase server client is unavailable" });
+        const [productResult, manualResult, recipeResult] = await Promise.all([
+          client.from("products").select("id,name,unit_name,retail_price,wholesale_retail_price,catalog_price,catalog_visible,catalog_category,catalog_company,category_name,quantity,sale_mode,bulk_unit_name,bulk_unit_price,catalog_image_path,image_id").eq("shop_id", input.shopId).is("deleted_at", null).order("name").limit(1500),
+          client.from("catalog_manual_products").select("id,name,unit,price,is_visible,catalog_image_url,catalog_image_storage_path,description,category_id,company_id,catalog_bulk_unit_price").eq("shop_id", input.shopId).eq("is_visible", true).is("deleted_at", null).limit(500),
+          client.from("recipes").select("id,name,production_unit,retail_price,catalog_price,catalog_visible,catalog_category,catalog_company,category,image_url,production_quantity").eq("shop_id", input.shopId).is("deleted_at", null).limit(500),
+        ]);
+        if (productResult.error || manualResult.error || recipeResult.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر جلب منتجات المتجر الحية" });
+        const rows = [...(productResult.data || [])];
+        const imageIds = rows.filter(row => (input.managerAccess || row.catalog_visible) && !row.catalog_image_path && row.image_id).map(row => row.image_id);
+        const imagePathByProduct = new Map<string, string>();
+        if (imageIds.length) {
+          const imageResult = await client.from("product_images").select("product_id,storage_path").eq("shop_id", input.shopId).in("id", imageIds).limit(1500);
+          for (const image of imageResult.data || []) imagePathByProduct.set(image.product_id, image.storage_path);
+        }
+        const sign = async (bucket: string, path?: string | null) => {
+          if (!path) return undefined;
+          if (/^https?:\/\//i.test(path)) return path;
+          const { data } = await client.storage.from(bucket).createSignedUrl(path, 3600);
+          return data?.signedUrl || client.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+        };
+        const mappedProducts = await Promise.all(rows.filter(row => input.managerAccess || row.catalog_visible).map(async row => ({
+          id: row.id, name: row.name, unit: row.bulk_unit_name || row.unit_name || "عبوة", retailPrice: Number(row.retail_price) || 0,
+          wholesaleRetailPrice: Number(row.wholesale_retail_price) || 0, catalogPrice: row.catalog_price == null ? undefined : Number(row.catalog_price),
+          catalogVisible: row.catalog_visible === true, catalogSource: "product", category: row.catalog_category || row.category_name || "", company: row.catalog_company || "",
+          quantity: Number(row.quantity) || 0, saleMode: row.sale_mode, bulkUnitPrice: row.bulk_unit_price == null ? undefined : Number(row.bulk_unit_price),
+          catalogImageUrl: await sign("product-images", row.catalog_image_path || imagePathByProduct.get(row.id)),
+        })));
+        const mappedManual = await Promise.all((manualResult.data || []).map(async row => ({
+          id: row.id, name: row.name, unit: row.unit || "قطعة", retailPrice: Number(row.price) || 0, catalogPrice: Number(row.price) || 0,
+          wholesaleRetailPrice: Number(row.price) || 0, catalogVisible: true, catalogSource: "manual", category: "", company: "",
+          catalogImageUrl: await sign("catalog-product-images", row.catalog_image_storage_path) || row.catalog_image_url || undefined,
+        })));
+        const mappedRecipes = await Promise.all((recipeResult.data || []).filter(row => input.managerAccess || row.catalog_visible).map(async row => ({
+          id: `catalog_recipe_${row.id}`, name: row.name, unit: row.production_unit || "وحدة", retailPrice: Number(row.retail_price) || 0,
+          catalogPrice: row.catalog_price == null ? undefined : Number(row.catalog_price), wholesaleRetailPrice: Number(row.retail_price) || 0,
+          catalogVisible: row.catalog_visible === true, catalogSource: "recipe", category: row.catalog_category || row.category || "", company: row.catalog_company || "", catalogImageUrl: await sign("formulas", row.image_url),
+        })));
+        return { products: [...mappedProducts, ...mappedManual, ...mappedRecipes], stock: Object.fromEntries(rows.filter(row => input.managerAccess || row.catalog_visible).map(row => [row.id, Math.max(0, Number(row.quantity) || 0)])) };
+      }),
     login: publicProcedure
       .input(z.object({ managerEmail: z.string().email(), managerPassword: z.string().min(1) }))
       .mutation(async ({ input, ctx }) => {
