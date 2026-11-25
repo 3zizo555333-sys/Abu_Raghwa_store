@@ -82,7 +82,7 @@ function catalogMessage(order: CatalogNotification, appUrl: string): TelegramPay
     ? items.map(item => `• ${esc(item.name || "صنف")} × ${Math.max(1, Number(item.quantity) || 1)} | ${money(item.price)} ج.م`).join("\n")
     : "• تفاصيل الأصناف غير متاحة";
   const address = [order.address, order.note].filter(Boolean).join(" — ") || "لم يُسجل عنوان أو ملاحظات";
-  const url = `${appUrl}/catalog-manager?orderId=${encodeURIComponent(order.id)}`;
+  const url = `${appUrl}/catalog-management?orderId=${encodeURIComponent(order.id)}`;
   const text = [
     "🛒 <b>إشعار طلب جديد - تطبيق أبو رغوة</b>",
     "━━━━━━━━━━━━━━━━━━",

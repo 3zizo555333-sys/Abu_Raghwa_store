@@ -371,10 +371,10 @@ export const appRouter = router({
       .input(z.object({ orderIds: z.array(z.string().min(6)).min(1).max(50), customerPhone: z.string().min(7).max(32) }))
       .query(async ({ input }) => db.getCatalogOrdersForCustomer(input.orderIds, input.customerPhone)),
     listOrders: publicProcedure
-      .input(z.object({ includeArchived: z.boolean().optional(), shopId: z.string().uuid().optional() }).optional())
+      .input(z.object({ includeArchived: z.boolean().optional(), shopId: z.string().uuid(), authUserId: z.string().uuid() }))
       .query(async ({ input, ctx }) => {
-        await requireCatalogAdminSession(ctx.req);
-        return db.listCatalogOrders({ includeArchived: input?.includeArchived, shopId: input?.shopId });
+        await requireCatalogOrdersManagerSession(ctx.req, input.shopId, input.authUserId);
+        return db.listCatalogOrders({ includeArchived: input.includeArchived, shopId: input.shopId });
       }),
     archiveOrder: publicProcedure
       .input(z.object({ id: z.string().min(6).max(64) }))
@@ -389,10 +389,10 @@ export const appRouter = router({
         return db.restoreCatalogOrder(input.id);
       }),
     updateOrderStatus: publicProcedure
-      .input(z.object({ id: z.string(), status: z.enum(["new", "contacted", "confirmed", "preparing", "delivered", "cancelled"]) }))
+      .input(z.object({ id: z.string(), shopId: z.string().uuid(), authUserId: z.string().uuid(), status: z.enum(["new", "contacted", "confirmed", "preparing", "ready", "delivered", "cancelled"]) }))
       .mutation(async ({ input, ctx }) => {
-        await requireCatalogAdminSession(ctx.req);
-        const loyalty = await db.updateCatalogOrderStatus(input.id, input.status);
+        await requireCatalogOrdersManagerSession(ctx.req, input.shopId, input.authUserId);
+        const loyalty = await db.updateCatalogOrderStatus(input.id, input.status, input.shopId);
         return { success: true, loyalty };
       }),
     deleteOrder: publicProcedure
@@ -1142,6 +1142,35 @@ async function requireCatalogAdminSession(req: { headers?: Record<string, string
   } catch {
     throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج، سجّل الدخول مرة أخرى" });
   }
+}
+
+async function requireCatalogOrdersManagerSession(req: { headers?: Record<string, string | string[] | undefined> }, shopId: string, authUserId: string) {
+  const session = await requireCatalogAdminSession(req);
+  const email = String(session.email || "").toLowerCase();
+  const user = (await getStoredAccessUsers()).find(item => item.email === email);
+  if (!user || !isActiveStaffAccount(user)) throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج" });
+  if (!['manager', 'admin', 'supervisor'].includes(user.role)) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية إدارة طلبات الكتالوج" });
+  }
+  const supabase = db.getSupabaseServiceRoleClient();
+  if (!supabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة التحقق من عضوية المتجر غير متاحة على الخادم" });
+  const { data: authData, error: authError } = await supabase.auth.admin.getUserById(authUserId);
+  const authUser = authData.user;
+  if (authError || !authUser || authUser.id !== authUserId || authUser.email?.trim().toLowerCase() !== email) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "هوية جلسة الكتالوج لا تطابق حساب Supabase المسجل" });
+  }
+  const { data: memberships, error: membershipError } = await supabase.from("shop_memberships")
+    .select("shop_id,role,status")
+    .eq("user_id", authUserId)
+    .eq("shop_id", shopId)
+    .eq("status", "active")
+    .limit(2);
+  if (membershipError) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من عضوية المتجر" });
+  const hasAuthorizedMembership = (memberships || []).some(membership =>
+    membership.shop_id === shopId && membership.status === "active" && ["manager", "admin", "supervisor"].includes(String(membership.role)),
+  );
+  if (!hasAuthorizedMembership) throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب عضوية إدارة نشطة في المتجر المحدد" });
+  return user;
 }
 
 async function requireOfferManagerSession(req: { headers?: Record<string, string | string[] | undefined> }) {

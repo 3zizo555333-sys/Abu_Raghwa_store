@@ -211,6 +211,7 @@ function Router() {
       <Route path={"/community-admin"} component={withSupervisorRole(withPasswordProtection(CommunityAdminPage, 'screen__community_admin', 'إدارة السحوبات والمسابقات'))} />
       <Route path={"/catalog"} component={PublicCatalogPage} />
       <Route path={"/catalog-manager"} component={withManagerRole(withPasswordProtection(CatalogManager, 'screen__catalog_manager', 'إدارة الكتالوج'))} />
+      <Route path={"/catalog-management"} component={withManagerRole(withPasswordProtection(CatalogManager, 'screen__catalog_management', 'إدارة الكتالوج'))} />
       <Route path={"/customer-display"} component={CustomerDisplay} />
       <Route path={"/led-display"} component={LedDisplay} />
       <Route path={"/voice"} component={withSupervisorRole(withPasswordProtection(VoiceAssistant, 'screen__voice', 'المساعد الصوتي'))} />

@@ -15,6 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
 import { type CatalogCategory, type CatalogCompany, type CatalogProduct, type CatalogRecipe, CATALOG_PHONE, getCatalogDiscountPercent, getCatalogPrice, getSafeCatalogDetailsUrl, getTrustedCatalogImageUrl, recipeToCatalogProduct } from "@/lib/catalog";
+import { isCatalogOrderArchived, type CatalogOrderStatus } from "../../../shared/catalogOrderStatus";
 import { trpc } from "@/lib/trpc";
 import { buildCatalogFulfillmentUrl, normalizeDeliveryMarkupPercent, type CatalogPricingConfig } from "@/lib/catalogPricing";
 import { deleteCatalogCategory, deleteCatalogCompany, deleteCatalogManualProduct, listCatalogDisplayData, reorderCatalogTaxonomy, saveCatalogCategory, saveCatalogCompany, saveCatalogFormulation, saveCatalogManualProduct, saveCatalogSetting } from "@/lib/supabase/operations";
@@ -47,7 +48,7 @@ type CatalogOrder = {
   orderType?: "catalog" | "offer";
   offerTitle?: string | null;
   loyaltyPoints?: number;
-  status: "new" | "contacted" | "confirmed" | "preparing" | "delivered" | "cancelled";
+  status: CatalogOrderStatus;
   createdAt: Date | string;
 };
 
@@ -56,6 +57,7 @@ const STATUS_LABELS = {
   contacted: { label: "تم التواصل", className: "bg-blue-100 text-blue-800 border-blue-200" },
   confirmed: { label: "مؤكد", className: "bg-green-100 text-green-800 border-green-200" },
   preparing: { label: "جارٍ توفير المنتجات", className: "bg-violet-100 text-violet-800 border-violet-200" },
+  ready: { label: "جاهز للاستلام", className: "bg-cyan-100 text-cyan-800 border-cyan-200" },
   delivered: { label: "تم التسليم", className: "bg-emerald-100 text-emerald-800 border-emerald-200" },
   cancelled: { label: "ملغي", className: "bg-slate-100 text-slate-700 border-slate-200" },
 };
@@ -78,6 +80,7 @@ export default function CatalogManager() {
   const [manualProducts, setManualProducts] = useState<CatalogProduct[]>([]);
   const [pricingConfig, setPricingConfig] = useState<CatalogPricingConfig>({ deliveryMarkupPercent: 0 });
   const [catalogShopId, setCatalogShopId] = useState("");
+  const [catalogAuthUserId, setCatalogAuthUserId] = useState("");
   const [virtualStoreOpen, setVirtualStoreOpen] = useState(false);
   const [newCategory, setNewCategory] = useState("");
   const [newCompany, setNewCompany] = useState("");
@@ -104,6 +107,7 @@ export default function CatalogManager() {
   });
   const [archiveOpen, setArchiveOpen] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
+  const soundTimeoutsRef = useRef<Set<number>>(new Set());
   const ordersRefreshTimer = useRef<number | null>(null);
   const knownOrderIds = useRef<Set<string> | null>(null);
   const trpcUtils = trpc.useUtils();
@@ -111,26 +115,27 @@ export default function CatalogManager() {
   const pickupCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "pickup", catalogShopId || undefined);
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
-  const loadOrders = useCallback(async (shopId: string) => {
-    setOrdersLoading(true);
+  const loadOrders = useCallback(async (shopId: string, authUserId: string, options: { silent?: boolean } = {}) => {
+    const silent = options.silent === true;
+    if (!silent) setOrdersLoading(true);
     setOrdersError(null);
     try {
-      const result = await trpcUtils.catalog.listOrders.fetch({ shopId, includeArchived: false });
+      const result = await trpcUtils.catalog.listOrders.fetch({ shopId, authUserId, includeArchived: true });
       setOrders(result.map((row: any) => ({
         id: String(row.id), shopId: row.shopId, customerName: String(row.customerName || ""), customerPhone: String(row.customerPhone || ""),
         address: row.deliveryAddress || row.address || null, note: row.note || null, itemsJson: row.itemsJson || JSON.stringify(row.items || []),
-        totalAmount: Number(row.totalAmount || 0), status: row.status === "pending" ? "new" : row.status || "new",
+        totalAmount: Number(row.totalAmount || 0), status: row.status as CatalogOrderStatus,
         createdAt: row.createdAt, loyaltyPointsAwarded: Number(row.loyaltyPointsAwarded || 0), orderType: row.orderType || "catalog",
         offerTitle: row.offerTitle || null, loyaltyPoints: Number(row.loyaltyPoints || 0),
       })));
     } catch (error) {
       setOrdersError(error instanceof Error ? error : new Error("تعذر تحميل طلبات الكتالوج من Supabase"));
-      setOrders([]);
+      if (!silent) setOrders([]);
     } finally {
-      setOrdersLoading(false);
+      if (!silent) setOrdersLoading(false);
     }
   }, [trpcUtils]);
-  const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId) void loadOrders(catalogShopId); } });
+  const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId && catalogAuthUserId) void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
   const [stagingProduct, setStagingProduct] = useState<{ id: string; name: string; price: number } | null>(null);
   const [manualProductToDelete, setManualProductToDelete] = useState<CatalogProduct | null>(null);
@@ -175,7 +180,8 @@ export default function CatalogManager() {
     void getActiveShopContext().then(async context => {
       if (!active) return;
       setCatalogShopId(context.shopId);
-      await loadOrders(context.shopId);
+      setCatalogAuthUserId(context.userId);
+      await loadOrders(context.shopId, context.userId);
       await loadCatalog();
       unsubscribe = await subscribeToShopChanges(context.shopId, () => { void loadCatalog().catch(() => undefined); });
     }).catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"); });
@@ -246,15 +252,23 @@ export default function CatalogManager() {
       utterance.lang = "ar-EG";
       utterance.pitch = pitches[index];
       utterance.rate = 0.9;
-      window.setTimeout(() => window.speechSynthesis.speak(utterance), 650 + index * 620);
+      const timeout = window.setTimeout(() => {
+        soundTimeoutsRef.current.delete(timeout);
+        try {
+          if (window.localStorage.getItem("catalog_audio_enabled") === "true") window.speechSynthesis.speak(utterance);
+        } catch { /* storage restrictions must not interrupt order handling */ }
+      }, 650 + index * 620);
+      soundTimeoutsRef.current.add(timeout);
     });
   };
 
   const playOrderAlert = () => {
     if (!soundEnabled) return;
     try {
+      if (window.localStorage.getItem("catalog_audio_enabled") !== "true") return;
       const context = getAudioContext();
       void context.resume().then(() => {
+        if (window.localStorage.getItem("catalog_audio_enabled") !== "true") return;
         playOrderMelody(context);
         speakOrderAlert();
       }).catch(() => undefined);
@@ -282,12 +296,30 @@ export default function CatalogManager() {
     };
   }, [soundEnabled]);
 
-  const enableOrderSound = () => {
+  const stopOrderSound = () => {
+    soundTimeoutsRef.current.forEach(timeout => window.clearTimeout(timeout));
+    soundTimeoutsRef.current.clear();
+    try { window.speechSynthesis.cancel(); } catch { /* speech may be unavailable */ }
+    try {
+      if (audioContextRef.current?.state === "running") void audioContextRef.current.suspend().catch(() => undefined);
+    } catch { /* browser may not support suspending audio */ }
+  };
+
+  const toggleOrderSound = () => {
+    if (soundEnabled) {
+      try { window.localStorage.setItem("catalog_audio_enabled", "false"); } catch { /* state still turns off for this session */ }
+      setSoundEnabled(false);
+      stopOrderSound();
+      toast.info("رنة الطلبات متوقفة؛ ستظل الطلبات تظهر بصمت");
+      return;
+    }
     try {
       window.localStorage.setItem("catalog_audio_enabled", "true");
       setSoundEnabled(true);
       const context = getAudioContext();
-      void context.resume().then(() => playOrderMelody(context));
+      void context.resume().then(() => {
+        if (window.localStorage.getItem("catalog_audio_enabled") === "true") playOrderMelody(context);
+      }).catch(() => undefined);
       toast.success("تم تفعيل رنة طلبات الكتالوج على هذا الهاتف");
       if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();
     } catch {
@@ -303,15 +335,16 @@ export default function CatalogManager() {
       knownOrderIds.current = currentIds;
       return;
     }
-    const newOrders = currentOrders.filter(order => !knownOrderIds.current?.has(order.id) && order.status === "new");
+    const newOrders = currentOrders.filter(order => !knownOrderIds.current?.has(order.id) && !isCatalogOrderArchived(order.status));
     knownOrderIds.current = currentIds;
     if (!newOrders.length) return;
     const newestOrder = newOrders[0];
     toast.success(`طلب جديد من ${newestOrder.customerName}`);
-    if (typeof Notification !== "undefined" && Notification.permission === "granted") {
+    if (soundEnabled) playOrderAlert();
+    if (soundEnabled && typeof Notification !== "undefined" && Notification.permission === "granted") {
       new Notification("طلب جديد من كتالوج أبو رغوة", { body: `طلب جديد من ${newestOrder.customerName} بقيمة ${newestOrder.totalAmount} ج.م` });
     }
-  }, [orders]);
+  }, [orders, soundEnabled]);
 
   useEffect(() => {
     if (!catalogUrl) return;
@@ -330,51 +363,48 @@ export default function CatalogManager() {
   }, [pickupCatalogUrl, deliveryCatalogUrl]);
 
   useEffect(() => {
-    if (!catalogShopId) return;
+    if (!catalogShopId || !catalogAuthUserId) return;
     let channel: RealtimeChannel | undefined;
     let client: ReturnType<typeof getSupabaseClient> | undefined;
     try {
       client = getSupabaseClient();
       channel = client
         .channel(`catalog-orders:${catalogShopId}`)
-        .on("postgres_changes", { event: "INSERT", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, payload => {
+        .on("postgres_changes", { event: "INSERT", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
           try {
-            const insertedId = String((payload.new as any)?.id ?? "");
-            try { playOrderAlert(); } catch { /* keep alert isolated from refetch */ }
-            if (insertedId) {
-              const known = knownOrderIds.current || new Set<string>();
-              known.add(insertedId);
-              knownOrderIds.current = known;
-            }
             try {
               if (ordersRefreshTimer.current !== null) window.clearTimeout(ordersRefreshTimer.current);
               ordersRefreshTimer.current = window.setTimeout(() => {
                 ordersRefreshTimer.current = null;
-                try { void loadOrders(catalogShopId); } catch { /* loadOrders reports its own errors */ }
+                try { void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } catch { /* loadOrders reports its own errors */ }
               }, 100);
             } catch {
-              try { void loadOrders(catalogShopId); } catch { /* never let a burst of events crash React */ }
+              try { void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } catch { /* never let a burst of events crash React */ }
             }
           } catch { /* malformed Realtime payloads must not escape the listener */ }
         })
         .on("postgres_changes", { event: "UPDATE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
-          try { void loadOrders(catalogShopId); } catch { /* safely ignore transient listener failures */ }
+          try { void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } catch { /* safely ignore transient listener failures */ }
         })
         .on("postgres_changes", { event: "DELETE", schema: "public", table: "catalog_orders", filter: `shop_id=eq.${catalogShopId}` }, () => {
-          try { void loadOrders(catalogShopId); } catch { /* safely ignore transient listener failures */ }
+          try { void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } catch { /* safely ignore transient listener failures */ }
         })
         .subscribe();
     } catch {
       // The server query and polling remain the fallback when Realtime is unavailable.
     }
+    const pollingInterval = window.setInterval(() => {
+      void loadOrders(catalogShopId, catalogAuthUserId, { silent: true });
+    }, 8000);
     return () => {
+      window.clearInterval(pollingInterval);
       if (ordersRefreshTimer.current !== null) {
         window.clearTimeout(ordersRefreshTimer.current);
         ordersRefreshTimer.current = null;
       }
       if (channel && client) void client.removeChannel(channel);
     };
-  }, [catalogShopId, loadOrders, soundEnabled]);
+  }, [catalogShopId, catalogAuthUserId, loadOrders]);
 
   const safeProducts = useMemo(() => Array.isArray(products) ? products.filter(Boolean) : [], [products]);
   const safeManualProducts = useMemo(() => Array.isArray(manualProducts) ? manualProducts.filter(Boolean) : [], [manualProducts]);
@@ -425,8 +455,8 @@ export default function CatalogManager() {
   const filteredProducts = useMemo(() => managedProducts.filter(product => `${product.name ?? ""} ${product.category ?? ""} ${product.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [managedProducts, search]);
   const filteredRecipes = useMemo(() => catalogRecipes.filter(recipe => `${recipe.name ?? ""} ${recipe.category ?? ""} ${recipe.company ?? ""}`.toLowerCase().includes(search.toLowerCase())), [catalogRecipes, search]);
   const visibleProducts = [...managedProducts, ...catalogRecipes].filter(product => product.catalogVisible === true).length;
-  const openOrders = orders.filter(order => !["confirmed", "delivered", "cancelled"].includes(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-  const archivedOrders = orders.filter(order => ["confirmed", "delivered", "cancelled"].includes(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const openOrders = orders.filter(order => !isCatalogOrderArchived(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const archivedOrders = orders.filter(order => isCatalogOrderArchived(order.status)).sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   const newOrders = orders.filter(order => order.status === "new").length;
 
   const addCategory = async () => {
@@ -686,7 +716,7 @@ export default function CatalogManager() {
     const currentOrder = orders.find(order => order.id === id);
     setOrders(current => current.map(order => order.id === id ? { ...order, status } : order));
     try {
-      const result = await updateOrderStatus.mutateAsync({ id, status });
+      const result = await updateOrderStatus.mutateAsync({ id, status, shopId: catalogShopId, authUserId: catalogAuthUserId });
       const awardedPoints = Number((result as any)?.loyalty?.awardedPoints || 0);
       toast.success(currentOrder?.orderType === "offer" && (status === "confirmed" || status === "delivered")
         ? awardedPoints > 0 ? `تم اعتماد العرض وإضافة ${awardedPoints} نقطة للعميل.` : "تم اعتماد العرض."
@@ -732,7 +762,7 @@ export default function CatalogManager() {
         <div className="text-left"><p className="text-xs text-slate-500">{isOfferOrder ? "سعر العرض" : "إجمالي الطلب"}</p><p className="text-xl font-black text-green-700">{safeTotal} ج.م</p></div>
       </div>
       <div className="mt-3 rounded-xl bg-orange-50 p-3 text-xs text-slate-700">{(items || []).map((item, index) => { const quantity = Number.isFinite(Number(item?.quantity)) ? Number(item.quantity) : 0; const price = Number.isFinite(Number(item?.price)) ? Number(item.price) : 0; return <p key={`${item?.name || "صنف"}-${index}`}>• {item?.name || "صنف"} × {quantity} — {price * quantity} ج.م {Number(item?.loyaltyPoints || 0) > 0 && <span className="font-black text-amber-700">· {Number(item.loyaltyPoints) * quantity} نقطة</span>}</p>; })}<p className="mt-2 border-t border-orange-200 pt-2 font-black text-amber-700">نقاط الطلب عند التسليم: {Number(order.loyaltyPointsAwarded || 0)} نقطة</p></div>
-      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{isOfferOrder && next === "confirmed" ? "موافقة وإضافة النقاط" : isOfferOrder && next === "cancelled" ? "رفض العرض" : STATUS_LABELS[next].label}</Button>)}</div>
+      <div className="mt-3 flex flex-wrap gap-2"><Button size="sm" disabled={!whatsappPhone} onClick={() => window.open(`https://wa.me/${whatsappPhone}`, "_blank", "noopener,noreferrer")} className="bg-green-600 hover:bg-green-700"><Phone className="ml-1 h-3.5 w-3.5" />تواصل واتساب</Button>{(["contacted", "confirmed", "preparing", "ready", "delivered", "cancelled"] as const).map(next => <Button key={next} size="sm" variant="outline" disabled={order.status === next} onClick={() => void updateStatus(order.id, next)}>{isOfferOrder && next === "confirmed" ? "موافقة وإضافة النقاط" : isOfferOrder && next === "cancelled" ? "رفض العرض" : STATUS_LABELS[next].label}</Button>)}</div>
     </article>;
   };
 
@@ -832,14 +862,14 @@ export default function CatalogManager() {
 
         <section aria-labelledby="open-orders-heading" className="scroll-mt-4">
           <Card className="border-0 shadow-sm ring-2 ring-orange-100">
-            <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle id="open-orders-heading" className="flex items-center gap-2"><History className="text-orange-600" />الطلبات الجديدة / قيد الانتظار <span className="rounded-full bg-orange-100 px-2 py-0.5 text-sm text-orange-800">{openOrders.length}</span></CardTitle><CardDescription>الطلبات الجديدة وقيد المتابعة تظهر هنا فور وصولها.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={enableOrderSound}>{soundEnabled ? "🔔 الرنة مفعلة" : "تفعيل رنة الطلبات"}</Button></div></CardHeader>
-            <CardContent>{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : openOrders.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات جديدة أو قيد الانتظار.</p> : <div className="space-y-3">{openOrders.map(renderOrderCard)}</div>}</CardContent>
+            <CardHeader><div className="flex flex-wrap items-center justify-between gap-3"><div><CardTitle id="open-orders-heading" className="flex items-center gap-2"><History className="text-orange-600" />الطلبات الجديدة / قيد الانتظار <span className="rounded-full bg-orange-100 px-2 py-0.5 text-sm text-orange-800">{openOrders.length}</span></CardTitle><CardDescription>الطلبات الجديدة وقيد المتابعة تظهر هنا فور وصولها.</CardDescription></div><Button type="button" size="sm" variant={soundEnabled ? "default" : "outline"} onClick={toggleOrderSound}>{soundEnabled ? "رنة التطبيق: مفعّلة — إيقاف" : "رنة التطبيق: غير مفعّلة — تفعيل رنة الطلبات"}</Button></div></CardHeader>
+            <CardContent>{ordersError && <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm font-semibold text-red-700">تعذر تحديث الطلبات: {ordersError.message}</p>}{ordersLoading ? <p className="py-8 text-center text-sm text-slate-500">جاري تحميل الطلبات...</p> : openOrders.length === 0 ? <p className="py-8 text-center text-sm text-slate-500">لا توجد طلبات جديدة أو قيد الانتظار.</p> : <div className="space-y-3">{openOrders.map(renderOrderCard)}</div>}</CardContent>
           </Card>
         </section>
         <details className="group rounded-2xl" open={archiveOpen} onToggle={event => setArchiveOpen(event.currentTarget.open)}>
           <summary className="cursor-pointer list-none rounded-2xl border bg-white p-4 shadow-sm"><span className="flex items-center justify-between font-black text-slate-900"><span className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />أرشيف الطلبات المكتملة <span className="rounded-full bg-slate-100 px-2 py-0.5 text-sm">{archivedOrders.length}</span></span><span className="text-sm text-slate-500">{archiveOpen ? "إخفاء ▲" : "عرض ▼"}</span></span></summary>
           <div className="mt-3 space-y-4"><Card className="border-0 shadow-sm"><CardContent className="space-y-3 p-4">{archivedOrders.length ? archivedOrders.map(renderOrderCard) : <p className="py-5 text-center text-sm text-slate-500">لا توجد طلبات مكتملة أو ملغية في الأرشيف.</p>}</CardContent></Card>
-            {archivedOrders.length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{archivedOrders.map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><CopyCodeButton code={order.id} /></div><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} onChange={event => void updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
+            {archivedOrders.length > 0 && <Card className="border-0 shadow-sm"><CardHeader><CardTitle className="flex items-center gap-2"><CheckCircle2 className="text-blue-600" />تحديث متابعة العميل</CardTitle><CardDescription>غيّر حالة الطلب هنا، وسيظهر التحديث تلقائيًا للعميل في صفحة «طلباتي».</CardDescription></CardHeader><CardContent className="space-y-3">{archivedOrders.map(order => <div key={`tracking-${order.id}`} className="flex flex-col gap-3 rounded-2xl border border-blue-100 bg-blue-50/50 p-3 sm:flex-row sm:items-center sm:justify-between"><div><div className="flex flex-wrap items-center gap-2"><p className="font-black text-slate-900">{order.customerName} <span className="text-xs font-bold text-blue-700">#{order.id.slice(-6).toUpperCase()}</span></p><CopyCodeButton code={order.id} /></div><p className="text-xs text-slate-500">الحالة الحالية: {STATUS_LABELS[order.status].label}</p></div><select value={order.status} onChange={event => void updateStatus(order.id, event.target.value as CatalogOrder["status"])} className="rounded-xl border border-blue-200 bg-white px-3 py-2 text-sm font-bold text-blue-900"><option value="new">طلب جديد</option><option value="contacted">تم التواصل</option><option value="confirmed">مؤكد</option><option value="preparing">جارٍ توفير المنتجات</option><option value="ready">جاهز للاستلام</option><option value="delivered">تم التسليم</option><option value="cancelled">ملغي</option></select></div>)}</CardContent></Card>}
           </div>
         </details>
         <section className="grid gap-4 md:grid-cols-3">

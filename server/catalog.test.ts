@@ -47,6 +47,36 @@ describe("حسابات كتالوج المتجر", () => {
 describe("طلبات كتالوج العملاء", () => {
   let staffAccounts: any[] = [];
 
+  function mockCatalogMembershipClient(input: { authUserId: string; email: string; authorizedShopId: string }) {
+    const filters: Record<string, string> = {};
+    const membershipQuery = {
+      select: vi.fn(() => membershipQuery),
+      eq: vi.fn((column: string, value: string) => { filters[column] = value; return membershipQuery; }),
+      limit: vi.fn(async () => ({
+        data: filters.user_id === input.authUserId && filters.shop_id === input.authorizedShopId && filters.status === "active"
+          ? [{ shop_id: input.authorizedShopId, role: "manager", status: "active" }]
+          : [],
+        error: null,
+      })),
+    };
+    const serviceClient = {
+      auth: {
+        admin: {
+          getUserById: vi.fn(async (id: string) => ({
+            data: { user: id === input.authUserId ? { id, email: input.email } : null },
+            error: null,
+          })),
+        },
+      },
+      from: vi.fn((table: string) => {
+        if (table !== "shop_memberships") throw new Error(`Unexpected table ${table}`);
+        return membershipQuery;
+      }),
+    };
+    vi.spyOn(db, "getSupabaseServiceRoleClient").mockReturnValue(serviceClient as any);
+    return serviceClient;
+  }
+
   beforeEach(() => {
     staffAccounts = [];
     vi.spyOn(db, "getStaffAccounts").mockImplementation(async () => staffAccounts as any);
@@ -95,14 +125,19 @@ describe("طلبات كتالوج العملاء", () => {
     const managerCaller = appRouter.createCaller({ req: { protocol: "https", headers: {} }, res: { cookie: (_name: string, value: string) => cookies.push(value) } } as any);
     const publicCaller = appRouter.createCaller({} as any);
     const order = { id: "catalog_order_1", customerName: "عميل", customerPhone: "01000000000", itemsJson: "[]", totalAmount: 50, fulfillmentMethod: "delivery" as const, priceAdjustmentPercent: 12 };
+    const shopId = "123e4567-e89b-12d3-a456-426614174000";
+    const authUserId = "123e4567-e89b-12d3-a456-426614174002";
+    mockCatalogMembershipClient({ authUserId, email: "catalog-orders-manager@example.com", authorizedShopId: shopId });
 
     await expect(publicCaller.catalog.createOrder(order)).resolves.toEqual({ success: true, id: order.id });
     expect(create).toHaveBeenCalledWith(order);
     const login = await managerCaller.catalog.login({ managerEmail: "catalog-orders-manager@example.com", managerPassword: "secure-pass" });
     expect(login).toMatchObject({ success: true, token: expect.any(String) });
     const sessionCaller = appRouter.createCaller({ req: { headers: { cookie: `abu_catalog_admin=${cookies[0]}` } }, res: {} } as any);
-    await expect(sessionCaller.catalog.updateOrderStatus({ id: order.id, status: "preparing" })).resolves.toEqual({ success: true });
-    expect(update).toHaveBeenCalledWith(order.id, "preparing");
+    await expect(sessionCaller.catalog.updateOrderStatus({ id: order.id, shopId, authUserId, status: "preparing" })).resolves.toEqual({ success: true });
+    expect(update).toHaveBeenCalledWith(order.id, "preparing", shopId);
+    await expect(sessionCaller.catalog.updateOrderStatus({ id: order.id, shopId, authUserId, status: "ready" })).resolves.toEqual({ success: true });
+    expect(update).toHaveBeenLastCalledWith(order.id, "ready", shopId);
     await expect(sessionCaller.catalog.archiveOrder({ id: order.id })).resolves.toEqual({ success: true, pointsReversed: 3 });
     await expect(sessionCaller.catalog.restoreOrder({ id: order.id })).resolves.toEqual({ success: true, pointsRestored: 3 });
     await expect(sessionCaller.catalog.deleteOrder({ id: order.id })).resolves.toEqual({ success: true, loyaltyPointsReversed: 3 });
@@ -112,7 +147,26 @@ describe("طلبات كتالوج العملاء", () => {
     expect(remove).toHaveBeenCalledWith(order.id);
     expect(restoreSalePoints).toHaveBeenCalledWith({ restoreId: "restore-1", saleId: "INV-test-1", customerName: "عميل", customerCode: "LOY-1", points: 3 });
     const phoneSessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": login.token } }, res: {} } as any);
-    await expect(phoneSessionCaller.catalog.listOrders()).resolves.toEqual([]);
+    await expect(phoneSessionCaller.catalog.listOrders({ shopId, authUserId })).resolves.toEqual([]);
+  }, 15_000);
+
+  it("يرفض مدير الكتالوج إذا لم تكن له عضوية نشطة في المتجر المطلوب", async () => {
+    const listOrders = vi.spyOn(db, "listCatalogOrders").mockResolvedValue([]);
+    const updateStatus = vi.spyOn(db, "updateCatalogOrderStatus").mockResolvedValue(undefined);
+    vi.spyOn(db, "getGlobalAppSetting").mockResolvedValue({ key: "abu_raghwa_users", dataJson: JSON.stringify([{ email: "catalog-orders-manager@example.com", password: "secure-pass", role: "manager", isApproved: true }]), updatedAt: new Date() });
+    const cookies: string[] = [];
+    const managerCaller = appRouter.createCaller({ req: { protocol: "https", headers: {} }, res: { cookie: (_name: string, value: string) => cookies.push(value) } } as any);
+    await managerCaller.catalog.login({ managerEmail: "catalog-orders-manager@example.com", managerPassword: "secure-pass" });
+    const authUserId = "123e4567-e89b-12d3-a456-426614174002";
+    const authorizedShopId = "123e4567-e89b-12d3-a456-426614174000";
+    const requestedShopId = "123e4567-e89b-12d3-a456-426614174001";
+    mockCatalogMembershipClient({ authUserId, email: "catalog-orders-manager@example.com", authorizedShopId });
+    const sessionCaller = appRouter.createCaller({ req: { headers: { cookie: `abu_catalog_admin=${cookies[0]}` } }, res: {} } as any);
+
+    await expect(sessionCaller.catalog.listOrders({ shopId: requestedShopId, authUserId })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    await expect(sessionCaller.catalog.updateOrderStatus({ id: "catalog_order_1", shopId: requestedShopId, authUserId, status: "confirmed" })).rejects.toMatchObject({ code: "FORBIDDEN" });
+    expect(listOrders).not.toHaveBeenCalled();
+    expect(updateStatus).not.toHaveBeenCalled();
   }, 15_000);
 
   it("يعرض للعميل طلباته المحفوظة فقط عند مطابقة رقم الهاتف", async () => {
@@ -125,8 +179,10 @@ describe("طلبات كتالوج العملاء", () => {
 
   it("يمنع الزبون العام من قراءة طلبات العملاء أو تعديل حالتها", async () => {
     const caller = appRouter.createCaller({} as any);
-    await expect(caller.catalog.listOrders()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    await expect(caller.catalog.updateOrderStatus({ id: "order-1", status: "confirmed" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    const shopId = "123e4567-e89b-12d3-a456-426614174000";
+    const authUserId = "123e4567-e89b-12d3-a456-426614174002";
+    await expect(caller.catalog.listOrders({ shopId, authUserId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.catalog.updateOrderStatus({ id: "order-1", shopId, authUserId, status: "confirmed" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller.catalog.archiveOrder({ id: "order-123" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller.catalog.restoreOrder({ id: "order-123" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
     await expect(caller.catalog.deleteOrder({ id: "order-123" })).rejects.toMatchObject({ code: "UNAUTHORIZED" });

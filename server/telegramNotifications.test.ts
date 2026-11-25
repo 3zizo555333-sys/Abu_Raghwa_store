@@ -32,7 +32,7 @@ describe("إشعارات طلبات Telegram", () => {
     expect(body.text).toContain("عميل &lt;اختبار&gt;");
     expect(body.text).toContain("صابون × 2");
     expect(body.text).toContain("الإجمالي النهائي المستحق: <b>25 ج.م</b>");
-    expect(body.reply_markup.inline_keyboard[0][0].url).toBe("https://shop.example/catalog-manager?orderId=catalog-123");
+    expect(body.reply_markup.inline_keyboard[0][0].url).toBe("https://shop.example/catalog-management?orderId=catalog-123");
   });
 
   it("يرسل تفاصيل طلب العرض ورابط لوحة العروض", async () => {

@@ -18,7 +18,7 @@ describe("route-scoped PWA installability", () => {
     expect(isPublicCustomerPath(path)).toBe(true);
   });
 
-  it.each(["/", "/auth", "/dashboard", "/catalog-manager", "/offers"]) (
+  it.each(["/", "/auth", "/dashboard", "/catalog-manager", "/catalog-management", "/offers"]) (
     "keeps %s as a staff/installable route",
     path => expect(isPublicCustomerPath(path)).toBe(false),
   );

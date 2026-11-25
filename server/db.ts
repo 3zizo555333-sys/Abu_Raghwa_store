@@ -12,6 +12,7 @@ import { mergeSharedOfferRecords, removeOfferFromLegacyData } from "./sharedOffe
 import { createSupabaseCatalogOrder, getSupabaseCatalogOrdersForCustomer } from "./supabaseCatalogOrders";
 import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
 import { catalogCouponValidationError } from "../shared/catalogCouponRules";
+import { normalizeCatalogOrderStatus, toDatabaseCatalogOrderStatus, type CatalogOrderStatus } from "../shared/catalogOrderStatus";
 import * as loyaltyModule from "./supabaseLoyalty";
 import {
   applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile,
@@ -606,58 +607,60 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   }
   return { id: order.id, customerCode };
 }
+
+function requireCatalogOrdersServiceRoleClient(): SupabaseClient {
+  const client = getSupabaseServiceRoleClient();
+  if (!client) throw new Error("مسار إدارة طلبات الكتالوج يتطلب SUPABASE_SERVICE_ROLE_KEY على الخادم");
+  return client;
+}
+
 export async function listCatalogOrders(options: { includeArchived?: boolean; shopId?: string } = {}) {
-  const supabase = getSupabaseServerClient();
-  if (supabase) {
-    try {
-      let query = supabase.from("catalog_orders").select("*").order("created_at", { ascending: false });
-      if (options.shopId) query = query.eq("shop_id", options.shopId);
-      if (!options.includeArchived) {
-        query = query.is("archived_at", null);
-      }
-      const { data, error } = await query;
-      if (!error && Array.isArray(data)) {
-        return data.map((r: any) => ({
-          id: r.id,
-          shopId: r.shop_id ?? r.shopId ?? "",
-          customerName: r.customer_name ?? r.customerName ?? "",
-          customerPhone: r.customer_phone ?? r.customerPhone ?? "",
-          customerCode: r.customer_code ?? r.customerCode ?? null,
-          address: r.address ?? r.delivery_address ?? null,
-          deliveryAddress: r.delivery_address ?? r.address ?? null,
-          note: r.note ?? null,
-          itemsJson: typeof r.items_json === "string" ? r.items_json : JSON.stringify(r.items ?? r.items_json ?? []),
-          totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
-          status: (r.status === "pending" ? "new" : r.status || "new") as CatalogOrderStatus,
-          fulfillmentMethod: (r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup") as "pickup" | "delivery",
-          priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
-          loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
-          orderType: r.order_type ?? r.orderType ?? "catalog",
-          offerId: r.offer_id ?? r.offerId ?? null,
-          offerTitle: r.offer_title ?? r.offerTitle ?? null,
-          loyaltyPoints: Number(r.loyalty_points ?? r.loyaltyPoints ?? 0),
-          offerSnapshot: r.offer_snapshot ?? r.offerSnapshot ?? null,
-          createdAt: r.created_at ? new Date(r.created_at) : new Date(),
-          updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
-          archivedAt: r.archived_at ? new Date(r.archived_at) : null,
-          archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
-        }));
-      }
-    } catch (err) {
-      console.warn("[Catalog] listCatalogOrders Supabase error:", err);
-    }
+  const supabase = requireCatalogOrdersServiceRoleClient();
+  const pageSize = 500;
+  const rows: any[] = [];
+  let offset = 0;
+
+  while (true) {
+    let query = supabase.from("catalog_orders").select("*")
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .range(offset, offset + pageSize - 1);
+    if (options.shopId) query = query.eq("shop_id", options.shopId);
+    if (!options.includeArchived) query = query.is("archived_at", null);
+
+    const { data, error } = await query;
+    if (error) throw new Error(`تعذر تحميل طلبات الكتالوج: ${error.message}`);
+    const page = Array.isArray(data) ? data : [];
+    rows.push(...page);
+    if (page.length < pageSize) break;
+    offset += pageSize;
   }
 
-  const db = await getDb();
-  if (!db) return [];
-  try {
-    const filters = !options.includeArchived ? [isNull(catalogOrders.archivedAt)] : [];
-    const query = filters.length ? db.select().from(catalogOrders).where(and(...filters)) : db.select().from(catalogOrders);
-    return query.orderBy(desc(catalogOrders.createdAt));
-  } catch (err) {
-    console.warn("[Catalog] listCatalogOrders DB error:", err);
-    return [];
-  }
+  return rows.map((r: any) => ({
+    id: r.id,
+    shopId: r.shop_id ?? r.shopId ?? "",
+    customerName: r.customer_name ?? r.customerName ?? "",
+    customerPhone: r.customer_phone ?? r.customerPhone ?? "",
+    customerCode: r.customer_code ?? r.customerCode ?? null,
+    address: r.address ?? r.delivery_address ?? null,
+    deliveryAddress: r.delivery_address ?? r.address ?? null,
+    note: r.note ?? null,
+    itemsJson: typeof r.items_json === "string" ? r.items_json : JSON.stringify(r.items ?? r.items_json ?? []),
+    totalAmount: Number(r.total_amount ?? r.totalAmount ?? 0),
+    status: normalizeCatalogOrderStatus(r.status),
+    fulfillmentMethod: (r.fulfillment_method ?? r.fulfillmentMethod ?? "pickup") as "pickup" | "delivery",
+    priceAdjustmentPercent: Number(r.price_adjustment_percent ?? r.priceAdjustmentPercent ?? 0),
+    loyaltyPointsAwarded: Number(r.loyalty_points_awarded ?? r.loyaltyPointsAwarded ?? 0),
+    orderType: r.order_type ?? r.orderType ?? "catalog",
+    offerId: r.offer_id ?? r.offerId ?? null,
+    offerTitle: r.offer_title ?? r.offerTitle ?? null,
+    loyaltyPoints: Number(r.loyalty_points ?? r.loyaltyPoints ?? 0),
+    offerSnapshot: r.offer_snapshot ?? r.offerSnapshot ?? null,
+    createdAt: r.created_at ? new Date(r.created_at) : new Date(),
+    updatedAt: r.updated_at ? new Date(r.updated_at) : new Date(),
+    archivedAt: r.archived_at ? new Date(r.archived_at) : null,
+    archivedPointsReversed: Number(r.archived_points_reversed ?? r.archivedPointsReversed ?? 0),
+  }));
 }
 
 export async function archiveCatalogOrder(id: string) {
@@ -750,7 +753,7 @@ export async function deleteCatalogOrder(id: string) {
   return { success: true as const, loyaltyPointsReversed: Number(order.archivedPointsReversed || order.archived_points_reversed || 0) };
 }
 
-export type CatalogOrderStatus = "new" | "contacted" | "confirmed" | "preparing" | "delivered" | "cancelled";
+export type { CatalogOrderStatus };
 export type LoyaltyTransaction = SupabaseLoyaltyTransaction;
 
 function parseJsonArray<T>(value: unknown): T[] {
@@ -886,67 +889,56 @@ export async function restoreDirectSaleLoyalty(input: { restoreId: string; saleI
   return { profile: await getSupabaseLoyaltyProfile({ phone: existing.phone }), pointsRestored: Number(event.points_delta) || 0 };
 }
 
-export async function updateCatalogOrderStatus(id: string, status: CatalogOrderStatus) {
-  const supabase = getSupabaseServerClient();
-  if (supabase) {
-    const offerLookup = await supabase.from("catalog_orders").select("order_type").eq("id", id).maybeSingle();
-    if (offerLookup.error) throw new Error(`تعذر التحقق من نوع الطلب: ${offerLookup.error.message}`);
-    if (offerLookup.data?.order_type === "offer") {
-      if (status === "confirmed" || status === "delivered") return approveSupabaseOfferPurchaseRequest(id);
-      if (status === "cancelled") return cancelSupabaseOfferPurchaseRequest(id);
-      const nextStatus = status === "new" ? "pending" : "contacted";
-      const update = await supabase.from("catalog_orders").update({ status: nextStatus, updated_at: new Date().toISOString() }).eq("id", id);
-      if (update.error) throw new Error(`تعذر تحديث طلب العرض: ${update.error.message}`);
-      return { awardedPoints: 0 };
+export async function updateCatalogOrderStatus(id: string, status: CatalogOrderStatus, shopId: string) {
+  const supabase = requireCatalogOrdersServiceRoleClient();
+  const lookup = await supabase.from("catalog_orders").select("*").eq("id", id).eq("shop_id", shopId).maybeSingle();
+  if (lookup.error) throw new Error(`تعذر جلب الطلب لتحديثه: ${lookup.error.message}`);
+  const order = lookup.data as any;
+  if (!order) throw new Error("الطلب غير موجود أو لا يخص المتجر المحدد");
+
+  if (order.order_type === "offer") {
+    if (status === "confirmed") return approveSupabaseOfferPurchaseRequest(id);
+    if (status === "delivered") {
+      const approval = await approveSupabaseOfferPurchaseRequest(id);
+      const update = await supabase.from("catalog_orders").update({ status: "delivered", updated_at: new Date().toISOString() }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
+      if (update.error) throw new Error(`تعذر إكمال طلب العرض: ${update.error.message}`);
+      if (!update.data) throw new Error("الطلب غير موجود لإكماله");
+      return approval;
     }
-  }
-  const db = await getDb();
-  if (db) {
-    try {
-      const rows = await db.select().from(catalogOrders).where(eq(catalogOrders.id, id)).limit(1);
-      const order = rows[0];
-      if (order) {
-        let awardedPoints = Number(order.loyaltyPointsAwarded || 0);
-        if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
-          const points = await getPointsFromItems(order.itemsJson);
-          if (points > 0) {
-            const event = await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
-            awardedPoints = Math.max(0, Number(event.points_delta) || 0);
-          }
-        }
-        if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0) {
-          await applySupabaseLoyaltyEvent({ phone: order.customerPhone, name: order.customerName, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
-          awardedPoints = 0;
-        }
-        await db.update(catalogOrders).set({ status, loyaltyPointsAwarded: awardedPoints }).where(eq(catalogOrders.id, id));
-        return { awardedPoints };
-      }
-    } catch { }
+    if (status === "cancelled") return cancelSupabaseOfferPurchaseRequest(id);
+    const update = await supabase.from("catalog_orders").update({ status: toDatabaseCatalogOrderStatus(status), updated_at: new Date().toISOString() }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
+    if (update.error) throw new Error(`تعذر تحديث طلب العرض: ${update.error.message}`);
+    if (!update.data) throw new Error("الطلب غير موجود لتحديثه");
+    return { awardedPoints: 0 };
   }
 
-  if (supabase) {
-    const { data } = await supabase.from("catalog_orders").select("*").eq("id", id).maybeSingle();
-    const order = data as any;
-    if (!order) throw new Error("الطلب غير موجود");
-    let awardedPoints = Number(order.loyalty_points_awarded ?? order.loyaltyPointsAwarded ?? 0);
-    const phone = order.customer_phone ?? order.customerPhone;
-    const name = order.customer_name ?? order.customerName;
-    const itemsJson = typeof order.items_json === "string" ? order.items_json : JSON.stringify(order.items_json ?? []);
-    if (status === "delivered" && order.status !== "delivered" && awardedPoints === 0) {
-      const points = await getPointsFromItems(itemsJson);
-      if (points > 0 && phone) {
-        const event = await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${order.id.slice(-6).toUpperCase()}` });
-        awardedPoints = Math.max(0, Number(event.points_delta) || 0);
-      }
+  const previousStatus = normalizeCatalogOrderStatus(order.status);
+  let awardedPoints = Number(order.loyalty_points_awarded ?? order.loyaltyPointsAwarded ?? 0);
+  const phone = order.customer_phone ?? order.customerPhone;
+  const name = order.customer_name ?? order.customerName;
+  const itemsJson = typeof order.items_json === "string" ? order.items_json : JSON.stringify(order.items ?? order.items_json ?? []);
+
+  if (status === "delivered" && previousStatus !== "delivered" && awardedPoints === 0) {
+    const points = await getPointsFromItems(itemsJson);
+    if (points > 0 && phone) {
+      const event = await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${String(order.id).slice(-6).toUpperCase()}` });
+      awardedPoints = Math.max(0, Number(event.points_delta) || 0);
     }
-    if (status === "cancelled" && order.status !== "cancelled" && awardedPoints > 0 && phone) {
-      await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${order.id.slice(-6).toUpperCase()}` });
-      awardedPoints = 0;
-    }
-    await supabase.from("catalog_orders").update({ status, loyalty_points_awarded: awardedPoints }).eq("id", id);
-    return { awardedPoints };
   }
-  throw new Error("قاعدة البيانات غير متاحة لتحديث الطلب الآن");
+
+  if (status === "cancelled" && previousStatus !== "cancelled" && awardedPoints > 0 && phone) {
+    await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: -awardedPoints, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:reversed`, description: `سحب نقاط الطلب الملغي #${String(order.id).slice(-6).toUpperCase()}` });
+    awardedPoints = 0;
+  }
+
+  const update = await supabase.from("catalog_orders").update({
+    status: toDatabaseCatalogOrderStatus(status),
+    loyalty_points_awarded: awardedPoints,
+    updated_at: new Date().toISOString(),
+  }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
+  if (update.error) throw new Error(`تعذر تحديث حالة طلب الكتالوج: ${update.error.message}`);
+  if (!update.data) throw new Error("الطلب غير موجود أو لا يخص المتجر المحدد");
+  return { awardedPoints };
 }
 
 export async function getCatalogOrdersForCustomer(orderIds: string[], customerPhone: string) {
