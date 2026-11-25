@@ -7,6 +7,7 @@ import { buildCatalogFulfillmentUrl, getCatalogFulfillmentMode, getFulfillmentPr
 import * as db from "./db";
 import * as storage from "./storage";
 import { appRouter } from "./routers";
+import { signCatalogAdminToken } from "./catalogAdminSession";
 
 describe("حسابات كتالوج المتجر", () => {
   it("يستخدم سعر الكتالوج ويحسب الخصم من السعر القديم", () => {
@@ -52,10 +53,10 @@ describe("طلبات كتالوج العملاء", () => {
     const membershipQuery = {
       select: vi.fn(() => membershipQuery),
       eq: vi.fn((column: string, value: string) => { filters[column] = value; return membershipQuery; }),
-      limit: vi.fn(async () => ({
+      maybeSingle: vi.fn(async () => ({
         data: filters.user_id === input.authUserId && filters.shop_id === input.authorizedShopId && filters.status === "active"
-          ? [{ shop_id: input.authorizedShopId, role: "manager", status: "active" }]
-          : [],
+          ? { shop_id: input.authorizedShopId, role: "manager", status: "active" }
+          : null,
         error: null,
       })),
     };
@@ -78,6 +79,7 @@ describe("طلبات كتالوج العملاء", () => {
   }
 
   beforeEach(() => {
+    vi.stubEnv("JWT_SECRET", "test-catalog-admin-signing-key-with-32-chars-minimum");
     staffAccounts = [];
     vi.spyOn(db, "getStaffAccounts").mockImplementation(async () => staffAccounts as any);
     vi.spyOn(db, "importStaffAccounts").mockImplementation(async accounts => { staffAccounts = [...accounts] as any; });
@@ -89,6 +91,7 @@ describe("طلبات كتالوج العملاء", () => {
     await db.deleteStaffAccount("catalog-orders-manager@example.com").catch(() => undefined);
     await db.deleteStaffAccount("catalog-images-manager@example.com").catch(() => undefined);
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
   it("يعرض ملف الولاء باستخدام الكود المولد من أربع خانات دون الحاجة للهاتف", async () => {
@@ -129,25 +132,27 @@ describe("طلبات كتالوج العملاء", () => {
     const authUserId = "123e4567-e89b-12d3-a456-426614174002";
     mockCatalogMembershipClient({ authUserId, email: "catalog-orders-manager@example.com", authorizedShopId: shopId });
 
-    await expect(publicCaller.catalog.createOrder(order)).resolves.toEqual({ success: true, id: order.id });
+    await expect(publicCaller.catalog.createOrder(order)).resolves.toEqual({ success: true, id: order.id, earnedPoints: 0, loyaltyPointsBalanceAfterApproval: 0 });
     expect(create).toHaveBeenCalledWith(order);
     const login = await managerCaller.catalog.login({ managerEmail: "catalog-orders-manager@example.com", managerPassword: "secure-pass" });
     expect(login).toMatchObject({ success: true, token: expect.any(String) });
-    const sessionCaller = appRouter.createCaller({ req: { headers: { cookie: `abu_catalog_admin=${cookies[0]}` } }, res: {} } as any);
+    const legacyCaller = appRouter.createCaller({ req: { headers: { cookie: `abu_catalog_admin=${cookies[0]}` } }, res: {} } as any);
+    const localToken = await signCatalogAdminToken({ purpose: "catalog-admin", authType: "local-pin", sub: authUserId, shopId, scope: "catalog", role: "manager", featureKey: "screen__catalog_management" });
+    const sessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": localToken } }, res: {} } as any);
+    await expect(sessionCaller.catalog.listOrders({ shopId, authUserId })).resolves.toEqual([]);
     await expect(sessionCaller.catalog.updateOrderStatus({ id: order.id, shopId, authUserId, status: "preparing" })).resolves.toEqual({ success: true });
     expect(update).toHaveBeenCalledWith(order.id, "preparing", shopId);
     await expect(sessionCaller.catalog.updateOrderStatus({ id: order.id, shopId, authUserId, status: "ready" })).resolves.toEqual({ success: true });
     expect(update).toHaveBeenLastCalledWith(order.id, "ready", shopId);
-    await expect(sessionCaller.catalog.archiveOrder({ id: order.id })).resolves.toEqual({ success: true, pointsReversed: 3 });
-    await expect(sessionCaller.catalog.restoreOrder({ id: order.id })).resolves.toEqual({ success: true, pointsRestored: 3 });
-    await expect(sessionCaller.catalog.deleteOrder({ id: order.id })).resolves.toEqual({ success: true, loyaltyPointsReversed: 3 });
-    await expect(sessionCaller.catalog.restoreDirectSaleLoyalty({ restoreId: "restore-1", saleId: "INV-test-1", customerName: "عميل", customerCode: "LOY-1", points: 3 })).resolves.toEqual({ profile: null, pointsRestored: 3 });
+    await expect(legacyCaller.catalog.archiveOrder({ id: order.id })).resolves.toEqual({ success: true, pointsReversed: 3 });
+    await expect(legacyCaller.catalog.restoreOrder({ id: order.id })).resolves.toEqual({ success: true, pointsRestored: 3 });
+    await expect(legacyCaller.catalog.deleteOrder({ id: order.id })).resolves.toEqual({ success: true, loyaltyPointsReversed: 3 });
+    await expect(legacyCaller.catalog.restoreDirectSaleLoyalty({ restoreId: "restore-1", saleId: "INV-test-1", customerName: "عميل", customerCode: "LOY-1", points: 3 })).resolves.toEqual({ profile: null, pointsRestored: 3 });
     expect(archive).toHaveBeenCalledWith(order.id);
     expect(restore).toHaveBeenCalledWith(order.id);
     expect(remove).toHaveBeenCalledWith(order.id);
     expect(restoreSalePoints).toHaveBeenCalledWith({ restoreId: "restore-1", saleId: "INV-test-1", customerName: "عميل", customerCode: "LOY-1", points: 3 });
-    const phoneSessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": login.token } }, res: {} } as any);
-    await expect(phoneSessionCaller.catalog.listOrders({ shopId, authUserId })).resolves.toEqual([]);
+    expect(login).toMatchObject({ success: true, token: expect.any(String) });
   }, 15_000);
 
   it("يرفض مدير الكتالوج إذا لم تكن له عضوية نشطة في المتجر المطلوب", async () => {
@@ -161,7 +166,8 @@ describe("طلبات كتالوج العملاء", () => {
     const authorizedShopId = "123e4567-e89b-12d3-a456-426614174000";
     const requestedShopId = "123e4567-e89b-12d3-a456-426614174001";
     mockCatalogMembershipClient({ authUserId, email: "catalog-orders-manager@example.com", authorizedShopId });
-    const sessionCaller = appRouter.createCaller({ req: { headers: { cookie: `abu_catalog_admin=${cookies[0]}` } }, res: {} } as any);
+    const localToken = await signCatalogAdminToken({ purpose: "catalog-admin", authType: "local-pin", sub: authUserId, shopId: requestedShopId, scope: "catalog", role: "manager", featureKey: "screen__catalog_management" });
+    const sessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": localToken } }, res: {} } as any);
 
     await expect(sessionCaller.catalog.listOrders({ shopId: requestedShopId, authUserId })).rejects.toMatchObject({ code: "FORBIDDEN" });
     await expect(sessionCaller.catalog.updateOrderStatus({ id: "catalog_order_1", shopId: requestedShopId, authUserId, status: "confirmed" })).rejects.toMatchObject({ code: "FORBIDDEN" });
@@ -178,7 +184,7 @@ describe("طلبات كتالوج العملاء", () => {
   });
 
   it("يمنع الزبون العام من قراءة طلبات العملاء أو تعديل حالتها", async () => {
-    const caller = appRouter.createCaller({} as any);
+    const caller = appRouter.createCaller({ req: { headers: {} } } as any);
     const shopId = "123e4567-e89b-12d3-a456-426614174000";
     const authUserId = "123e4567-e89b-12d3-a456-426614174002";
     await expect(caller.catalog.listOrders({ shopId, authUserId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });

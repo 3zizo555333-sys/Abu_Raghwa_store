@@ -4,8 +4,10 @@ import { systemRouter } from "./_core/systemRouter";
 import { protectedProcedure, publicProcedure, router } from "./_core/trpc";
 import { z } from "zod";
 import { TRPCError } from "@trpc/server";
+import { createClient } from "@supabase/supabase-js";
 import { SignJWT, jwtVerify } from "jose";
 import { randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
+import { signCatalogAdminToken, verifyCatalogAdminToken } from "./catalogAdminSession";
 import * as db from "./db";
 import { storageGetSignedUrl, storagePreparePut, storagePut } from "./storage";
 import { parseInvoiceDataUrl, safeInvoiceFilename } from "./invoiceUpload";
@@ -252,6 +254,18 @@ export const appRouter = router({
         });
         return { success: true, token };
       }),
+    issueLocalAdminSession: publicProcedure
+      .input(z.object({
+        shopId: z.string().uuid(),
+        scope: z.enum(["catalog", "offers"]),
+        accessToken: z.string().min(40).max(4096),
+        featureKey: z.string().max(120).optional(),
+        pin: z.string().regex(/^(?:[0-9]{4}|[0-9]{6})$/).optional(),
+      }))
+      .mutation(async ({ input }) => issueLocalCatalogAdminSession(input)),
+    renewLocalAdminSession: publicProcedure
+      .input(z.object({ shopId: z.string().uuid(), scope: z.enum(["catalog", "offers"]) }))
+      .mutation(async ({ input, ctx }) => renewLocalCatalogAdminSession(ctx.req, input)),
     uploadProductImage: publicProcedure
       .input(z.object({
         productId: z.string().min(1).max(128),
@@ -283,7 +297,7 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const request = await db.createOfferPurchaseRequest(input);
         if (request.created) {
-          try { await notifyOfferPurchase(request); }
+          try { await notifyOfferPurchase({ ...request, earnedPoints: request.offerPoints, loyaltyPointsBalanceAfterApproval: request.loyaltyPointsBalanceAfterApproval }); }
           catch (error) { console.warn("[Telegram] Offer notification skipped", { reason: error instanceof Error ? error.name : "unknown" }); }
         }
         return request;
@@ -292,21 +306,22 @@ export const appRouter = router({
       .input(z.object({ id: z.string().min(16).max(96), customerCode: z.string().min(4).max(48) }))
       .query(async ({ input }) => db.getCustomerOfferPurchaseStatus(input)),
     listOfferPurchaseRequests: publicProcedure
-      .query(async ({ ctx }) => {
-        await requireOfferManagerSession(ctx.req);
-        return db.listOfferPurchaseRequests();
+      .input(z.object({ shopId: z.string().uuid(), authUserId: z.string().uuid() }))
+      .query(async ({ input, ctx }) => {
+        await requireOfferManagerSession(ctx.req, input.shopId, input.authUserId);
+        return db.listOfferPurchaseRequests(input.shopId);
       }),
     approveOfferPurchaseRequest: publicProcedure
-      .input(z.object({ id: z.string().min(16).max(96) }))
+      .input(z.object({ id: z.string().min(16).max(96), shopId: z.string().uuid(), authUserId: z.string().uuid() }))
       .mutation(async ({ input, ctx }) => {
-        await requireOfferManagerSession(ctx.req);
-        return db.approveOfferPurchaseRequest(input.id);
+        await requireOfferManagerSession(ctx.req, input.shopId, input.authUserId);
+        return db.approveOfferPurchaseRequest(input.id, input.shopId);
       }),
     cancelOfferPurchaseRequest: publicProcedure
-      .input(z.object({ id: z.string().min(16).max(96) }))
+      .input(z.object({ id: z.string().min(16).max(96), shopId: z.string().uuid(), authUserId: z.string().uuid() }))
       .mutation(async ({ input, ctx }) => {
-        await requireOfferManagerSession(ctx.req);
-        return db.cancelOfferPurchaseRequest(input.id);
+        await requireOfferManagerSession(ctx.req, input.shopId, input.authUserId);
+        return db.cancelOfferPurchaseRequest(input.id, input.shopId);
       }),
     listLoyaltyCustomers: publicProcedure
       .query(async ({ ctx }) => {
@@ -361,11 +376,11 @@ export const appRouter = router({
       .mutation(async ({ input }) => {
         const result = await db.createCatalogOrder(input);
         try {
-          await notifyCatalogOrder({ ...input, id: result?.id || input.id });
+          await notifyCatalogOrder({ ...input, id: result?.id || input.id, earnedPoints: Number(result?.earnedPoints) || 0, loyaltyPointsBalanceAfterApproval: Number(result?.loyaltyPointsBalanceAfterApproval) || 0 });
         } catch (error) {
           console.warn("[Telegram] Catalog notification skipped", { orderId: input.id, reason: error instanceof Error ? error.name : "unknown" });
         }
-        return { success: true, id: result?.id || input.id, ...(result?.customerCode ? { customerCode: result.customerCode } : {}) };
+        return { success: true, id: result?.id || input.id, earnedPoints: Number(result?.earnedPoints) || 0, loyaltyPointsBalanceAfterApproval: Number(result?.loyaltyPointsBalanceAfterApproval) || 0, ...(result?.customerCode ? { customerCode: result.customerCode } : {}) };
       }),
     getCustomerOrders: publicProcedure
       .input(z.object({ orderIds: z.array(z.string().min(6)).min(1).max(50), customerPhone: z.string().min(7).max(32) }))
@@ -862,7 +877,6 @@ async function resolveProductImageUrl(imageUrl?: string) {
 
 const CATALOG_ADMIN_COOKIE = "abu_catalog_admin";
 const CATALOG_SESSION_MAX_AGE_MS = 12 * 60 * 60 * 1000;
-const CATALOG_SESSION_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || "abu-raghwa-catalog-session");
 
 async function assertCatalogManager(email: string, password: string) {
   const user = (await getStoredAccessUsers()).find(candidate => candidate.email === email.trim().toLowerCase() && verifyStaffPassword(password, candidate.passwordHash || ""));
@@ -873,11 +887,7 @@ async function assertCatalogManager(email: string, password: string) {
 }
 
 async function createCatalogAdminSession(email: string) {
-  return new SignJWT({ email, purpose: "catalog-admin" })
-    .setProtectedHeader({ alg: "HS256" })
-    .setIssuedAt()
-    .setExpirationTime("12h")
-    .sign(CATALOG_SESSION_SECRET);
+  return signCatalogAdminToken({ email, purpose: "catalog-admin" });
 }
 
 function readCookie(cookieHeader: string | undefined, name: string) {
@@ -1126,62 +1136,174 @@ async function requireEmployeeFinanceSession(req: { headers?: Record<string, str
   }
 }
 
-async function requireCatalogAdminSession(req: { headers?: Record<string, string | string[] | undefined> }) {
-  const cookieHeader = req?.headers?.cookie;
-  const rawCookie = Array.isArray(cookieHeader) ? cookieHeader.join(";") : cookieHeader;
-  const rawHeaderToken = req?.headers?.["x-abu-catalog-session"];
-  const headerToken = Array.isArray(rawHeaderToken) ? rawHeaderToken[0] : rawHeaderToken;
-  const token = headerToken || readCookie(rawCookie, CATALOG_ADMIN_COOKIE);
-  if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "يلزم تسجيل دخول الإدارة لمتابعة الطلبات" });
-  try {
-    const { payload } = await jwtVerify(token, CATALOG_SESSION_SECRET);
-    if (payload.purpose !== "catalog-admin" || typeof payload.email !== "string") throw new Error("invalid catalog session");
-    const user = (await getStoredAccessUsers()).find(item => item.email === String(payload.email).toLowerCase());
-    if (!user || user.isBlocked || !user.isApproved) throw new Error("inactive catalog session");
-    return payload;
-  } catch {
-    throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج، سجّل الدخول مرة أخرى" });
-  }
+type CatalogAdminRequest = { headers?: Record<string, string | string[] | undefined> };
+
+function catalogAdminTokenFromRequest(req: CatalogAdminRequest): string | null {
+  const rawHeader = req.headers?.["x-abu-catalog-session"];
+  const headerToken = Array.isArray(rawHeader) ? rawHeader[0] : rawHeader;
+  if (headerToken?.trim()) return headerToken.trim();
+  const rawCookie = req.headers?.cookie;
+  return readCookie(Array.isArray(rawCookie) ? rawCookie.join(";") : rawCookie, CATALOG_ADMIN_COOKIE);
 }
 
-async function requireCatalogOrdersManagerSession(req: { headers?: Record<string, string | string[] | undefined> }, shopId: string, authUserId: string) {
-  const session = await requireCatalogAdminSession(req);
-  const email = String(session.email || "").toLowerCase();
-  const user = (await getStoredAccessUsers()).find(item => item.email === email);
-  if (!user || !isActiveStaffAccount(user)) throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج" });
-  if (!['manager', 'admin', 'supervisor'].includes(user.role)) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية إدارة طلبات الكتالوج" });
-  }
+function catalogFeatureKey(scope: "catalog" | "offers", requested?: string): string {
+  const permitted = scope === "offers"
+    ? ["screen__smart_offers"]
+    : ["screen__catalog_management", "screen__catalog_manager"];
+  if (requested && !permitted.includes(requested)) throw new TRPCError({ code: "BAD_REQUEST", message: "معرّف قفل الإدارة لا يطابق الصفحة المطلوبة" });
+  return requested || permitted[0];
+}
+
+async function activeShopMembership(userId: string, shopId: string) {
   const supabase = db.getSupabaseServiceRoleClient();
   if (!supabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة التحقق من عضوية المتجر غير متاحة على الخادم" });
-  const { data: authData, error: authError } = await supabase.auth.admin.getUserById(authUserId);
-  const authUser = authData.user;
-  if (authError || !authUser || authUser.id !== authUserId || authUser.email?.trim().toLowerCase() !== email) {
-    throw new TRPCError({ code: "FORBIDDEN", message: "هوية جلسة الكتالوج لا تطابق حساب Supabase المسجل" });
-  }
-  const { data: memberships, error: membershipError } = await supabase.from("shop_memberships")
+  const { data, error } = await supabase.from("shop_memberships")
     .select("shop_id,role,status")
-    .eq("user_id", authUserId)
+    .eq("user_id", userId)
     .eq("shop_id", shopId)
     .eq("status", "active")
-    .limit(2);
-  if (membershipError) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من عضوية المتجر" });
-  const hasAuthorizedMembership = (memberships || []).some(membership =>
-    membership.shop_id === shopId && membership.status === "active" && ["manager", "admin", "supervisor"].includes(String(membership.role)),
-  );
-  if (!hasAuthorizedMembership) throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب عضوية إدارة نشطة في المتجر المحدد" });
-  return user;
+    .maybeSingle();
+  if (error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر التحقق من عضوية المتجر" });
+  if (!data || data.shop_id !== shopId || data.status !== "active") {
+    throw new TRPCError({ code: "FORBIDDEN", message: "لا توجد عضوية نشطة لهذا الحساب في المتجر المحدد" });
+  }
+  return { shopId: String(data.shop_id), role: String(data.role), status: String(data.status) };
 }
 
-async function requireOfferManagerSession(req: { headers?: Record<string, string | string[] | undefined> }) {
-  const session = await requireCatalogAdminSession(req);
-  const email = String(session.email || "").toLowerCase();
-  const user = (await getStoredAccessUsers()).find(item => item.email === email);
-  if (!user || !isActiveStaffAccount(user)) throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة الإدارة" });
-  if (user.role !== "manager" && user.role !== "admin" && user.role !== "supervisor" && user.role !== "seller") {
-    throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية معالجة طلبات العروض" });
+function catalogRoleAllowed(scope: "catalog" | "offers", role: string) {
+  return scope === "catalog"
+    ? ["manager", "admin", "supervisor"].includes(role)
+    : ["manager", "admin", "supervisor", "seller"].includes(role);
+}
+
+async function makeLocalCatalogAdminToken(input: { userId: string; email?: string | null; shopId: string; scope: "catalog" | "offers"; role: string; featureKey: string }) {
+  return signCatalogAdminToken({
+    purpose: "catalog-admin",
+    authType: "local-pin",
+    sub: input.userId,
+    ...(input.email ? { email: input.email.trim().toLowerCase() } : {}),
+    shopId: input.shopId,
+    scope: input.scope,
+    role: input.role,
+    featureKey: input.featureKey,
+  });
+}
+
+async function issueLocalCatalogAdminSession(input: {
+  shopId: string;
+  scope: "catalog" | "offers";
+  accessToken: string;
+  featureKey?: string;
+  pin?: string;
+}) {
+  const featureKey = catalogFeatureKey(input.scope, input.featureKey);
+  const supabase = db.getSupabaseServiceRoleClient();
+  if (!supabase) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "خدمة التحقق من جلسة المتجر غير متاحة" });
+  const { data: authData, error: authError } = await supabase.auth.getUser(input.accessToken);
+  const user = authData.user;
+  if (authError || !user?.id) throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة المتجر السحابية؛ أعد تسجيل الدخول إلى حساب الموظف" });
+
+  const membership = await activeShopMembership(user.id, input.shopId);
+  if (!catalogRoleAllowed(input.scope, membership.role)) throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية إدارة الصفحة المطلوبة" });
+
+  const lockResult = await supabase.from("shop_feature_locks").select("enabled")
+    .eq("shop_id", input.shopId).eq("feature_key", featureKey).maybeSingle();
+  if (lockResult.error) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "تعذر قراءة إعداد قفل PIN للصفحة" });
+  if (lockResult.data?.enabled && !input.pin) throw new TRPCError({ code: "UNAUTHORIZED", message: "أدخل PIN الصفحة المحلية أولاً" });
+
+  const url = process.env.SUPABASE_URL?.trim() || process.env.VITE_SUPABASE_URL?.trim();
+  const anonKey = process.env.SUPABASE_ANON_KEY?.trim() || process.env.VITE_SUPABASE_ANON_KEY?.trim();
+  if (!url || !anonKey) throw new TRPCError({ code: "INTERNAL_SERVER_ERROR", message: "إعدادات التحقق من PIN غير مكتملة على الخادم" });
+  const pinClient = createClient(url, anonKey, {
+    auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
+    global: { headers: { Authorization: `Bearer ${input.accessToken}` } },
+  });
+  const pinResult = await pinClient.rpc("verify_shop_feature_lock_pin", {
+    p_shop_id: input.shopId,
+    p_feature_key: featureKey,
+    p_pin: input.pin || null,
+  });
+  if (pinResult.error || pinResult.data !== true) throw new TRPCError({ code: "UNAUTHORIZED", message: "رمز PIN غير صحيح أو انتهت صلاحية الجلسة" });
+
+  const token = await makeLocalCatalogAdminToken({
+    userId: user.id,
+    email: user.email,
+    shopId: input.shopId,
+    scope: input.scope,
+    role: membership.role,
+    featureKey,
+  });
+  return { token, expiresIn: CATALOG_SESSION_MAX_AGE_MS, shopId: input.shopId, scope: input.scope };
+}
+
+async function requireLocalCatalogAdminClaims(req: CatalogAdminRequest) {
+  const token = catalogAdminTokenFromRequest(req);
+  if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "افتح الصفحة عبر قفل PIN المحلي لإنشاء جلسة الإدارة" });
+  let payload: Awaited<ReturnType<typeof verifyCatalogAdminToken>>;
+  try { payload = await verifyCatalogAdminToken(token); }
+  catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج؛ افتح الصفحة مجدداً عبر PIN المحلي" }); }
+  if (payload.purpose !== "catalog-admin" || payload.authType !== "local-pin" || typeof payload.sub !== "string" || typeof payload.shopId !== "string" || (payload.scope !== "catalog" && payload.scope !== "offers")) {
+    throw new TRPCError({ code: "UNAUTHORIZED", message: "يلزم رمز إدارة محلي موقّع ومحدد بالمتجر" });
   }
-  return user;
+  return payload as Awaited<ReturnType<typeof verifyCatalogAdminToken>> & { authType: "local-pin"; sub: string; shopId: string; scope: "catalog" | "offers"; role?: string; featureKey?: string; email?: string };
+}
+
+async function renewLocalCatalogAdminSession(req: CatalogAdminRequest, input: { shopId: string; scope: "catalog" | "offers" }) {
+  const claims = await requireLocalCatalogAdminClaims(req);
+  if (claims.shopId !== input.shopId || claims.scope !== input.scope) throw new TRPCError({ code: "FORBIDDEN", message: "رمز الإدارة لا يخص المتجر أو الصفحة المطلوبة" });
+  const membership = await activeShopMembership(claims.sub, input.shopId);
+  if (!catalogRoleAllowed(input.scope, membership.role)) throw new TRPCError({ code: "FORBIDDEN", message: "تم سحب صلاحية إدارة هذه الصفحة" });
+  const token = await makeLocalCatalogAdminToken({
+    userId: claims.sub,
+    email: typeof claims.email === "string" ? claims.email : null,
+    shopId: input.shopId,
+    scope: input.scope,
+    role: membership.role,
+    featureKey: catalogFeatureKey(input.scope, typeof claims.featureKey === "string" ? claims.featureKey : undefined),
+  });
+  return { token, expiresIn: CATALOG_SESSION_MAX_AGE_MS, shopId: input.shopId, scope: input.scope };
+}
+
+async function requireCatalogAdminSession(req: CatalogAdminRequest) {
+  const token = catalogAdminTokenFromRequest(req);
+  if (!token) throw new TRPCError({ code: "UNAUTHORIZED", message: "يلزم فتح الإدارة عبر PIN المحلي" });
+  let payload: Awaited<ReturnType<typeof verifyCatalogAdminToken>>;
+  try { payload = await verifyCatalogAdminToken(token); }
+  catch { throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج، افتح الصفحة مجدداً" }); }
+  if (payload.purpose !== "catalog-admin") throw new TRPCError({ code: "UNAUTHORIZED", message: "رمز جلسة الإدارة غير صالح" });
+  if (payload.authType === "local-pin") {
+    if (typeof payload.sub !== "string" || typeof payload.shopId !== "string" || (payload.scope !== "catalog" && payload.scope !== "offers")) {
+      throw new TRPCError({ code: "UNAUTHORIZED", message: "رمز جلسة الإدارة المحلية غير مكتمل" });
+    }
+    const membership = await activeShopMembership(payload.sub, payload.shopId);
+    if (!catalogRoleAllowed(payload.scope, membership.role)) throw new TRPCError({ code: "FORBIDDEN", message: "لا تملك صلاحية إدارية نشطة في هذا المتجر" });
+    return payload;
+  }
+  if (typeof payload.email !== "string") throw new TRPCError({ code: "UNAUTHORIZED", message: "رمز جلسة الإدارة غير صالح" });
+  const legacyEmail = typeof payload.email === "string" ? payload.email.toLowerCase() : "";
+  const user = (await getStoredAccessUsers()).find(item => item.email === legacyEmail);
+  if (!user || !isActiveStaffAccount(user)) throw new TRPCError({ code: "UNAUTHORIZED", message: "انتهت جلسة إدارة الكتالوج، سجّل الدخول مرة أخرى" });
+  return payload;
+}
+
+async function requireCatalogOrdersManagerSession(req: CatalogAdminRequest, shopId: string, authUserId: string) {
+  const claims = await requireLocalCatalogAdminClaims(req);
+  if (claims.scope !== "catalog" || claims.shopId !== shopId || claims.sub !== authUserId) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "جلسة الإدارة لا تطابق المتجر أو المستخدم المحدد" });
+  }
+  const membership = await activeShopMembership(claims.sub, shopId);
+  if (!catalogRoleAllowed("catalog", membership.role)) throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية إدارة طلبات الكتالوج" });
+  return { userId: claims.sub, role: membership.role };
+}
+
+async function requireOfferManagerSession(req: CatalogAdminRequest, shopId: string, authUserId: string) {
+  const claims = await requireLocalCatalogAdminClaims(req);
+  if (claims.scope !== "offers" || claims.shopId !== shopId || claims.sub !== authUserId) {
+    throw new TRPCError({ code: "FORBIDDEN", message: "جلسة الإدارة لا تطابق متجر أو صفحة العروض" });
+  }
+  const membership = await activeShopMembership(claims.sub, shopId);
+  if (!catalogRoleAllowed("offers", membership.role)) throw new TRPCError({ code: "FORBIDDEN", message: "لا يملك هذا الحساب صلاحية معالجة طلبات العروض" });
+  return { userId: claims.sub, role: membership.role };
 }
 
 export type AppRouter = typeof appRouter;

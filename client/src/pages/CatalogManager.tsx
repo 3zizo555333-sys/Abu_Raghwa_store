@@ -28,8 +28,10 @@ import { OfferProductStager, OfferProductStagerBoundary } from "@/components/Off
 import { removeCatalogTaxonomyImage, uploadCatalogTaxonomyImage, type CatalogTaxonomyKind } from "@/lib/supabase/catalogTaxonomyImages";
 import { getSupabaseClient } from "@/lib/supabase/client";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { useCatalogAdminSession } from "@/hooks/useCatalogAdminSession";
 
 const VirtualStore3D = lazy(() => import("@/components/virtual-store/VirtualStore3D"));
+const CATALOG_RINGTONE_KEY = "catalog_ringtone_enabled_v2";
 
 type CatalogOrder = {
   id: string;
@@ -73,6 +75,7 @@ function SortableTaxonomyRow({ id, disabled, className, children }: { id: string
 
 export default function CatalogManager() {
   const [, navigate] = useLocation();
+  const catalogAdminSession = useCatalogAdminSession("catalog");
   const [products, setProducts] = useState<CatalogProduct[]>([]);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);
   const [companies, setCompanies] = useState<CatalogCompany[]>([]);
@@ -103,7 +106,7 @@ export default function CatalogManager() {
   const [ordersLoading, setOrdersLoading] = useState(true);
   const [ordersError, setOrdersError] = useState<Error | null>(null);
   const [soundEnabled, setSoundEnabled] = useState(() => {
-    try { return window.localStorage.getItem("catalog_audio_enabled") === "true"; } catch { return false; }
+    try { return window.localStorage.getItem(CATALOG_RINGTONE_KEY) === "true"; } catch { return false; }
   });
   const [archiveOpen, setArchiveOpen] = useState(false);
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -116,6 +119,7 @@ export default function CatalogManager() {
   const deliveryCatalogUrl = buildCatalogFulfillmentUrl(typeof window === "undefined" ? "" : window.location.origin, "delivery", catalogShopId || undefined);
   const deliveryMarkup = normalizeDeliveryMarkupPercent(pricingConfig.deliveryMarkupPercent);
   const loadOrders = useCallback(async (shopId: string, authUserId: string, options: { silent?: boolean } = {}) => {
+    if (!catalogAdminSession.ready) return;
     const silent = options.silent === true;
     if (!silent) setOrdersLoading(true);
     setOrdersError(null);
@@ -134,7 +138,7 @@ export default function CatalogManager() {
     } finally {
       if (!silent) setOrdersLoading(false);
     }
-  }, [trpcUtils]);
+  }, [catalogAdminSession.ready, trpcUtils]);
   const updateOrderStatus = trpc.catalog.updateOrderStatus.useMutation({ onSuccess: () => { if (catalogShopId && catalogAuthUserId) void loadOrders(catalogShopId, catalogAuthUserId, { silent: true }); } });
   const [uploadingProductId, setUploadingProductId] = useState<string | null>(null);
   const [stagingProduct, setStagingProduct] = useState<{ id: string; name: string; price: number } | null>(null);
@@ -187,7 +191,7 @@ export default function CatalogManager() {
     }).catch(error => { if (active) toast.error(error instanceof Error ? error.message : "تعذر تحميل إعدادات الكتالوج السحابية"); });
     void listProductCategories().then(setPickerCategories).catch(() => undefined);
     return () => { active = false; if (unsubscribe) void unsubscribe(); };
-  }, [loadOrders]);
+  }, [catalogAdminSession.ready, loadOrders]);
 
   const loadPickerProducts = async (reset = true) => {
     if (pickerLoading && reset === false) return;
@@ -255,7 +259,7 @@ export default function CatalogManager() {
       const timeout = window.setTimeout(() => {
         soundTimeoutsRef.current.delete(timeout);
         try {
-          if (window.localStorage.getItem("catalog_audio_enabled") === "true") window.speechSynthesis.speak(utterance);
+          if (window.localStorage.getItem(CATALOG_RINGTONE_KEY) === "true") window.speechSynthesis.speak(utterance);
         } catch { /* storage restrictions must not interrupt order handling */ }
       }, 650 + index * 620);
       soundTimeoutsRef.current.add(timeout);
@@ -265,10 +269,10 @@ export default function CatalogManager() {
   const playOrderAlert = () => {
     if (!soundEnabled) return;
     try {
-      if (window.localStorage.getItem("catalog_audio_enabled") !== "true") return;
+      if (window.localStorage.getItem(CATALOG_RINGTONE_KEY) !== "true") return;
       const context = getAudioContext();
       void context.resume().then(() => {
-        if (window.localStorage.getItem("catalog_audio_enabled") !== "true") return;
+        if (window.localStorage.getItem(CATALOG_RINGTONE_KEY) !== "true") return;
         playOrderMelody(context);
         speakOrderAlert();
       }).catch(() => undefined);
@@ -307,18 +311,18 @@ export default function CatalogManager() {
 
   const toggleOrderSound = () => {
     if (soundEnabled) {
-      try { window.localStorage.setItem("catalog_audio_enabled", "false"); } catch { /* state still turns off for this session */ }
+      try { window.localStorage.setItem(CATALOG_RINGTONE_KEY, "false"); } catch { /* state still turns off for this session */ }
       setSoundEnabled(false);
       stopOrderSound();
       toast.info("رنة الطلبات متوقفة؛ ستظل الطلبات تظهر بصمت");
       return;
     }
     try {
-      window.localStorage.setItem("catalog_audio_enabled", "true");
+      window.localStorage.setItem(CATALOG_RINGTONE_KEY, "true");
       setSoundEnabled(true);
       const context = getAudioContext();
       void context.resume().then(() => {
-        if (window.localStorage.getItem("catalog_audio_enabled") === "true") playOrderMelody(context);
+        if (window.localStorage.getItem(CATALOG_RINGTONE_KEY) === "true") playOrderMelody(context);
       }).catch(() => undefined);
       toast.success("تم تفعيل رنة طلبات الكتالوج على هذا الهاتف");
       if (typeof Notification !== "undefined" && Notification.permission === "default") void Notification.requestPermission();

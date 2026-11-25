@@ -20,6 +20,8 @@ type CatalogNotification = {
   totalAmount: number;
   couponCode?: string;
   fulfillmentMethod?: "pickup" | "delivery";
+  earnedPoints?: number;
+  loyaltyPointsBalanceAfterApproval?: number;
 };
 
 type OfferNotification = {
@@ -30,6 +32,8 @@ type OfferNotification = {
   customerPhone?: string | null;
   customerNote?: string | null;
   createdAt?: Date | string;
+  earnedPoints?: number;
+  loyaltyPointsBalanceAfterApproval?: number;
 };
 
 const esc = (value: unknown) =>
@@ -104,6 +108,8 @@ function catalogMessage(order: CatalogNotification, appUrl: string): TelegramPay
     `- الإجمالي النهائي المستحق: <b>${money(total)} ج.م</b>`,
     `- طريقة الدفع: تُحدد عند التواصل مع العميل`,
     `- طريقة الاستلام: ${order.fulfillmentMethod === "delivery" ? "توصيل" : "استلام من المحل"}`,
+    `⭐ نقاط الولاء المكتسبة: +${Math.max(0, Math.trunc(Number(order.earnedPoints) || 0))} نقطة (تُضاف عند الاعتماد)`,
+    `⭐ رصيد النقاط المتوقع بعد الاعتماد: ${Math.max(0, Math.trunc(Number(order.loyaltyPointsBalanceAfterApproval) || 0))} نقطة`,
     "━━━━━━━━━━━━━━━━━━",
     "🔔 يرجى من مسؤول التجهيز مراجعة الطلب والبدء في التحضير.",
   ].join("\n");
@@ -147,6 +153,8 @@ function offerMessage(order: OfferNotification, appUrl: string): TelegramPayload
     `- الخصم: ${money(discount)} ج.م`,
     `- الإجمالي النهائي المستحق: <b>${money(total)} ج.م</b>`,
     "- طريقة الدفع: تُحدد عند التواصل مع العميل",
+    `⭐ نقاط الولاء المكتسبة: +${Math.max(0, Math.trunc(Number(order.earnedPoints) || 0))} نقطة (تُضاف عند الاعتماد)`,
+    `⭐ رصيد النقاط المتوقع بعد الاعتماد: ${Math.max(0, Math.trunc(Number(order.loyaltyPointsBalanceAfterApproval) || 0))} نقطة`,
     "━━━━━━━━━━━━━━━━━━",
     "🔔 يرجى من مسؤول التجهيز مراجعة الطلب والبدء في التحضير.",
   ].join("\n");

@@ -1,4 +1,5 @@
 import { browserState } from "@/lib/browserState";
+import { readCatalogAdminSessionToken } from "@/lib/catalogAdminSession";
 import { trpc } from "@/lib/trpc";
 import { UNAUTHED_ERR_MSG } from '@shared/const';
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -79,8 +80,12 @@ const trpcClient = trpc.createClient({
     httpBatchLink({
       url: "/api/trpc",
       // The dashboard mounts many sync queries. Split long GET batches so
-      // mobile browsers and proxies never reject one oversized request.
+      // mobile browsers and proxies never reject one oversized GET batch.
       maxURLLength: 1800,
+      headers: () => {
+        const token = readCatalogAdminSessionToken();
+        return token ? { "x-abu-catalog-session": token } : {};
+      },
       fetch: validatedTrpcFetch,
     }),
   ],

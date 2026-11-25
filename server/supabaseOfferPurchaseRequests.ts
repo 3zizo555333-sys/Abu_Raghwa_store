@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { applySupabaseLoyaltyEvent, getSupabaseLoyaltyProfile } from "./supabaseLoyalty";
+import { applySupabaseLoyaltyEvent, ensureSupabaseLoyaltyProfile, getSupabaseLoyaltyProfile } from "./supabaseLoyalty";
 
 type RequestStatus = "pending" | "approved" | "cancelled";
 type OfferPurchaseRequest = {
@@ -16,6 +16,7 @@ type OfferPurchaseRequest = {
   customerCode: string;
   status: RequestStatus;
   loyaltyPointsAwarded: number;
+  loyaltyPointsBalanceAfterApproval: number;
   createdAt: Date;
   created: boolean;
 };
@@ -35,7 +36,7 @@ function fail(action: string, error: { message: string } | null): never | void {
   if (error) throw new Error(`${action}: ${error.message}`);
 }
 
-function mapRequest(row: Record<string, any>, created = false): OfferPurchaseRequest {
+function mapRequest(row: Record<string, any>, created = false, currentPoints = 0): OfferPurchaseRequest {
   const rawStatus = String(row.status || "pending");
   const status: RequestStatus = rawStatus === "confirmed" || rawStatus === "delivered" || rawStatus === "approved"
     ? "approved"
@@ -54,6 +55,7 @@ function mapRequest(row: Record<string, any>, created = false): OfferPurchaseReq
     customerCode: String(row.customer_code || ""),
     status,
     loyaltyPointsAwarded: Math.max(0, Math.trunc(Number(row.loyalty_points_awarded) || 0)),
+    loyaltyPointsBalanceAfterApproval: Math.max(0, Math.trunc(Number(currentPoints) || 0)) + Math.max(0, Math.trunc(Number(row.loyalty_points) || 0)),
     createdAt: row.created_at ? new Date(row.created_at) : new Date(),
     created,
   };
@@ -93,7 +95,7 @@ export async function createSupabaseOfferPurchaseRequest(input: { offerId: strin
     .in("status", ["pending", "contacted"]).order("created_at", { ascending: false }).limit(1);
   fail("تعذر التحقق من طلب عرض سابق", duplicateResult.error);
   const duplicate = duplicateResult.data?.[0] as Record<string, any> | undefined;
-  if (duplicate) return mapRequest(duplicate, false);
+  if (duplicate) return mapRequest(duplicate, false, Number(profile.points) || 0);
 
   const offerItems = Array.isArray(offerData.items) ? offerData.items.map((value: unknown) => {
     const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
@@ -139,23 +141,23 @@ export async function createSupabaseOfferPurchaseRequest(input: { offerId: strin
       .in("status", ["pending", "contacted"]).order("created_at", { ascending: false }).limit(1);
     fail("تعذر التحقق من طلب عرض متزامن", concurrentDuplicate.error);
     const existing = concurrentDuplicate.data?.[0] as Record<string, any> | undefined;
-    if (existing) return mapRequest(existing, false);
+    if (existing) return mapRequest(existing, false, Number(profile.points) || 0);
   }
   fail("تعذر حفظ طلب العرض في جدول catalog_orders", insertResult.error);
   if (!insertResult.data) throw new Error("لم يُرجع Supabase رقم طلب العرض بعد الحفظ.");
-  return mapRequest(insertResult.data as Record<string, any>, true);
+  return mapRequest(insertResult.data as Record<string, any>, true, Number(profile.points) || 0);
 }
 
-export async function listSupabaseOfferPurchaseRequests() {
+export async function listSupabaseOfferPurchaseRequests(shopId: string) {
   const result = await getServiceClient().from("catalog_orders").select("*")
-    .eq("order_type", "offer").order("created_at", { ascending: false }).limit(200);
+    .eq("shop_id", shopId).eq("order_type", "offer").order("created_at", { ascending: false }).limit(200);
   fail("تعذر تحميل طلبات العروض من Supabase", result.error);
   return (result.data || []).map((row: Record<string, any>) => mapRequest(row));
 }
 
-export async function approveSupabaseOfferPurchaseRequest(id: string) {
+export async function approveSupabaseOfferPurchaseRequest(id: string, shopId: string) {
   const client = getServiceClient();
-  const selectResult = await client.from("catalog_orders").select("*").eq("id", id).eq("order_type", "offer").maybeSingle();
+  const selectResult = await client.from("catalog_orders").select("*").eq("id", id).eq("shop_id", shopId).eq("order_type", "offer").maybeSingle();
   fail("تعذر قراءة طلب العرض من Supabase", selectResult.error);
   const request = selectResult.data as Record<string, any> | null;
   if (!request) throw new Error("طلب العرض غير موجود.");
@@ -165,9 +167,14 @@ export async function approveSupabaseOfferPurchaseRequest(id: string) {
 
   const points = Math.max(0, Math.trunc(Number(request.loyalty_points) || 0));
   let awardedPoints = 0;
+  if (!current.customerPhone) throw new Error("طلب العرض لا يحتوي على رقم هاتف صالح لربط نقاط الولاء.");
+  let profile = await getSupabaseLoyaltyProfile({ customerCode: current.customerCode, phone: current.customerPhone });
+  if (!profile) {
+    await ensureSupabaseLoyaltyProfile({ phone: current.customerPhone, name: current.customerName, customerCode: current.customerCode || undefined });
+    profile = await getSupabaseLoyaltyProfile({ phone: current.customerPhone });
+  }
+  if (!profile) throw new Error("تعذر إنشاء أو العثور على بطاقة ولاء العميل.");
   if (points > 0) {
-    const profile = await getSupabaseLoyaltyProfile({ customerCode: current.customerCode, phone: current.customerPhone });
-    if (!profile) throw new Error("تعذر العثور على بطاقة ولاء العميل.");
     const event = await applySupabaseLoyaltyEvent({
       phone: profile.phone,
       name: profile.name,
@@ -180,24 +187,26 @@ export async function approveSupabaseOfferPurchaseRequest(id: string) {
     awardedPoints = Math.max(0, Number(event.points_delta) || 0);
   }
   const updateResult = await client.from("catalog_orders").update({ status: "confirmed", loyalty_points_awarded: awardedPoints, updated_at: new Date().toISOString() })
-    .eq("id", id).eq("order_type", "offer").in("status", ["pending", "contacted"]).select("id").maybeSingle();
+    .eq("id", id).eq("shop_id", shopId).eq("order_type", "offer").in("status", ["pending", "contacted"]).select("id").maybeSingle();
   fail("تعذر تحديث حالة طلب العرض في Supabase", updateResult.error);
   if (!updateResult.data) {
-    const latest = await client.from("catalog_orders").select("status,loyalty_points_awarded").eq("id", id).maybeSingle();
+    const latest = await client.from("catalog_orders").select("status,loyalty_points_awarded").eq("id", id).eq("shop_id", shopId).maybeSingle();
     fail("تعذر التحقق من حالة طلب العرض", latest.error);
     if (latest.data?.status !== "confirmed" && latest.data?.status !== "delivered") throw new Error("تغيرت حالة الطلب قبل إتمام الاعتماد؛ حدّث القائمة وحاول مجددًا.");
-    return { success: true as const, alreadyApproved: true, awardedPoints: Math.max(0, Number(latest.data.loyalty_points_awarded) || awardedPoints), customerCode: current.customerCode };
+    const finalProfile = await getSupabaseLoyaltyProfile({ phone: current.customerPhone });
+    return { success: true as const, alreadyApproved: true, awardedPoints: Math.max(0, Number(latest.data.loyalty_points_awarded) || awardedPoints), customerCode: current.customerCode, loyaltyPointsBalance: Number(finalProfile?.points) || 0 };
   }
-  return { success: true as const, alreadyApproved: false, awardedPoints, customerCode: current.customerCode };
+  const finalProfile = await getSupabaseLoyaltyProfile({ phone: current.customerPhone });
+  return { success: true as const, alreadyApproved: false, awardedPoints, customerCode: current.customerCode, loyaltyPointsBalance: Number(finalProfile?.points) || 0 };
 }
 
-export async function cancelSupabaseOfferPurchaseRequest(id: string) {
+export async function cancelSupabaseOfferPurchaseRequest(id: string, shopId: string) {
   const client = getServiceClient();
   const result = await client.from("catalog_orders").update({ status: "cancelled", updated_at: new Date().toISOString() })
-    .eq("id", id).eq("order_type", "offer").in("status", ["pending", "contacted"]).select("id").maybeSingle();
+    .eq("id", id).eq("shop_id", shopId).eq("order_type", "offer").in("status", ["pending", "contacted"]).select("id").maybeSingle();
   fail("تعذر رفض طلب العرض في Supabase", result.error);
   if (!result.data) {
-    const existing = await client.from("catalog_orders").select("status").eq("id", id).eq("order_type", "offer").maybeSingle();
+    const existing = await client.from("catalog_orders").select("status").eq("id", id).eq("shop_id", shopId).eq("order_type", "offer").maybeSingle();
     fail("تعذر التحقق من طلب العرض", existing.error);
     if (!existing.data) throw new Error("طلب العرض غير موجود.");
     if (existing.data.status === "confirmed" || existing.data.status === "delivered") throw new Error("تمت الموافقة على الطلب وإضافة النقاط بالفعل؛ لا يمكن رفضه الآن.");
@@ -208,18 +217,23 @@ export async function cancelSupabaseOfferPurchaseRequest(id: string) {
 
 export async function getSupabaseOfferPurchaseStatus(input: { id: string; customerCode: string }) {
   const result = await getServiceClient().from("catalog_orders")
-    .select("id,offer_title,status,loyalty_points_awarded,created_at")
+    .select("id,offer_title,status,loyalty_points,loyalty_points_awarded,customer_phone,created_at")
     .eq("id", input.id).eq("order_type", "offer").eq("customer_code", input.customerCode.trim().toUpperCase()).maybeSingle();
   fail("تعذر قراءة حالة طلب العرض من Supabase", result.error);
   if (!result.data) return null;
   const status = result.data.status === "confirmed" || result.data.status === "delivered"
     ? "approved"
     : result.data.status === "contacted" ? "pending" : result.data.status;
+  const profile = status === "approved" && result.data.customer_phone
+    ? await getSupabaseLoyaltyProfile({ phone: String(result.data.customer_phone) })
+    : null;
   return {
     id: String(result.data.id),
     offerTitle: String(result.data.offer_title || "عرض أبو رغوة"),
     status,
     loyaltyPointsAwarded: Math.max(0, Math.trunc(Number(result.data.loyalty_points_awarded) || 0)),
+    earnedPoints: Math.max(0, Math.trunc(Number(result.data.loyalty_points) || 0)),
+    loyaltyPointsBalance: Math.max(0, Number(profile?.points) || 0),
     createdAt: result.data.created_at ? new Date(result.data.created_at) : new Date(),
   };
 }

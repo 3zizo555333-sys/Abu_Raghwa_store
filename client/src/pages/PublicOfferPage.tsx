@@ -60,6 +60,7 @@ export default function PublicOfferPage() {
   const [isRegistered, setIsRegistered] = useState(false);
   const [customerRecord, setCustomerRecord] = useState<CustomerLoyalty | null>(null);
   const [purchaseRequestId, setPurchaseRequestId] = useState("");
+  const [purchaseReceipt, setPurchaseReceipt] = useState<{ earnedPoints: number; loyaltyPointsBalanceAfterApproval: number } | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const registerOfferCustomer = trpc.catalog.registerOfferCustomer.useMutation();
   const createOfferPurchaseRequest = trpc.catalog.createOfferPurchaseRequest.useMutation();
@@ -171,7 +172,8 @@ export default function PublicOfferPage() {
     try {
       const request = await createOfferPurchaseRequest.mutateAsync({ offerId: offer.id, customerCode: code, customerNote: customerNote.trim() || undefined, deliveryAddress: deliveryAddress.trim() || undefined });
       setPurchaseRequestId(request.id);
-      toast.success(`وصل طلبك إلى المحل — رقم الطلب #${request.id.slice(-8).toUpperCase()}`);
+      setPurchaseReceipt({ earnedPoints: Math.max(0, Number(request.offerPoints) || 0), loyaltyPointsBalanceAfterApproval: Math.max(0, Number(request.loyaltyPointsBalanceAfterApproval) || 0) });
+      toast.success(`وصل طلبك — +${Math.max(0, Number(request.offerPoints) || 0)} نقطة عند الاعتماد · الرصيد المتوقع ${Math.max(0, Number(request.loyaltyPointsBalanceAfterApproval) || 0)} نقطة`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "تعذر إرسال طلب شراء العرض الآن.");
     }
@@ -325,8 +327,9 @@ export default function PublicOfferPage() {
               <Input value={deliveryAddress} onChange={event => setDeliveryAddress(event.target.value)} maxLength={1000} placeholder="عنوان التوصيل (اختياري)" className="bg-white text-xs" />
               <Textarea value={customerNote} onChange={event => setCustomerNote(event.target.value)} maxLength={1000} placeholder="ملاحظات اختيارية: توصيل أو استلام من المحل" className="bg-white text-xs" />
               {purchaseRequestId && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-xs font-black text-green-800">رقم طلبك: <strong dir="ltr">#{purchaseRequestId.slice(-8).toUpperCase()}</strong></div>}
+              {purchaseRequestId && <div className="rounded-xl border border-violet-200 bg-violet-50 p-2 text-center text-[11px] font-bold text-violet-900">⭐ نقاط الولاء المكتسبة: +{offerPurchaseStatusQuery.data?.earnedPoints ?? purchaseReceipt?.earnedPoints ?? Number(offer.loyaltyPoints || 0)} نقطة (تُضاف عند الاعتماد) · الرصيد المتوقع: {purchaseReceipt?.loyaltyPointsBalanceAfterApproval ?? currentPoints + Number(offer.loyaltyPoints || 0)} نقطة</div>}
               {offerPurchaseStatusQuery.data?.status === "pending" && <div className="rounded-xl border border-amber-300 bg-amber-50 p-2 text-center text-[11px] font-bold text-amber-900">وصل طلبك إلى المحل وبانتظار تأكيد إتمام الشراء. ستضاف النقاط بعد الموافقة.</div>}
-              {offerPurchaseStatusQuery.data?.status === "approved" && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-[11px] font-bold text-green-800"><CheckCircle2 className="ml-1 inline h-4 w-4" /> تم تأكيد الشراء وإضافة {offerPurchaseStatusQuery.data.loyaltyPointsAwarded} نقطة.</div>}
+              {offerPurchaseStatusQuery.data?.status === "approved" && <div className="rounded-xl border border-green-300 bg-green-50 p-2 text-center text-[11px] font-bold text-green-800"><CheckCircle2 className="ml-1 inline h-4 w-4" /> تم تأكيد الشراء وإضافة {offerPurchaseStatusQuery.data.loyaltyPointsAwarded} نقطة · رصيدك الحالي {offerPurchaseStatusQuery.data.loyaltyPointsBalance ?? currentPoints} نقطة.</div>}
               {offerPurchaseStatusQuery.data?.status === "cancelled" && <div className="rounded-xl border border-slate-300 bg-slate-50 p-2 text-center text-[11px] font-bold text-slate-700">أُلغي الطلب السابق ولم تُضف نقاط؛ يمكنك تقديم طلب جديد.</div>}
               <p className="text-center text-[10px] leading-5 text-slate-500">طلبك يصل للمحل للمراجعة، وليس دفعاً إلكترونياً. وتُضاف النقاط بعد اعتماد إتمام الشراء.</p>
               <a href={buildLoyaltyPageHref(customerRecord?.customerCode || customerCode, customerPhone || customerRecord?.phone)} className="block text-center text-[11px] font-black text-violet-700 underline hover:text-violet-900">متابعة نقاطك وسجل حركاتك</a>

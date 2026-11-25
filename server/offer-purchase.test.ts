@@ -2,11 +2,23 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import * as db from "./db";
 import { appRouter, resetStaffAccountMigrationForTests } from "./routers";
+import { signCatalogAdminToken } from "./catalogAdminSession";
 
 afterEach(() => {
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
   resetStaffAccountMigrationForTests();
 });
+
+const shopId = "123e4567-e89b-12d3-a456-426614174000";
+const authUserId = "123e4567-e89b-12d3-a456-426614174002";
+async function localOfferCaller(role = "manager", tokenShopId = shopId) {
+  vi.stubEnv("JWT_SECRET", "test-catalog-admin-signing-key-with-32-chars-minimum");
+  const query: any = { select: vi.fn(() => query), eq: vi.fn(() => query), maybeSingle: vi.fn(async () => ({ data: { shop_id: tokenShopId, role, status: "active" }, error: null })) };
+  vi.spyOn(db, "getSupabaseServiceRoleClient").mockReturnValue({ from: vi.fn(() => query) } as any);
+  const token = await signCatalogAdminToken({ purpose: "catalog-admin", authType: "local-pin", sub: authUserId, shopId: tokenShopId, scope: "offers", role, featureKey: "screen__smart_offers" });
+  return appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": token } }, res: {} } as any);
+}
 
 describe("شراء العروض ونقاط الولاء", () => {
   it("يسجل طلب الشراء بكود الولاء فقط ولا يسمح للعميل بإرسال عدد نقاط مفروض", async () => {
@@ -28,11 +40,11 @@ describe("شراء العروض ونقاط الولاء", () => {
   });
 
   it("لا يسمح للعميل بقراءة صندوق الطلبات أو اعتمادها أو رفضها", async () => {
-    const caller = appRouter.createCaller({} as any);
+    const caller = appRouter.createCaller({ req: { headers: {} } } as any);
     const requestId = "offer-purchase-1234567890123456";
-    await expect(caller.catalog.listOfferPurchaseRequests()).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    await expect(caller.catalog.approveOfferPurchaseRequest({ id: requestId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
-    await expect(caller.catalog.cancelOfferPurchaseRequest({ id: requestId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.catalog.listOfferPurchaseRequests({ shopId, authUserId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.catalog.approveOfferPurchaseRequest({ id: requestId, shopId, authUserId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
+    await expect(caller.catalog.cancelOfferPurchaseRequest({ id: requestId, shopId, authUserId })).rejects.toMatchObject({ code: "UNAUTHORIZED" });
   });
 
   it("يتيح للمدير المعتمد فقط عرض الطلب واعتماده ومنع تكرار منح النقاط عبر الواجهة", async () => {
@@ -47,16 +59,14 @@ describe("شراء العروض ونقاط الولاء", () => {
     const list = vi.spyOn(db, "listOfferPurchaseRequests").mockResolvedValue([request] as any);
     const approve = vi.spyOn(db, "approveOfferPurchaseRequest").mockResolvedValue({ success: true, alreadyApproved: false, awardedPoints: 7, customerCode: "A1B2" });
     const refuse = vi.spyOn(db, "cancelOfferPurchaseRequest").mockResolvedValue({ success: true, status: "cancelled" });
-    const manager = appRouter.createCaller({ req: { protocol: "https", headers: {} }, res: { cookie: () => undefined } } as any);
-    const login = await manager.catalog.login({ managerEmail: "offer-manager@example.com", managerPassword: "secure-pass" });
-    const sessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": login.token } }, res: {} } as any);
+    const sessionCaller = await localOfferCaller();
 
-    await expect(sessionCaller.catalog.listOfferPurchaseRequests()).resolves.toEqual([request]);
-    await expect(sessionCaller.catalog.approveOfferPurchaseRequest({ id: request.id })).resolves.toEqual({ success: true, alreadyApproved: false, awardedPoints: 7, customerCode: "A1B2" });
-    await expect(sessionCaller.catalog.cancelOfferPurchaseRequest({ id: request.id })).resolves.toEqual({ success: true, status: "cancelled" });
+    await expect(sessionCaller.catalog.listOfferPurchaseRequests({ shopId, authUserId })).resolves.toEqual([request]);
+    await expect(sessionCaller.catalog.approveOfferPurchaseRequest({ id: request.id, shopId, authUserId })).resolves.toEqual({ success: true, alreadyApproved: false, awardedPoints: 7, customerCode: "A1B2" });
+    await expect(sessionCaller.catalog.cancelOfferPurchaseRequest({ id: request.id, shopId, authUserId })).resolves.toEqual({ success: true, status: "cancelled" });
     expect(list).toHaveBeenCalledOnce();
-    expect(approve).toHaveBeenCalledWith(request.id);
-    expect(refuse).toHaveBeenCalledWith(request.id);
+    expect(approve).toHaveBeenCalledWith(request.id, shopId);
+    expect(refuse).toHaveBeenCalledWith(request.id, shopId);
   }, 15_000);
 
   it("يتيح للبائع المعتمد اعتماد طلب شراء العرض", async () => {
@@ -71,16 +81,14 @@ describe("شراء العروض ونقاط الولاء", () => {
     const list = vi.spyOn(db, "listOfferPurchaseRequests").mockResolvedValue([request] as any);
     const approve = vi.spyOn(db, "approveOfferPurchaseRequest").mockResolvedValue({ success: true, alreadyApproved: false, awardedPoints: 7, customerCode: "A1B2" });
     const refuse = vi.spyOn(db, "cancelOfferPurchaseRequest").mockResolvedValue({ success: true, status: "cancelled" });
-    const manager = appRouter.createCaller({ req: { protocol: "https", headers: {} }, res: { cookie: () => undefined } } as any);
-    const login = await manager.catalog.login({ managerEmail: "offer-seller@example.com", managerPassword: "seller-pass" });
-    const sessionCaller = appRouter.createCaller({ req: { headers: { "x-abu-catalog-session": login.token } }, res: {} } as any);
+    const sessionCaller = await localOfferCaller("seller");
 
-    await expect(sessionCaller.catalog.listOfferPurchaseRequests()).resolves.toEqual([request]);
-    await expect(sessionCaller.catalog.approveOfferPurchaseRequest({ id: request.id })).resolves.toMatchObject({ awardedPoints: 7 });
-    await expect(sessionCaller.catalog.cancelOfferPurchaseRequest({ id: request.id })).resolves.toEqual({ success: true, status: "cancelled" });
+    await expect(sessionCaller.catalog.listOfferPurchaseRequests({ shopId, authUserId })).resolves.toEqual([request]);
+    await expect(sessionCaller.catalog.approveOfferPurchaseRequest({ id: request.id, shopId, authUserId })).resolves.toMatchObject({ awardedPoints: 7 });
+    await expect(sessionCaller.catalog.cancelOfferPurchaseRequest({ id: request.id, shopId, authUserId })).resolves.toEqual({ success: true, status: "cancelled" });
     expect(list).toHaveBeenCalledOnce();
-    expect(approve).toHaveBeenCalledWith(request.id);
-    expect(refuse).toHaveBeenCalledWith(request.id);
+    expect(approve).toHaveBeenCalledWith(request.id, shopId);
+    expect(refuse).toHaveBeenCalledWith(request.id, shopId);
   }, 15_000);
 
   it.skipIf(!process.env.DATABASE_URL)("يحفظ عدة عروض معًا ولا يحذف إلا العرض الذي يختاره المدير يدويًا", async () => {

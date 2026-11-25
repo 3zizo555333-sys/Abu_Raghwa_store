@@ -544,7 +544,16 @@ export type CatalogOrderInput = {
   couponCode?: string;
   fulfillmentMethod?: "pickup" | "delivery";
   priceAdjustmentPercent?: number;
+  earnedPoints?: number;
 };
+
+async function getCatalogOrderPointsEstimate(order: CatalogOrderInput) {
+  let earnedPoints = 0;
+  let currentPoints = 0;
+  try { earnedPoints = await getPointsFromItems(order.itemsJson); } catch { /* points metadata must not interrupt checkout */ }
+  try { currentPoints = Number((await getSupabaseLoyaltyProfile({ phone: order.customerPhone }))?.points) || 0; } catch { /* estimate falls back to zero when the wallet is unavailable */ }
+  return { earnedPoints, loyaltyPointsBalanceAfterApproval: Math.max(0, currentPoints) + earnedPoints };
+}
 
 export async function createCatalogOrder(order: CatalogOrderInput) {
   const orderItems = parseJsonArray<{ productId?: unknown; name?: unknown; unit?: unknown; price?: unknown; quantity?: unknown; loyaltyPoints?: unknown }>(order.itemsJson);
@@ -562,11 +571,13 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     finalTotal = Math.max(0, Number(coupon.final_amount ?? computedTotal));
   }
   if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
+  const pointsEstimate = await getCatalogOrderPointsEstimate(order);
+  const orderWithPoints = { ...order, earnedPoints: pointsEstimate.earnedPoints };
 
   const db = await getDb();
-  if (!db) return createSupabaseCatalogOrder(order);
+  if (!db) return { ...(await createSupabaseCatalogOrder(orderWithPoints)), ...pointsEstimate };
   if (order.couponCode?.trim()) {
-    const supabaseOrder = await createSupabaseCatalogOrder(order);
+    const supabaseOrder = await createSupabaseCatalogOrder(orderWithPoints);
     let customerCode: string | null = null;
     try {
       await db.insert(catalogOrders).values({
@@ -582,7 +593,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     } catch (error) {
       console.warn("[Catalog] Coupon order saved in Supabase; local order mirror or loyalty setup needs retry", { orderId: supabaseOrder.id, reason: error instanceof Error ? error.message : "unknown error" });
     }
-    return { ...supabaseOrder, customerCode };
+    return { ...supabaseOrder, customerCode, ...pointsEstimate };
   }
   try {
     await db.insert(catalogOrders).values({
@@ -594,7 +605,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
     }).onDuplicateKeyUpdate({ set: { id: order.id } });
   } catch (error) {
     console.warn("[Catalog] MySQL order insert failed; falling back to Supabase", { orderId: order.id, reason: error instanceof Error ? error.message : "unknown error" });
-    return createSupabaseCatalogOrder(order);
+    return { ...(await createSupabaseCatalogOrder(orderWithPoints)), ...pointsEstimate };
   }
 
   let customerCode: string | null = null;
@@ -605,7 +616,7 @@ export async function createCatalogOrder(order: CatalogOrderInput) {
   } catch (error) {
     console.warn("[Catalog] Order saved; customer loyalty setup will need retry", { orderId: order.id, reason: error instanceof Error ? error.message : "unknown error" });
   }
-  return { id: order.id, customerCode };
+  return { id: order.id, customerCode, ...pointsEstimate };
 }
 
 function requireCatalogOrdersServiceRoleClient(): SupabaseClient {
@@ -680,7 +691,7 @@ export async function archiveCatalogOrder(id: string) {
   if (!order) throw new Error("الطلب غير موجود");
   if (order.archivedAt || order.archived_at) return { success: true as const, pointsReversed: Number(order.archivedPointsReversed || order.archived_points_reversed || 0) };
   const archivedAt = new Date();
-  const earned = order.status === "delivered" ? Math.max(0, Math.trunc(Number(order.loyaltyPointsAwarded || order.loyalty_points_awarded) || 0)) : 0;
+  const earned = (order.status === "confirmed" || order.status === "delivered") ? Math.max(0, Math.trunc(Number(order.loyaltyPointsAwarded || order.loyalty_points_awarded) || 0)) : 0;
   let pointsReversed = 0;
   const phone = order.customerPhone || order.customer_phone;
   const name = order.customerName || order.customer_name;
@@ -799,16 +810,16 @@ export async function createOfferPurchaseRequest(input: { offerId: string; custo
   return createSupabaseOfferPurchaseRequest(input);
 }
 
-export async function listOfferPurchaseRequests() {
-  return listSupabaseOfferPurchaseRequests();
+export async function listOfferPurchaseRequests(shopId: string) {
+  return listSupabaseOfferPurchaseRequests(shopId);
 }
 
-export async function approveOfferPurchaseRequest(id: string) {
-  return approveSupabaseOfferPurchaseRequest(id);
+export async function approveOfferPurchaseRequest(id: string, shopId: string) {
+  return approveSupabaseOfferPurchaseRequest(id, shopId);
 }
 
-export async function cancelOfferPurchaseRequest(id: string) {
-  return cancelSupabaseOfferPurchaseRequest(id);
+export async function cancelOfferPurchaseRequest(id: string, shopId: string) {
+  return cancelSupabaseOfferPurchaseRequest(id, shopId);
 }
 
 export async function getCustomerOfferPurchaseStatus(input: { id: string; customerCode: string }) {
@@ -897,15 +908,15 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
   if (!order) throw new Error("الطلب غير موجود أو لا يخص المتجر المحدد");
 
   if (order.order_type === "offer") {
-    if (status === "confirmed") return approveSupabaseOfferPurchaseRequest(id);
+    if (status === "confirmed") return approveSupabaseOfferPurchaseRequest(id, shopId);
     if (status === "delivered") {
-      const approval = await approveSupabaseOfferPurchaseRequest(id);
+      const approval = await approveSupabaseOfferPurchaseRequest(id, shopId);
       const update = await supabase.from("catalog_orders").update({ status: "delivered", updated_at: new Date().toISOString() }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
       if (update.error) throw new Error(`تعذر إكمال طلب العرض: ${update.error.message}`);
       if (!update.data) throw new Error("الطلب غير موجود لإكماله");
       return approval;
     }
-    if (status === "cancelled") return cancelSupabaseOfferPurchaseRequest(id);
+    if (status === "cancelled") return cancelSupabaseOfferPurchaseRequest(id, shopId);
     const update = await supabase.from("catalog_orders").update({ status: toDatabaseCatalogOrderStatus(status), updated_at: new Date().toISOString() }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
     if (update.error) throw new Error(`تعذر تحديث طلب العرض: ${update.error.message}`);
     if (!update.data) throw new Error("الطلب غير موجود لتحديثه");
@@ -917,10 +928,13 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
   const phone = order.customer_phone ?? order.customerPhone;
   const name = order.customer_name ?? order.customerName;
   const itemsJson = typeof order.items_json === "string" ? order.items_json : JSON.stringify(order.items ?? order.items_json ?? []);
+  if (previousStatus === "cancelled" && (status === "confirmed" || status === "delivered")) throw new Error("لا يمكن إعادة اعتماد طلب ملغي؛ أنشئ طلباً جديداً للعميل.");
 
-  if (status === "delivered" && previousStatus !== "delivered" && awardedPoints === 0) {
-    const points = await getPointsFromItems(itemsJson);
-    if (points > 0 && phone) {
+  if ((status === "confirmed" || status === "delivered") && previousStatus !== "confirmed" && previousStatus !== "delivered") {
+    const points = Math.max(0, Math.trunc(Number(order.loyalty_points) || await getPointsFromItems(itemsJson)));
+    let profile = phone ? await getSupabaseLoyaltyProfile({ phone }) : null;
+    if (phone && !profile) await ensureSupabaseLoyaltyProfile({ phone, name: String(name || "عميل الكتالوج") });
+    if (points > 0 && phone && awardedPoints === 0) {
       const event = await applySupabaseLoyaltyEvent({ phone, name, pointsDelta: points, source: "catalog", sourceId: order.id, idempotencyKey: `catalog-order:${order.id}:earned`, description: `نقاط شراء من الكتالوج للطلب #${String(order.id).slice(-6).toUpperCase()}` });
       awardedPoints = Math.max(0, Number(event.points_delta) || 0);
     }
@@ -938,12 +952,20 @@ export async function updateCatalogOrderStatus(id: string, status: CatalogOrderS
   }).eq("id", id).eq("shop_id", shopId).select("id").maybeSingle();
   if (update.error) throw new Error(`تعذر تحديث حالة طلب الكتالوج: ${update.error.message}`);
   if (!update.data) throw new Error("الطلب غير موجود أو لا يخص المتجر المحدد");
-  return { awardedPoints };
+  const profile = phone ? await getSupabaseLoyaltyProfile({ phone }) : null;
+  return { awardedPoints, loyaltyPointsBalance: Math.max(0, Number(profile?.points) || 0) };
 }
 
 export async function getCatalogOrdersForCustomer(orderIds: string[], customerPhone: string) {
   const db = await getDb();
   if (!db) return getSupabaseCatalogOrdersForCustomer(orderIds, customerPhone);
   if (!orderIds.length) return [];
-  return db.select().from(catalogOrders).where(and(inArray(catalogOrders.id, orderIds), eq(catalogOrders.customerPhone, customerPhone), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+  const rows = await db.select().from(catalogOrders).where(and(inArray(catalogOrders.id, orderIds), eq(catalogOrders.customerPhone, customerPhone), isNull(catalogOrders.archivedAt))).orderBy(desc(catalogOrders.createdAt));
+  const hasApprovedOrder = rows.some(order => order.status === "confirmed" || order.status === "delivered");
+  const profile = hasApprovedOrder ? await getSupabaseLoyaltyProfile({ phone: customerPhone }) : null;
+  return Promise.all(rows.map(async order => ({
+    ...order,
+    loyaltyPoints: await getPointsFromItems(order.itemsJson),
+    loyaltyPointsBalance: Math.max(0, Number(profile?.points) || 0),
+  })));
 }

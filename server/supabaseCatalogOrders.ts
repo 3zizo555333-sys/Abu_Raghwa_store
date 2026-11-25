@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
-import { validateCatalogCouponServer } from "./supabaseLoyalty";
+import { getSupabaseLoyaltyProfile, validateCatalogCouponServer } from "./supabaseLoyalty";
 import { normalizeCatalogOrderQuantity } from "./catalogOrderValidation";
 import { catalogCouponValidationError } from "../shared/catalogCouponRules";
 import type { CatalogOrderInput } from "./db";
@@ -85,6 +85,11 @@ export async function createSupabaseCatalogOrder(order: CatalogOrderInput) {
       const validation = response as { error_code?: string; min_order_amount?: number };
       throw new Error(catalogCouponValidationError({ ...validation, valid: false }, computedTotal));
     }
+    const metadataResult = await client.from("catalog_orders").update({
+      loyalty_points: Math.max(0, Math.trunc(Number(order.earnedPoints) || 0)),
+      loyalty_points_awarded: 0,
+    }).eq("id", String(response.id || id)).eq("shop_id", shopId).select("id").maybeSingle();
+    if (metadataResult.error) console.warn("[Catalog] Loyalty estimate was not persisted with coupon order", { orderId: String(response.id || id), reason: metadataResult.error.message });
     return { id: String(response.id || id), customerCode: null as string | null };
   }
   if (!Number.isFinite(order.totalAmount) || order.totalAmount < 0 || Math.abs(finalTotal - order.totalAmount) > 0.01) throw new Error("إجمالي الطلب لا يطابق بنود العربة أو الخصم الخادمي.");
@@ -99,6 +104,8 @@ export async function createSupabaseCatalogOrder(order: CatalogOrderInput) {
     items,
     total_amount: finalTotal,
     status: "pending",
+    loyalty_points: Math.max(0, Math.trunc(Number(order.earnedPoints) || 0)),
+    loyalty_points_awarded: 0,
   }, { onConflict: "id" }).select("id").single();
   if (result.error) throw new Error(`تعذر حفظ الطلب في Supabase: ${result.error.message}`);
   return { id: String(result.data.id), customerCode: null as string | null };
@@ -108,19 +115,23 @@ export async function getSupabaseCatalogOrdersForCustomer(orderIds: string[], cu
   if (!orderIds.length) return [];
   const client = getClient();
   const ids = orderIds.map(id => /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : stableUuid(id));
-  const result = await client.from("catalog_orders").select("id,customer_name,customer_phone,address,note,items,total_amount,status,created_at,updated_at").in("id", ids).eq("customer_phone", customerPhone).order("created_at", { ascending: false });
+  const result = await client.from("catalog_orders").select("id,customer_name,customer_phone,customer_code,address,note,items,total_amount,status,created_at,updated_at,loyalty_points,loyalty_points_awarded").in("id", ids).eq("customer_phone", customerPhone).order("created_at", { ascending: false });
   if (result.error) throw new Error(`تعذر قراءة طلبات Supabase: ${result.error.message}`);
+  const hasApprovedOrder = (result.data || []).some(row => row.status === "confirmed" || row.status === "delivered");
+  const profile = hasApprovedOrder ? await getSupabaseLoyaltyProfile({ phone: customerPhone }) : null;
   return (result.data || []).map(row => ({
     id: String(row.id),
     customerName: row.customer_name,
     customerPhone: row.customer_phone,
-    customerCode: null,
+    customerCode: row.customer_code == null ? null : String(row.customer_code),
     address: row.address,
     note: row.note,
     itemsJson: JSON.stringify(row.items || []),
     totalAmount: Number(row.total_amount || 0),
     status: row.status === "pending" ? "new" : row.status,
-    loyaltyPointsAwarded: 0,
+    loyaltyPoints: Math.max(0, Number(row.loyalty_points) || 0),
+    loyaltyPointsAwarded: Math.max(0, Number(row.loyalty_points_awarded) || 0),
+    loyaltyPointsBalance: Math.max(0, Number(profile?.points) || 0),
     createdAt: new Date(row.created_at),
     updatedAt: new Date(row.updated_at),
   }));

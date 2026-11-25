@@ -5,6 +5,10 @@ import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { useSecurity } from "@/contexts/SecurityContext";
 import { isValidFeaturePin } from "@/lib/supabase/featureLocks";
+import { getSupabaseClient } from "@/lib/supabase/client";
+import { useStaffAccess } from "@/hooks/useStaffAccess";
+import { trpc } from "@/lib/trpc";
+import { catalogAdminScopeForFeature, saveCatalogAdminSessionToken } from "@/lib/catalogAdminSession";
 import { Lock, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 
@@ -16,6 +20,8 @@ interface PasswordProtectedSectionProps {
 
 export default function PasswordProtectedSection({ section, sectionLabel, children }: PasswordProtectedSectionProps) {
   const { checkPassword } = useSecurity();
+  const { shopId } = useStaffAccess();
+  const issueLocalAdminSession = trpc.catalog.issueLocalAdminSession.useMutation();
   const [isUnlocked, setIsUnlocked] = useState(false);
   const [pin, setPin] = useState("");
   const [error, setError] = useState("");
@@ -36,6 +42,14 @@ export default function PasswordProtectedSection({ section, sectionLabel, childr
     try {
       const verified = await checkPassword(section, pin);
       if (verified) {
+        const scope = catalogAdminScopeForFeature(section);
+        if (scope) {
+          if (!shopId) throw new Error("لم يتم تحديد المتجر النشط لإنشاء جلسة الإدارة.");
+          const { data, error: sessionError } = await getSupabaseClient().auth.getSession();
+          if (sessionError || !data.session?.access_token) throw new Error("انتهت جلسة الموظف السحابية؛ سجّل الدخول المحلي مجدداً.");
+          const session = await issueLocalAdminSession.mutateAsync({ shopId, scope, accessToken: data.session.access_token, featureKey: section, pin });
+          saveCatalogAdminSessionToken(session.token);
+        }
         setIsUnlocked(true);
         setPin("");
         toast.success(`تم فتح ${sectionLabel}`);

@@ -17,6 +17,7 @@ import { updateLoyaltyRewardPoints, upsertLoyaltyRewardLevel } from "@/lib/loyal
 import { calculateManualOfferPrice, type ManualDiscountType } from "@/lib/manualOffer";
 import { createOfferExpiryWindow, formatOfferTimeRemaining, getOfferExpiryInfo, parseLegacyOfferDate } from "@/lib/offerExpiry";
 import { useStaffAccess } from "@/hooks/useStaffAccess";
+import { useCatalogAdminSession } from "@/hooks/useCatalogAdminSession";
 import { MarketingShareButton } from "@/components/MarketingShareComposer";
 import { saveStoreOffer } from "@/lib/supabase/storeOffers";
 import { createLoyaltyMilestone, listLoyaltyExperienceSettings, saveReferralCampaign, updateLoyaltyMilestone, uploadLoyaltyMilestoneImage, type LoyaltyMilestoneRow } from "@/lib/supabase/loyaltyExperience";
@@ -192,6 +193,9 @@ function buildOfferCandidates(products: Product[], recipes: Recipe[]): OfferCand
 export default function SmartOffers() {
   const [location, navigate] = useLocation();
   const { isSeller } = useStaffAccess();
+  const offerAdminSession = useCatalogAdminSession("offers");
+  const offerShopId = offerAdminSession.shopId || "00000000-0000-4000-8000-000000000000";
+  const offerAuthUserId = offerAdminSession.authUserId || "00000000-0000-4000-8000-000000000000";
   const [products, setProducts] = useState<Product[]>([]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [currentOffer, setCurrentOffer] = useState<SmartOffer | null>(null);
@@ -234,10 +238,8 @@ export default function SmartOffers() {
   const [rewardImageUploading, setRewardImageUploading] = useState(false);
   const [referralForm, setReferralForm] = useState({ title: "شارك التوفير مع حبايبك واكسب نقاط مجانية!", messageTemplate: "ادعُ أصدقاءك للتسجيل في نظام ولاء أبو رغوة واكسب 50 نقطة عن كل صديق!", pointsPerFriend: 50, isActive: true });
   const [savingReferral, setSavingReferral] = useState(false);
-  const [catalogSessionReady, setCatalogSessionReady] = useState(() => Boolean(browserState.get("abu_catalog_admin_token")));
-  const catalogLogin = trpc.catalog.loginWithStaffSession.useMutation({ onSuccess: result => { try { browserState.set("abu_catalog_admin_token", result.token); } catch {} setCatalogSessionReady(true); }, onError: () => { setCustomersList([]); setCatalogSessionReady(false); } });
-  const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
-  const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery(undefined, { enabled: catalogSessionReady, retry: false, refetchInterval: catalogSessionReady ? 10_000 : false });
+  const loyaltyCustomersQuery = trpc.catalog.listLoyaltyCustomers.useQuery(undefined, { enabled: offerAdminSession.ready, retry: false, refetchInterval: offerAdminSession.ready ? 10_000 : false });
+  const offerPurchaseRequestsQuery = trpc.catalog.listOfferPurchaseRequests.useQuery({ shopId: offerShopId, authUserId: offerAuthUserId }, { enabled: offerAdminSession.ready, retry: false, refetchInterval: offerAdminSession.ready ? 8_000 : false, refetchIntervalInBackground: true });
   const knownOfferRequestIds = useRef<Set<string> | null>(null);
   useEffect(() => {
     const pending = (offerPurchaseRequestsQuery.data || []).filter(request => request.status === "pending");
@@ -278,12 +280,6 @@ export default function SmartOffers() {
     description: offer.description || `عرض لفترة محدودة حتى ${offer.endDate}.`,
     link: `${window.location.origin}/public-offer?id=${offer.id}`,
   });
-
-  useEffect(() => {
-    if (!isSeller) catalogLogin.mutate();
-    // اجلب رمز لوحة الإدارة من جلسة الموظف الحالية عند فتح صفحة العروض.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isSeller]);
 
   useEffect(() => {
     let active = true;
@@ -877,7 +873,7 @@ export default function SmartOffers() {
                   <article key={request.id} className={`rounded-xl border p-3 ${request.status === "pending" ? "border-orange-200 bg-orange-50/70" : "border-gray-200 bg-white"}`}>
                     <div className="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
                       <div className="space-y-1"><p className="font-black text-gray-900">{request.offerTitle}</p><p className="text-sm text-gray-700">العميل: <strong>{request.customerName}</strong> · الكود: <strong dir="ltr" className="inline-block">{request.customerCode}</strong></p><p className="text-xs text-gray-600">النقاط: {request.offerPoints} · {new Date(request.createdAt).toLocaleString("ar-EG")}</p></div>
-                      {request.status === "pending" ? <div className="flex shrink-0 gap-2"><Button disabled={approveOfferPurchase.isLoading} onClick={async () => { if (!window.confirm(`هل تؤكد بيع «${request.offerTitle}» للعميل ${request.customerName}؟`)) return; try { const result = await approveOfferPurchase.mutateAsync({ id: request.id }); await offerPurchaseRequestsQuery.refetch(); toast.success(result.awardedPoints > 0 ? `تم تأكيد البيع وإضافة ${result.awardedPoints} نقطة.` : "تم تأكيد البيع."); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تأكيد الطلب"); } }} className="bg-green-600 text-xs font-black text-white hover:bg-green-700"><Check className="ml-1 h-4 w-4" />موافقة وبيع</Button><Button variant="outline" disabled={cancelOfferPurchase.isLoading} onClick={async () => { if (!window.confirm("هل تريد رفض هذا الطلب؟")) return; try { await cancelOfferPurchase.mutateAsync({ id: request.id }); await offerPurchaseRequestsQuery.refetch(); toast.success("تم رفض الطلب دون إضافة نقاط."); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفض الطلب"); } }} className="text-xs font-bold text-gray-700"><XCircle className="ml-1 h-4 w-4" />رفض</Button></div> : <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${request.status === "approved" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>{request.status === "approved" ? "موافق عليه" : "ملغي"}</span>}
+                      {request.status === "pending" ? <div className="flex shrink-0 gap-2"><Button disabled={approveOfferPurchase.isLoading} onClick={async () => { if (!window.confirm(`هل تؤكد بيع «${request.offerTitle}» للعميل ${request.customerName}؟`)) return; try { const result = await approveOfferPurchase.mutateAsync({ id: request.id, shopId: offerShopId, authUserId: offerAuthUserId }); await offerPurchaseRequestsQuery.refetch(); toast.success(result.awardedPoints > 0 ? `تم تأكيد البيع وإضافة ${result.awardedPoints} نقطة.` : "تم تأكيد البيع."); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر تأكيد الطلب"); } }} className="bg-green-600 text-xs font-black text-white hover:bg-green-700"><Check className="ml-1 h-4 w-4" />موافقة وبيع</Button><Button variant="outline" disabled={cancelOfferPurchase.isLoading} onClick={async () => { if (!window.confirm("هل تريد رفض هذا الطلب؟")) return; try { await cancelOfferPurchase.mutateAsync({ id: request.id, shopId: offerShopId, authUserId: offerAuthUserId }); await offerPurchaseRequestsQuery.refetch(); toast.success("تم رفض الطلب دون إضافة نقاط."); } catch (error) { toast.error(error instanceof Error ? error.message : "تعذر رفض الطلب"); } }} className="text-xs font-bold text-gray-700"><XCircle className="ml-1 h-4 w-4" />رفض</Button></div> : <span className={`shrink-0 rounded-full px-3 py-1 text-xs font-black ${request.status === "approved" ? "bg-green-100 text-green-800" : "bg-gray-100 text-gray-600"}`}>{request.status === "approved" ? "موافق عليه" : "ملغي"}</span>}
                     </div>
                   </article>
                 ))}
@@ -994,7 +990,7 @@ export default function SmartOffers() {
                             <Button disabled={approveOfferPurchase.isLoading} onClick={async () => {
                               if (!window.confirm(`هل تؤكد اكتمال شراء «${request.offerTitle}» بواسطة ${request.customerName}؟ ستضاف ${request.offerPoints} نقطة إلى الكود ${request.customerCode}.`)) return;
                               try {
-                                const result = await approveOfferPurchase.mutateAsync({ id: request.id });
+                                const result = await approveOfferPurchase.mutateAsync({ id: request.id, shopId: offerShopId, authUserId: offerAuthUserId });
                                 await offerPurchaseRequestsQuery.refetch();
                                 toast.success(result.awardedPoints > 0 ? `تم تأكيد البيع وإضافة ${result.awardedPoints} نقطة إلى ${request.customerCode}.` : "تم تأكيد البيع؛ هذا العرض لا يمنح نقاطًا إضافية.");
                               } catch (error) {
@@ -1006,7 +1002,7 @@ export default function SmartOffers() {
                             <Button variant="outline" disabled={cancelOfferPurchase.isLoading} onClick={async () => {
                               if (!window.confirm(`هل تريد رفض طلب ${request.customerName}؟ لن تُضاف نقاط.`)) return;
                               try {
-                                await cancelOfferPurchase.mutateAsync({ id: request.id });
+                                await cancelOfferPurchase.mutateAsync({ id: request.id, shopId: offerShopId, authUserId: offerAuthUserId });
                                 await offerPurchaseRequestsQuery.refetch();
                                 toast.success("تم إلغاء الطلب دون إضافة نقاط.");
                               } catch (error) {
